@@ -140,12 +140,16 @@ async def complete_deployer_visit(
     *,
     success: bool,
     summary: str,
+    deploy_url: str | None = None,
     endpoint_used: str | None = None,
 ) -> Card:
-    """Deployer's run_deploy: success is terminal (done). Failure retries up to the
-    project's max_deploy_attempts, then is terminal (failed) with no further action —
-    there is no human-approval gate to fall back to in this pipeline."""
+    """Deployer's run_deploy (auto_main) or open_pull_request (pr_to_operator):
+    success is terminal (done) either way. Failure retries up to the project's
+    max_deploy_attempts, then is terminal (failed) with no further action — there is
+    no human-approval gate to fall back to in this pipeline."""
     if success:
+        if deploy_url is not None:
+            card.deploy_url = deploy_url
         card.lifecycle_state = LifecycleState.DONE
         await _close_visit(
             session, visit, outcome=VisitOutcome.DONE, summary=summary, endpoint_used=endpoint_used
@@ -182,16 +186,21 @@ async def mark_visit_interrupted(session: AsyncSession, card: Card, visit: CardC
     return card
 
 
-async def retry_card(session: AsyncSession, card: Card) -> Card:
+async def retry_card(session: AsyncSession, card: Card, *, note: str | None = None) -> Card:
     """The one human touchpoint that exists *outside* the autonomous pipeline: un-stick
-    a blocked or failed card with a clean safety-valve budget."""
+    a blocked or failed card with a clean safety-valve budget. An optional note is
+    surfaced to whichever column runs next (see agent/context.py's retry_note
+    handling) and cleared after that one visit — see orchestrator/worker.py."""
     if card.lifecycle_state not in (LifecycleState.BLOCKED, LifecycleState.FAILED):
         raise ValueError(f"cannot retry a card in state {card.lifecycle_state.value!r}")
     card.lifecycle_state = LifecycleState.ACTIVE
     card.revision_count = 0
     card.deploy_attempt_count = 0
     card.latest_feedback = None
-    await append_event(session, card_id=card.id, type=EventType.SYSTEM_NOTE, payload={"action": "retry"})
+    card.retry_note = note
+    await append_event(
+        session, card_id=card.id, type=EventType.SYSTEM_NOTE, payload={"action": "retry", "note": note}
+    )
     return card
 
 

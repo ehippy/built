@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
 
 from built.api.deps import SessionDep
@@ -29,8 +29,8 @@ async def card_events_fragment(card_id: str, request: Request, session: SessionD
 
 
 @router.post("/cards/{card_id}/retry")
-async def retry_card(card_id: str, session: SessionDep) -> RedirectResponse:
-    await card_service.retry_card(session, card_id)
+async def retry_card(card_id: str, session: SessionDep, note: str = Form("")) -> RedirectResponse:
+    await card_service.retry_card(session, card_id, note=note or None)
     return RedirectResponse(f"/ui/cards/{card_id}", status_code=303)
 
 

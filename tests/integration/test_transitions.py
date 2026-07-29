@@ -113,6 +113,31 @@ async def test_revision_loop_blocks_after_cap_then_retry_unsticks_it(db_session)
     assert card.latest_feedback is None
 
 
+async def test_retry_with_a_note_stores_it_on_the_card(db_session):
+    project = await _make_project(db_session, name="retry-note")
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    visit = await transitions.start_visit(db_session, card)
+    await transitions.fail_visit_with_error(db_session, card, visit, message="boom")
+    assert card.lifecycle_state == LifecycleState.BLOCKED
+
+    await card_service.retry_card(db_session, card.id, note="rebase onto main first")
+
+    assert card.lifecycle_state == LifecycleState.ACTIVE
+    assert card.retry_note == "rebase onto main first"
+
+
+async def test_retry_without_a_note_clears_any_stale_one(db_session):
+    project = await _make_project(db_session, name="retry-note-clear")
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    card.retry_note = "leftover from a previous retry"
+    visit = await transitions.start_visit(db_session, card)
+    await transitions.fail_visit_with_error(db_session, card, visit, message="boom")
+
+    await card_service.retry_card(db_session, card.id)
+
+    assert card.retry_note is None
+
+
 async def test_deploy_cap_exhausted_marks_card_failed_with_no_further_action(db_session):
     project = await _make_project(db_session, name="doomed-deploy", max_deploy_attempts=1)
     card = await card_service.create_card(db_session, project.id, title="Doomed deploy", raw_request="do it")

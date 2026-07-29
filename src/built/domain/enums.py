@@ -53,6 +53,17 @@ class RunAttemptStatus(StrEnum):
 
 
 class DeployKind(StrEnum):
+    NONE = "none"  # merge + push is the whole job — no separate deploy step
     SCRIPT = "script"
     COMMAND = "command"
     WEBHOOK = "webhook"
+
+
+class DeployMode(StrEnum):
+    """How Deployer ships an approved card. auto_main merges to default_branch,
+    pushes, and runs the project's configured deploy command — zero human gate.
+    pr_to_operator pushes the card's branch as-is and opens a GitHub PR for a human to
+    review and merge; no merge and no deploy command run automatically."""
+
+    AUTO_MAIN = "auto_main"
+    PR_TO_OPERATOR = "pr_to_operator"

@@ -89,6 +89,14 @@ async def test_project_and_card_lifecycle_via_api():
         second_retry_resp = await client.post(f"/api/v1/cards/{card['id']}/retry", headers=AUTH)
         assert second_retry_resp.status_code == 409
 
+        # A note attached to a retry is stored on the card for the next visit to see.
+        await client.post(f"/api/v1/cards/{card['id']}/cancel", headers=AUTH)
+        noted_retry_resp = await client.post(
+            f"/api/v1/cards/{card['id']}/retry", headers=AUTH, json={"note": "rebase onto main first"}
+        )
+        assert noted_retry_resp.status_code == 200
+        assert noted_retry_resp.json()["retry_note"] == "rebase onto main first"
+
 
 async def test_endpoint_config_fallback_chain_resolution():
     async with _client() as client:

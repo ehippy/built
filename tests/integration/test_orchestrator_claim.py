@@ -39,13 +39,16 @@ async def test_returns_none_when_nothing_is_claimable(db_session):
     assert await claim_next_card(db_session, "worker-a") is None
 
 
-async def test_does_not_claim_deployer_column_cards_yet(db_session):
+async def test_claims_deployer_column_cards(db_session):
     project = await _project(db_session, _n="3")
     card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
     card.column = Column.DEPLOYER
     await db_session.commit()
 
-    assert await claim_next_card(db_session, "worker-a") is None
+    claimed = await claim_next_card(db_session, "worker-a")
+
+    assert claimed is not None
+    assert claimed.id == card.id
 
 
 async def test_does_not_claim_a_card_already_held_by_another_worker(db_session):

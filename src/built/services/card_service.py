@@ -148,9 +148,9 @@ async def list_events(
     return list((await session.scalars(stmt)).all())
 
 
-async def retry_card(session: AsyncSession, card_id: str) -> Card:
+async def retry_card(session: AsyncSession, card_id: str, *, note: str | None = None) -> Card:
     card = await get_card(session, card_id)
-    await transitions.retry_card(session, card)
+    await transitions.retry_card(session, card, note=note)
     await session.flush()
     return card
 

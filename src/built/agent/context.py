@@ -2,10 +2,11 @@
 not Jinja2 — these prompts are short, linear, and don't need a templating engine."""
 
 from built.db.models import Card, Project
+from built.domain.enums import DeployMode
 
 
 def build_developer_prompt(
-    project: Project, card: Card, *, retry_recap: str | None = None
+    project: Project, card: Card, *, retry_recap: str | None = None, retry_note: str | None = None
 ) -> tuple[str, str]:
     """Returns (system_prompt, initial_user_message)."""
     system = (
@@ -34,10 +35,14 @@ def build_developer_prompt(
         )
     if retry_recap:
         user += f"\n\nContext from your previous attempt at this column:\n{retry_recap}"
+    if retry_note:
+        user += f"\n\nA human left this instruction for this attempt:\n{retry_note}"
     return system, user
 
 
-def build_pm_prompt(project: Project, card: Card, *, retry_recap: str | None = None) -> tuple[str, str]:
+def build_pm_prompt(
+    project: Project, card: Card, *, retry_recap: str | None = None, retry_note: str | None = None
+) -> tuple[str, str]:
     """Returns (system_prompt, initial_user_message). PM has read-only repo tools and
     is expected to use them to explore before writing a spec, rather than being handed
     a pre-fetched file tree — closer to how a real PM would work."""
@@ -55,11 +60,54 @@ def build_pm_prompt(project: Project, card: Card, *, retry_recap: str | None = N
     user = f"Card: {card.title}\n\nRequest: {card.raw_request}"
     if retry_recap:
         user += f"\n\nContext from your previous attempt at this column:\n{retry_recap}"
+    if retry_note:
+        user += f"\n\nA human left this instruction for this attempt:\n{retry_note}"
+    return system, user
+
+
+def build_deployer_prompt(
+    project: Project,
+    card: Card,
+    *,
+    mode: DeployMode,
+    retry_recap: str | None = None,
+    retry_note: str | None = None,
+) -> tuple[str, str]:
+    """Returns (system_prompt, initial_user_message)."""
+    if mode == DeployMode.AUTO_MAIN:
+        action = (
+            "call run_deploy. It takes no arguments — the merge, push, and deploy command are fixed "
+            "by project configuration, not by you. There is no confirmation step after this."
+        )
+    else:
+        action = (
+            "call open_pull_request with a summary of the change. This pushes your branch and opens "
+            "a GitHub PR against the default branch — a human reviews and merges it from there. "
+            "Nothing merges or deploys automatically."
+        )
+    system = (
+        "You are the Deployer agent in an autonomous software factory. The Tester has already "
+        "approved this card's implementation. Do a quick sanity check of the repository (e.g. that "
+        "the branch actually contains the expected changes) using the read-only tools, then "
+        f"{action}\n\n"
+        f"Project goal: {project.overarching_goal}\n\n"
+        "Nobody is watching this run interactively — do not stop to ask a question."
+    )
+    user = f"Card: {card.title}\n\nSpec:\n{card.spec or '(no spec)'}\n\nBranch: {card.branch_name}"
+    if retry_recap:
+        user += f"\n\nContext from your previous attempt at this column:\n{retry_recap}"
+    if retry_note:
+        user += f"\n\nA human left this instruction for this attempt:\n{retry_note}"
     return system, user
 
 
 def build_tester_prompt(
-    project: Project, card: Card, *, developer_summary: str | None, retry_recap: str | None = None
+    project: Project,
+    card: Card,
+    *,
+    developer_summary: str | None,
+    retry_recap: str | None = None,
+    retry_note: str | None = None,
 ) -> tuple[str, str]:
     """Returns (system_prompt, initial_user_message)."""
     system = (
@@ -83,4 +131,6 @@ def build_tester_prompt(
     )
     if retry_recap:
         user += f"\n\nContext from your previous attempt at this column:\n{retry_recap}"
+    if retry_note:
+        user += f"\n\nA human left this instruction for this attempt:\n{retry_note}"
     return system, user

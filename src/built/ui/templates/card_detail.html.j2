@@ -15,10 +15,16 @@
 
 {% if card.lifecycle_state in ("blocked", "failed") %}
 <div class="panel">
-  <form class="inline" method="post" action="/ui/cards/{{ card.id }}/retry">
+  <h2>Retry</h2>
+  <form method="post" action="/ui/cards/{{ card.id }}/retry">
+    <div class="field">
+      <label for="note">Note for the next attempt (optional)</label>
+      <textarea id="note" name="note" placeholder="e.g. rebase onto main and resolve the conflict in index.html"></textarea>
+      <div class="hint">Surfaced to whichever column runs next, then cleared — a one-shot instruction, not a standing rule.</div>
+    </div>
     <button class="btn" type="submit">Retry</button>
   </form>
-  <span class="hint">Resets the revision/deploy-attempt counters and makes the card claimable again — the one human touchpoint outside the autonomous pipeline.</span>
+  <p class="hint">Resets the revision/deploy-attempt counters and makes the card claimable again — the one human touchpoint outside the autonomous pipeline.</p>
 </div>
 {% elif card.lifecycle_state == "active" %}
 <div class="panel">
@@ -46,7 +52,16 @@
   <p>{{ card.latest_feedback }}</p>
   {% endif %}
 
+  {% if card.retry_note %}
+  <h2>Pending retry note</h2>
+  <p>{{ card.retry_note }}</p>
+  <p class="hint">Will be shown to the agent on its next visit, then cleared.</p>
+  {% endif %}
+
   <p class="hint">Revision {{ card.revision_count }} · Deploy attempts {{ card.deploy_attempt_count }}</p>
+  {% if card.deploy_url %}
+  <p><a href="{{ card.deploy_url }}" target="_blank" rel="noopener">Deploy link &rarr;</a></p>
+  {% endif %}
 </div>
 
 <div class="panel">

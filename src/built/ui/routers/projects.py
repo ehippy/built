@@ -11,7 +11,7 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
 
 from built.api.deps import SessionDep
-from built.domain.enums import Column, DeployKind
+from built.domain.enums import Column, DeployKind, DeployMode
 from built.services import endpoint_service, project_service
 from built.ui.templates import templates
 
@@ -125,18 +125,22 @@ async def set_project_deploy_config(
     project_id: str,
     session: SessionDep,
     kind: str = Form(...),
+    mode: str = Form("pr_to_operator"),
     command: str = Form(""),
     script_path: str = Form(""),
     webhook_url: str = Form(""),
     timeout_seconds: int = Form(600),
+    github_token_ref: str = Form(""),
 ) -> RedirectResponse:
     await project_service.set_deploy_config(
         session,
         project_id,
         kind=DeployKind(kind),
+        mode=DeployMode(mode),
         command=command or None,
         script_path=script_path or None,
         webhook_url=webhook_url or None,
         timeout_seconds=timeout_seconds,
+        github_token_ref=github_token_ref or None,
     )
     return RedirectResponse(f"/ui/projects/{project_id}/settings", status_code=303)

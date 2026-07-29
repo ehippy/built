@@ -8,6 +8,12 @@ from fastapi.templating import Jinja2Templates
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+# Starlette's default autoescape only fires for names ending in .html/.htm/.xml —
+# every template here is named *.html.j2, so it silently falls through to "off"
+# unless forced on explicitly. With it off, arbitrary content an agent reads or
+# produces (source files, bash output, LLM text) renders as live HTML/JS in the
+# transcript view.
+templates.env.autoescape = True
 
 
 def _timeago(dt) -> str:

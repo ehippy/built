@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from built.domain.enums import Column, DeployKind, EventType, LifecycleState, VisitOutcome
+from built.domain.enums import Column, DeployKind, DeployMode, EventType, LifecycleState, VisitOutcome
 
 
 class ProjectCreate(BaseModel):
@@ -27,12 +27,14 @@ class ProjectUpdate(BaseModel):
 
 
 class DeployConfigIn(BaseModel):
+    mode: DeployMode = DeployMode.PR_TO_OPERATOR
     kind: DeployKind
     command: str | None = None
     script_path: str | None = None
     webhook_url: str | None = None
     env_var_refs: list[str] = []
     timeout_seconds: int = 600
+    github_token_ref: str | None = None
 
 
 class DeployConfigOut(DeployConfigIn):
@@ -104,6 +106,10 @@ class CardCreate(BaseModel):
     raw_request: str
 
 
+class CardRetryIn(BaseModel):
+    note: str | None = None
+
+
 class CardOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -118,8 +124,10 @@ class CardOut(BaseModel):
     spec: str | None
     acceptance_criteria: list[str]
     revision_count: int
+    retry_note: str | None
     latest_feedback: str | None
     deploy_attempt_count: int
+    deploy_url: str | None
     created_at: datetime
     updated_at: datetime
 

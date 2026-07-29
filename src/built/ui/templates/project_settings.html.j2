@@ -132,16 +132,31 @@
 
 <div class="panel">
   <h2>Deploy configuration</h2>
-  <p class="subtitle">Used by the Deployer column once a card is approved. Zero LLM-supplied arguments — this command runs exactly as configured.</p>
+  <p class="subtitle">Used by the Deployer column once a card is approved.</p>
   <form method="post" action="/ui/projects/{{ project.id }}/deploy-config">
     <div class="field">
-      <label for="kind">Kind</label>
+      <label for="mode">Mode</label>
+      <select id="mode" name="mode">
+        <option value="pr_to_operator" {{ "selected" if not deploy_config or deploy_config.mode == "pr_to_operator" }}>PR to operator — push the branch and open a GitHub PR for you to review and merge. Nothing deploys automatically.</option>
+        <option value="auto_main" {{ "selected" if deploy_config and deploy_config.mode == "auto_main" }}>Auto-main — merge to the default branch, push, and run the deploy command below. Zero human gate.</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="github_token_ref">GitHub token env var (for PR to operator)</label>
+      <input type="text" id="github_token_ref" name="github_token_ref" value="{{ deploy_config.github_token_ref if deploy_config else '' }}" placeholder="GITHUB_PR_TOKEN">
+      <div class="hint">Name of an environment variable on the server holding a repo-scoped, PR-write-only GitHub personal access token — never the raw token.</div>
+    </div>
+    <div class="field">
+      <label for="kind">Deploy step (for auto-main)</label>
       <select id="kind" name="kind">
+        <option value="none" {{ "selected" if not deploy_config or deploy_config.kind == "none" }}>None — merging to the default branch and pushing is the whole job</option>
         <option value="command" {{ "selected" if deploy_config and deploy_config.kind == "command" }}>Command</option>
         <option value="script" {{ "selected" if deploy_config and deploy_config.kind == "script" }}>Script path</option>
         <option value="webhook" {{ "selected" if deploy_config and deploy_config.kind == "webhook" }}>Webhook</option>
       </select>
+      <div class="hint">Merge + push always happens in auto-main mode. Pick a deploy step only if something needs to run after that — a build, an upload, a webhook. "None" is a normal, common choice, not a misconfiguration.</div>
     </div>
+    <p class="subtitle">Zero LLM-supplied arguments for auto-main — the deploy step below (if any) runs exactly as configured.</p>
     <div class="field">
       <label for="command">Command</label>
       <input type="text" id="command" name="command" value="{{ deploy_config.command if deploy_config else '' }}" placeholder="docker build -t app . && docker push app">

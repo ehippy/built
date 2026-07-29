@@ -14,19 +14,28 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from built.agent.context import build_developer_prompt, build_pm_prompt, build_tester_prompt
+from built.agent.context import (
+    build_deployer_prompt,
+    build_developer_prompt,
+    build_pm_prompt,
+    build_tester_prompt,
+)
 from built.db.models import Card, CardColumnVisit, Project
 from built.domain import run_attempts, transitions
-from built.domain.enums import EventType
+from built.domain.enums import DeployMode, EventType
 from built.domain.events import append_event
 from built.llm.client import LLMClient, ToolCallRequest
 from built.llm.tool_schemas import (
+    DEPLOYER_AUTO_MAIN_TERMINAL_TOOL,
+    DEPLOYER_PR_TERMINAL_TOOL,
     DEVELOPER_TERMINAL_TOOL,
     DEVELOPER_TOOLS,
     PM_TERMINAL_TOOL,
     PM_TOOLS,
     TESTER_TOOLS,
+    deployer_tools,
 )
+from built.sandbox import deploy_runner
 from built.tools.dispatcher import DispatchOutcome, ToolDispatcher
 
 
@@ -223,6 +232,36 @@ async def _tester_request_changes_handler(
     return TerminalHandlerResult(handled=True)
 
 
+async def _deployer_run_deploy_handler(
+    session: AsyncSession, card: Card, visit: CardColumnVisit, tool_call: ToolCallRequest, endpoint_used: str
+) -> TerminalHandlerResult:
+    project = await session.get(Project, card.project_id)
+    result = await deploy_runner.run_auto_main_deploy(project, card)
+    await transitions.complete_deployer_visit(
+        session, card, visit, success=result.success, summary=result.message, endpoint_used=endpoint_used
+    )
+    return TerminalHandlerResult(handled=True)
+
+
+async def _deployer_open_pr_handler(
+    session: AsyncSession, card: Card, visit: CardColumnVisit, tool_call: ToolCallRequest, endpoint_used: str
+) -> TerminalHandlerResult:
+    project = await session.get(Project, card.project_id)
+    result = await deploy_runner.open_pull_request(
+        project, card, summary=str(tool_call.arguments.get("summary", ""))
+    )
+    await transitions.complete_deployer_visit(
+        session,
+        card,
+        visit,
+        success=result.success,
+        summary=result.message,
+        deploy_url=result.url,
+        endpoint_used=endpoint_used,
+    )
+    return TerminalHandlerResult(handled=True)
+
+
 async def _record_bash_run_attempt(
     session: AsyncSession,
     card: Card,
@@ -255,8 +294,9 @@ async def run_pm_visit(
     dispatcher: ToolDispatcher,
     max_iterations: int,
     retry_recap: str | None = None,
+    retry_note: str | None = None,
 ) -> Card:
-    system, user = build_pm_prompt(project, card, retry_recap=retry_recap)
+    system, user = build_pm_prompt(project, card, retry_recap=retry_recap, retry_note=retry_note)
     return await run_column_visit(
         session,
         card,
@@ -281,8 +321,9 @@ async def run_developer_visit(
     dispatcher: ToolDispatcher,
     max_iterations: int,
     retry_recap: str | None = None,
+    retry_note: str | None = None,
 ) -> Card:
-    system, user = build_developer_prompt(project, card, retry_recap=retry_recap)
+    system, user = build_developer_prompt(project, card, retry_recap=retry_recap, retry_note=retry_note)
     return await run_column_visit(
         session,
         card,
@@ -308,9 +349,14 @@ async def run_tester_visit(
     max_iterations: int,
     developer_summary: str | None = None,
     retry_recap: str | None = None,
+    retry_note: str | None = None,
 ) -> Card:
     system, user = build_tester_prompt(
-        project, card, developer_summary=developer_summary, retry_recap=retry_recap
+        project,
+        card,
+        developer_summary=developer_summary,
+        retry_recap=retry_recap,
+        retry_note=retry_note,
     )
     return await run_column_visit(
         session,
@@ -327,4 +373,38 @@ async def run_tester_visit(
             "request_changes": _tester_request_changes_handler,
         },
         on_tool_result=_record_bash_run_attempt,
+    )
+
+
+async def run_deployer_visit(
+    session: AsyncSession,
+    project: Project,
+    card: Card,
+    visit: CardColumnVisit,
+    *,
+    llm_client: LLMClient,
+    dispatcher: ToolDispatcher,
+    max_iterations: int,
+    mode: DeployMode,
+    retry_recap: str | None = None,
+    retry_note: str | None = None,
+) -> Card:
+    system, user = build_deployer_prompt(
+        project, card, mode=mode, retry_recap=retry_recap, retry_note=retry_note
+    )
+    if mode == DeployMode.AUTO_MAIN:
+        terminal_handlers = {DEPLOYER_AUTO_MAIN_TERMINAL_TOOL: _deployer_run_deploy_handler}
+    else:
+        terminal_handlers = {DEPLOYER_PR_TERMINAL_TOOL: _deployer_open_pr_handler}
+    return await run_column_visit(
+        session,
+        card,
+        visit,
+        llm_client=llm_client,
+        dispatcher=dispatcher,
+        max_iterations=max_iterations,
+        system_prompt=system,
+        user_prompt=user,
+        tools=deployer_tools(mode),
+        terminal_handlers=terminal_handlers,
     )

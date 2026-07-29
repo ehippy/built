@@ -9,11 +9,16 @@ _COMMIT_AUTHOR_EMAIL = "agent@built.local"
 
 
 class GitCommandError(Exception):
-    def __init__(self, args: tuple[str, ...], returncode: int, stderr: str):
+    # git writes some of its most useful failure detail to stdout, not stderr — e.g.
+    # `git merge` conflict summaries ("CONFLICT (content): Merge conflict in ...") are
+    # on stdout. Keep both so callers reporting the error don't silently drop it.
+    def __init__(self, args: tuple[str, ...], returncode: int, stdout: str, stderr: str):
         self.args_ = args
         self.returncode = returncode
+        self.stdout = stdout
         self.stderr = stderr
-        super().__init__(f"git {' '.join(args)} failed ({returncode}): {stderr.strip()}")
+        detail = (stdout.strip() + "\n" + stderr.strip()).strip()
+        super().__init__(f"git {' '.join(args)} failed ({returncode}): {detail}")
 
 
 async def _run(*args: str, cwd: Path) -> tuple[int, str, str]:
@@ -31,7 +36,7 @@ async def _run(*args: str, cwd: Path) -> tuple[int, str, str]:
 async def run_git(*args: str, cwd: Path) -> str:
     returncode, stdout, stderr = await _run(*args, cwd=cwd)
     if returncode != 0:
-        raise GitCommandError(args, returncode, stderr)
+        raise GitCommandError(args, returncode, stdout, stderr)
     return stdout
 
 

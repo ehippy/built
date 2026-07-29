@@ -1,6 +1,6 @@
-"""OpenAI-compatible function-calling tool schemas, one list per column role. Only
-Developer's is defined so far — PM/Tester/Deployer land alongside their agent
-implementations in later phases."""
+"""OpenAI-compatible function-calling tool schemas, one list per column role."""
+
+from built.domain.enums import DeployMode
 
 READ_FILE = {
     "type": "function",
@@ -244,3 +244,50 @@ REQUEST_CHANGES = {
 
 TESTER_TOOLS = [READ_FILE, GREP_FILES, BASH, WRITE_FILE, EDIT_FILE, APPROVE, REQUEST_CHANGES]
 TESTER_TERMINAL_TOOLS = ("approve", "request_changes")
+
+RUN_DEPLOY = {
+    "type": "function",
+    "function": {
+        "name": "run_deploy",
+        "description": (
+            "Merge this card's branch into the default branch, push it, and run the project's "
+            "configured deploy command. Takes no arguments — the merge, push, and deploy command are "
+            "fixed by project configuration, not by you. This ends your turn and cannot be undone: "
+            "there is no confirmation step after this."
+        ),
+        "parameters": {"type": "object", "properties": {}},
+    },
+}
+DEPLOYER_AUTO_MAIN_TERMINAL_TOOL = "run_deploy"
+
+OPEN_PULL_REQUEST = {
+    "type": "function",
+    "function": {
+        "name": "open_pull_request",
+        "description": (
+            "Push this card's branch and open a GitHub pull request against the default branch for "
+            "a human to review and merge. This ends your turn — nothing merges or deploys "
+            "automatically after this; a human takes over from the PR."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "type": "string",
+                    "description": "A description of the change, used as the PR body.",
+                }
+            },
+            "required": ["summary"],
+        },
+    },
+}
+DEPLOYER_PR_TERMINAL_TOOL = "open_pull_request"
+
+_DEPLOYER_READ_TOOLS = [READ_FILE, LIST_FILES, GLOB_FILES, GREP_FILES]
+
+
+def deployer_tools(mode: DeployMode) -> list[dict]:
+    """Read tools plus only the one terminal tool matching this project's configured
+    deploy mode — the model never sees a tool it can't use."""
+    terminal = RUN_DEPLOY if mode == DeployMode.AUTO_MAIN else OPEN_PULL_REQUEST
+    return [*_DEPLOYER_READ_TOOLS, terminal]

@@ -203,6 +203,39 @@ async def test_developer_loop_second_attempt_gets_a_recap_of_the_first(db_sessio
     assert "npm install" in sent_user_message
 
 
+async def test_developer_loop_includes_a_human_retry_note_in_the_prompt(db_session, toy_repo_remote):
+    project, card, wt_path = await _make_developer_card(db_session, toy_repo_remote)
+    visit = await transitions.start_visit(db_session, card)
+    executor = FakeCommandExecutor(CommandResult(exit_code=0, stdout="", stderr=""))
+    dispatcher = ToolDispatcher(ctx=ToolContext(card_id=card.id, worktree_root=wt_path), executor=executor)
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(id="call_1", name="submit_for_test", arguments={"summary": "done"})
+                ],
+                endpoint_used="fake::model",
+            )
+        ]
+    )
+
+    await run_developer_visit(
+        db_session,
+        project,
+        card,
+        visit,
+        llm_client=llm,
+        dispatcher=dispatcher,
+        max_iterations=5,
+        retry_note="rebase onto main and resolve the conflict in app.py",
+    )
+
+    sent_user_message = llm.calls[0]["messages"][1]["content"]
+    assert "A human left this instruction for this attempt" in sent_user_message
+    assert "rebase onto main and resolve the conflict in app.py" in sent_user_message
+
+
 async def test_developer_loop_endpoint_chain_exhausted_blocks_the_card(db_session, toy_repo_remote):
     project, card, wt_path = await _make_developer_card(db_session, toy_repo_remote)
     visit = await transitions.start_visit(db_session, card)

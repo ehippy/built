@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from built.agent.loop import run_developer_visit, run_pm_visit, run_tester_visit
+from built.agent.loop import run_deployer_visit, run_developer_visit, run_pm_visit, run_tester_visit
 from built.db.base import async_session_factory
 from built.db.models import Card, Project
 from built.domain import transitions
@@ -25,9 +25,7 @@ from built.tools.dispatcher import ToolDispatcher
 
 logger = logging.getLogger(__name__)
 
-# Deployer isn't implemented yet (Phase 5) — cards that reach it just sit ACTIVE,
-# claimed by nobody, rather than being picked up and immediately failing.
-IMPLEMENTED_COLUMNS = (Column.PM, Column.DEVELOPER, Column.TESTER)
+IMPLEMENTED_COLUMNS = (Column.PM, Column.DEVELOPER, Column.TESTER, Column.DEPLOYER)
 
 DEFAULT_LEASE_SECONDS = 600
 DEFAULT_POLL_INTERVAL_SECONDS = 1.5
@@ -121,6 +119,10 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
     assert project is not None, f"card {card.id} references missing project {card.project_id}"
 
     try:
+        if card.column == Column.DEPLOYER and project.deploy_config is None:
+            raise ValueError(
+                "no deploy config — configure one in Project Settings before this card can deploy"
+            )
         chain = await endpoint_service.get_resolved_chain(session, project_id=project.id, role=card.column)
         llm_client = FallbackLLMClient(chain)
         worktree_path = await create_card_worktree(project, card)
@@ -148,6 +150,12 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
     retry_recap = await card_service.get_previous_attempt_recap(
         session, card.id, card.column, before_attempt=visit.attempt_number
     )
+    # A human-authored retry note is one-shot: surfaced to this one visit, then
+    # cleared so it doesn't linger and get replayed on later, unrelated retries.
+    retry_note = card.retry_note
+    if retry_note is not None:
+        card.retry_note = None
+        await session.commit()
 
     max_iterations = project.max_iterations_per_run
     if card.column == Column.PM:
@@ -160,6 +168,7 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
             dispatcher=dispatcher,
             max_iterations=max_iterations,
             retry_recap=retry_recap,
+            retry_note=retry_note,
         )
     elif card.column == Column.DEVELOPER:
         await run_developer_visit(
@@ -171,6 +180,7 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
             dispatcher=dispatcher,
             max_iterations=max_iterations,
             retry_recap=retry_recap,
+            retry_note=retry_note,
         )
     elif card.column == Column.TESTER:
         developer_summary = await card_service.get_latest_visit_summary(session, card.id, Column.DEVELOPER)
@@ -184,6 +194,20 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
             max_iterations=max_iterations,
             developer_summary=developer_summary,
             retry_recap=retry_recap,
+            retry_note=retry_note,
+        )
+    elif card.column == Column.DEPLOYER:
+        await run_deployer_visit(
+            session,
+            project,
+            card,
+            visit,
+            llm_client=llm_client,
+            dispatcher=dispatcher,
+            max_iterations=max_iterations,
+            mode=project.deploy_config.mode,
+            retry_recap=retry_recap,
+            retry_note=retry_note,
         )
     else:  # pragma: no cover — guarded by IMPLEMENTED_COLUMNS in claim_next_card
         raise AssertionError(f"unimplemented column: {card.column}")

@@ -10,6 +10,7 @@ from built.domain.enums import (
 )
 from built.domain.enums import (
     DeployKind,
+    DeployMode,
     EventType,
     LifecycleState,
     RunAttemptStatus,
@@ -79,6 +80,9 @@ class DeployConfig(Base):
 
     id: Mapped[str] = mapped_column(primary_key=True, default=_new_id)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), unique=True)
+    # auto_main: kind/command/script_path/webhook_url/env_var_refs/timeout_seconds
+    # below apply. pr_to_operator: only github_token_ref applies — the rest are unused.
+    mode: Mapped[DeployMode] = mapped_column(default=DeployMode.PR_TO_OPERATOR)
     kind: Mapped[DeployKind]
     command: Mapped[str | None] = mapped_column(Text, default=None)
     script_path: Mapped[str | None] = mapped_column(default=None)
@@ -86,6 +90,8 @@ class DeployConfig(Base):
     # Names of env vars the deploy execution path should inject — never raw secret values.
     env_var_refs: Mapped[list[str]] = mapped_column(JSON, default=list)
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=600)
+    # Env var name holding a GitHub PAT (repo-scoped, PR-write) — never the raw token.
+    github_token_ref: Mapped[str | None] = mapped_column(default=None)
 
     project: Mapped["Project"] = relationship(back_populates="deploy_config", lazy="raise")
 
@@ -133,6 +139,13 @@ class Card(Base):
     revision_count: Mapped[int] = mapped_column(Integer, default=0)
     latest_feedback: Mapped[str | None] = mapped_column(Text, default=None)
     deploy_attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    # A human instruction attached to a retry (the one touchpoint outside the
+    # autonomous pipeline) — surfaced to whichever column runs next, then cleared
+    # after that one visit so it doesn't linger across later, unrelated retries.
+    retry_note: Mapped[str | None] = mapped_column(Text, default=None)
+    # PR URL (pr_to_operator mode) so the dashboard can link straight to it. Unused
+    # (stays None) in auto_main mode.
+    deploy_url: Mapped[str | None] = mapped_column(default=None)
 
     # Orchestrator claim/lease — see orchestrator/worker.py (Phase 4).
     claimed_by_worker_id: Mapped[str | None] = mapped_column(default=None)

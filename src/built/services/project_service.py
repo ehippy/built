@@ -7,7 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from built.config import settings
 from built.db.models import DeployConfig, Project
-from built.domain.enums import DeployKind
+from built.domain.enums import DeployKind, DeployMode
 
 
 class NotFoundError(Exception):
@@ -106,21 +106,25 @@ async def set_deploy_config(
     project_id: str,
     *,
     kind: DeployKind,
+    mode: DeployMode = DeployMode.PR_TO_OPERATOR,
     command: str | None = None,
     script_path: str | None = None,
     webhook_url: str | None = None,
     env_var_refs: list[str] | None = None,
     timeout_seconds: int = 600,
+    github_token_ref: str | None = None,
 ) -> DeployConfig:
     project = await get_project(session, project_id)
     if project.deploy_config is None:
         project.deploy_config = DeployConfig(project_id=project.id, kind=kind)
     config = project.deploy_config
     config.kind = kind
+    config.mode = mode
     config.command = command
     config.script_path = script_path
     config.webhook_url = webhook_url
     config.env_var_refs = env_var_refs or []
     config.timeout_seconds = timeout_seconds
+    config.github_token_ref = github_token_ref
     await session.flush()
     return config

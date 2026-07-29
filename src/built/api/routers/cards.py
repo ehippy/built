@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query, status
 
 from built.api.deps import RequireApiKey, SessionDep
-from built.api.schemas import CardColumnVisitOut, CardCreate, CardEventOut, CardOut
+from built.api.schemas import CardColumnVisitOut, CardCreate, CardEventOut, CardOut, CardRetryIn
 from built.services import card_service
 from built.services.project_service import NotFoundError
 
@@ -56,11 +56,14 @@ async def list_events(
 
 
 @router.post("/cards/{card_id}/retry", response_model=CardOut)
-async def retry_card(card_id: str, session: SessionDep, _: RequireApiKey) -> CardOut:
+async def retry_card(
+    card_id: str, session: SessionDep, _: RequireApiKey, body: CardRetryIn | None = None
+) -> CardOut:
     """The one human touchpoint outside the autonomous pipeline: un-stick a blocked or
-    failed card, with a fresh safety-valve budget."""
+    failed card, with a fresh safety-valve budget. An optional note is surfaced to
+    whichever column runs next, then cleared after that one visit."""
     try:
-        card = await card_service.retry_card(session, card_id)
+        card = await card_service.retry_card(session, card_id, note=body.note if body else None)
     except NotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     except ValueError as exc:

@@ -15,10 +15,19 @@ from built.domain.enums import EventType, RunAttemptStatus
 # otherwise-exact command (e.g. "pytest -q 2>&1") — doesn't change what ran or its
 # exit code, so it shouldn't cause an exact-match comparison to fail.
 _TRAILING_REDIRECT_RE = re.compile(r"\s*(?:2>&1|2>/dev/null|>\s*/dev/null(?:\s+2>&1)?)\s*$")
+# Strips a leading "cd <path> && "/"cd <path>; " an agent commonly tacks on out of
+# habit (confirmed live: a Developer visit stuck retrying forever because it kept
+# prefixing "cd /workspace && " onto an otherwise-exact, actually-passing command).
+# bash already runs with cwd=/workspace (see sandbox/container.py), so this is
+# always redundant — and if it ever weren't (a cd to some other directory), the
+# command it wraps would just fail on its own relative paths and surface as a real
+# nonzero exit code anyway, not something normalization needs to guard against.
+_LEADING_CD_RE = re.compile(r"^\s*cd\s+\S+\s*(?:&&|;)\s*")
 
 
 def _normalize_command(command: str) -> str:
-    return _TRAILING_REDIRECT_RE.sub("", command.strip()).strip()
+    stripped = _LEADING_CD_RE.sub("", command.strip())
+    return _TRAILING_REDIRECT_RE.sub("", stripped).strip()
 
 
 async def record_run_attempt(

@@ -87,6 +87,16 @@ async def test_trailing_redirection_is_normalized_away(db_session):
     assert await run_attempts.has_passing_run_since_last_change(db_session, visit.id, "pytest -q")
 
 
+async def test_leading_cd_workspace_prefix_is_normalized_away(db_session):
+    """Regression test for a real stuck-in-a-loop card: bash already runs with
+    cwd=/workspace, but an agent habitually prefixing "cd /workspace && " onto an
+    otherwise-exact, actually-passing command must not make the gate reject it
+    forever."""
+    card, visit = await _make_visit(db_session)
+    await _record_bash_call(db_session, card, visit, command="cd /workspace && pytest -q", exit_code=0)
+    assert await run_attempts.has_passing_run_since_last_change(db_session, visit.id, "pytest -q")
+
+
 async def test_edit_after_a_passing_run_invalidates_it(db_session):
     """The gap a "most recent RunAttempt" check alone can't catch: RunAttempt rows
     only exist for bash calls, so a write_file/edit_file after a green run doesn't

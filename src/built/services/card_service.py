@@ -68,6 +68,27 @@ async def get_board(session: AsyncSession, project_id: str) -> dict[Column, list
     return board
 
 
+async def get_project_activity_summary(session: AsyncSession, project_id: str) -> dict:
+    """Card counts by lifecycle_state, whether anything's actively being worked right
+    now, and the single most recent closed visit — what the Projects list page shows
+    as each project's live status, so a project effectively narrates its own progress
+    as cards move through it."""
+    cards = await list_cards(session, project_id)
+    counts = {state.value: 0 for state in LifecycleState}
+    is_being_worked = False
+    for card in cards:
+        counts[card.lifecycle_state.value] += 1
+        if card.is_being_worked:
+            is_being_worked = True
+    latest = await list_recent_visit_outcomes(session, project_id, limit=1)
+    return {
+        "counts": counts,
+        "total": len(cards),
+        "is_being_worked": is_being_worked,
+        "latest": latest[0] if latest else None,
+    }
+
+
 async def list_stuck_cards(session: AsyncSession, *, limit: int = 50) -> list[Card]:
     """BLOCKED or FAILED cards, longest-stuck first — the Reviver's (agent/reviver.py)
     candidate pool. Ordered by updated_at so cards that have been waiting longest get

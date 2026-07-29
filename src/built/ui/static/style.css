@@ -385,6 +385,7 @@ th {
   display: block;
   padding: 0.9rem 1rem;
   border: 1px solid var(--border);
+  border-left: 4px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
   margin-bottom: 0.75rem;
@@ -394,10 +395,36 @@ th {
   border-color: var(--accent);
   text-decoration: none;
 }
+.project-list a.project-card.active-card {
+  border-left-color: var(--state-active);
+}
 .project-list .goal {
   color: var(--text-muted);
   font-size: 0.85rem;
   margin-top: 0.2rem;
+}
+.project-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.project-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+.project-commentary {
+  margin-top: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.project-commentary p {
+  margin: 0.25rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text);
 }
 
 .transcript {

@@ -9,13 +9,22 @@ network without adding real session-based auth in front of it."""
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from built.api.deps import SessionDep
 from built.domain.enums import Column, DeployKind, DeployMode
-from built.services import endpoint_service, project_service
+from built.services import card_service, endpoint_service, project_service
 from built.ui.templates import templates
 
 router = APIRouter(prefix="/ui", tags=["ui"])
+
+
+async def _projects_with_activity(session: AsyncSession) -> list[dict]:
+    projects = await project_service.list_projects(session)
+    return [
+        {"project": project, "activity": await card_service.get_project_activity_summary(session, project.id)}
+        for project in projects
+    ]
 
 
 @router.get("/")
@@ -25,8 +34,14 @@ async def index() -> RedirectResponse:
 
 @router.get("/projects")
 async def list_projects(request: Request, session: SessionDep):
-    projects = await project_service.list_projects(session)
-    return templates.TemplateResponse(request, "projects_list.html.j2", {"projects": projects})
+    rows = await _projects_with_activity(session)
+    return templates.TemplateResponse(request, "projects_list.html.j2", {"rows": rows})
+
+
+@router.get("/projects/fragment")
+async def projects_list_fragment(request: Request, session: SessionDep):
+    rows = await _projects_with_activity(session)
+    return templates.TemplateResponse(request, "_projects_list_fragment.html.j2", {"rows": rows})
 
 
 @router.post("/projects")

@@ -4,6 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}built{% endblock %} · built</title>
+  <script>
+    // Runs before first paint so the page never flashes the wrong theme: applies
+    // any explicit saved choice immediately. No saved choice = follow the OS via
+    // the prefers-color-scheme media query in style.css, no attribute needed here.
+    (function () {
+      var saved = localStorage.getItem("built-theme");
+      if (saved === "light" || saved === "dark") {
+        document.documentElement.setAttribute("data-theme", saved);
+      }
+    })();
+  </script>
   <link rel="stylesheet" href="/ui/static/style.css">
   <script src="/ui/static/htmx.min.js"></script>
 </head>
@@ -13,10 +24,12 @@
     <nav>
       <a href="/ui/projects">Projects</a>
       <a href="/ui/endpoint-configs">Global Defaults</a>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle color theme" title="Toggle light/dark theme"></button>
     </nav>
   </header>
   <main>
     {% block content %}{% endblock %}
   </main>
+  <script src="/ui/static/theme.js"></script>
 </body>
 </html>

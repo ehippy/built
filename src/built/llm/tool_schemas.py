@@ -333,3 +333,99 @@ def deployer_tools(mode: DeployMode) -> list[dict]:
     deploy mode — the model never sees a tool it can't use."""
     terminal = RUN_DEPLOY if mode == DeployMode.AUTO_MAIN else OPEN_PULL_REQUEST
     return [*_DEPLOYER_READ_TOOLS, terminal]
+
+
+LIST_STUCK_CARDS = {
+    "type": "function",
+    "function": {
+        "name": "list_stuck_cards",
+        "description": (
+            "List cards currently blocked or failed, longest-stuck first: id, title, project, column, "
+            "how many times the Reviver has already retried it, and the reason it's stuck."
+        ),
+        "parameters": {"type": "object", "properties": {}},
+    },
+}
+
+READ_CARD_HISTORY = {
+    "type": "function",
+    "function": {
+        "name": "read_card_history",
+        "description": (
+            "Get a stuck card's full context: its spec, and a recap of its most recent attempt — how "
+            "it ended and its last several tool calls. Use this before deciding whether and how to "
+            "revive a card whose reason for being stuck isn't already obvious."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {"card_id": {"type": "string", "description": "The card to inspect."}},
+            "required": ["card_id"],
+        },
+    },
+}
+
+REVIVE_CARD = {
+    "type": "function",
+    "function": {
+        "name": "revive_card",
+        "description": (
+            "Retry a stuck card, optionally with a note for whichever column runs next. Use this for "
+            "cards stuck on something retryable: a transient infrastructure failure (timeout, "
+            "connection error) needs no note; a genuine issue you can diagnose from its history "
+            "(e.g. a merge conflict, a fixable misunderstanding) should get a specific, actionable "
+            "note. Does not end your turn — keep reviewing other stuck cards after this."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "card_id": {"type": "string", "description": "The card to retry."},
+                "note": {
+                    "type": "string",
+                    "description": "Optional instruction for the next attempt. Omit for a plain retry.",
+                },
+            },
+            "required": ["card_id"],
+        },
+    },
+}
+
+LEAVE_BLOCKED = {
+    "type": "function",
+    "function": {
+        "name": "leave_blocked",
+        "description": (
+            "Explicitly leave a stuck card alone for a human — use this for anything retrying can't "
+            "fix: missing configuration (no deploy config, no credentials), a decision only a human "
+            "can make, or a card that has already exhausted its automatic-retry budget. Records your "
+            "reasoning so a human reviewing later can see you looked at it. Does not end your turn."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "card_id": {"type": "string", "description": "The card to leave blocked."},
+                "reason": {"type": "string", "description": "Why retrying wouldn't help."},
+            },
+            "required": ["card_id", "reason"],
+        },
+    },
+}
+
+DONE_FOR_NOW = {
+    "type": "function",
+    "function": {
+        "name": "done_for_now",
+        "description": (
+            "Call this once you've reviewed every stuck card worth reviewing this pass (or there were "
+            "none). Ends your turn."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {"summary": {"type": "string", "description": "Brief summary of what you did."}},
+            "required": ["summary"],
+        },
+    },
+}
+
+REVIVER_TOOLS = [LIST_STUCK_CARDS, READ_CARD_HISTORY, REVIVE_CARD, LEAVE_BLOCKED, DONE_FOR_NOW]
+REVIVER_TERMINAL_TOOL = "done_for_now"
+REVIVER_ACTION_TOOLS = ("revive_card", "leave_blocked")

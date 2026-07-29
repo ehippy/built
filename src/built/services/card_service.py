@@ -1,12 +1,12 @@
 import re
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from built.db.models import Card, CardColumnVisit, CardEvent
 from built.domain import transitions
-from built.domain.enums import Column, EventType
+from built.domain.enums import Column, EventType, LifecycleState
 from built.domain.events import append_event
 from built.services.project_service import NotFoundError, get_project
 
@@ -66,6 +66,19 @@ async def get_board(session: AsyncSession, project_id: str) -> dict[Column, list
     for card in cards:
         board[card.column].append(card)
     return board
+
+
+async def list_stuck_cards(session: AsyncSession, *, limit: int = 50) -> list[Card]:
+    """BLOCKED or FAILED cards, longest-stuck first — the Reviver's (agent/reviver.py)
+    candidate pool. Ordered by updated_at so cards that have been waiting longest get
+    priority attention within a bounded pass."""
+    stmt = (
+        select(Card)
+        .where(Card.lifecycle_state.in_((LifecycleState.BLOCKED, LifecycleState.FAILED)))
+        .order_by(Card.updated_at)
+        .limit(limit)
+    )
+    return list((await session.scalars(stmt)).all())
 
 
 async def list_column_visits(session: AsyncSession, card_id: str) -> list[CardColumnVisit]:
@@ -144,6 +157,21 @@ async def get_previous_attempt_recap(
         lines.append("Its last actions there, most recent last (avoid repeating work already done):")
         lines.extend(_describe_tool_call_event(e.payload) for e in events)
     return "\n".join(lines)
+
+
+async def get_latest_attempt_recap(session: AsyncSession, card: Card) -> str | None:
+    """Same recap as get_previous_attempt_recap, but for the most recent attempt at
+    card's current column rather than the one before a not-yet-started attempt — the
+    Reviver (agent/reviver.py) wants "what happened last time," not "what happened
+    before whatever's about to happen next."""
+    attempt_count = await session.scalar(
+        select(func.count())
+        .select_from(CardColumnVisit)
+        .where(CardColumnVisit.card_id == card.id, CardColumnVisit.column == card.column)
+    )
+    return await get_previous_attempt_recap(
+        session, card.id, card.column, before_attempt=(attempt_count or 0) + 1
+    )
 
 
 async def list_events(

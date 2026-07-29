@@ -89,9 +89,7 @@ def estimate_tokens(messages: list[dict]) -> int:
     return tokens
 
 
-async def summarize_segment(
-    llm_client: LLMClient, *, conversation_text: str, model_name: str
-) -> str:
+async def summarize_segment(llm_client: LLMClient, *, conversation_text: str, model_name: str) -> str:
     """Ask the LLM to summarize a conversation segment into compact prose."""
     prompt = SUMMARY_PROMPT.format(conversation=conversation_text)
     summary_messages = [
@@ -134,9 +132,7 @@ def _build_conversation_text(messages: list[dict], start_idx: int) -> str:
             for tc in tool_calls:
                 fn = tc.get("function", {})
                 args = fn.get("arguments", "{}")
-                lines.append(
-                    f"[assistant tool call]: {fn.get('name', '?')}({args[:200]})"
-                )
+                lines.append(f"[assistant tool call]: {fn.get('name', '?')}({args[:200]})")
         else:
             lines.append(f"[{role}]: {content[:500]}")
     return "\n".join(lines)
@@ -146,10 +142,7 @@ def _format_summary_block(summary: str) -> dict:
     """Wrap a compact summary in a system message the LLM will carry."""
     return {
         "role": "system",
-        "content": (
-            "Earlier conversation summary (kept for context, not shown in full):\n"
-            f"{summary}"
-        ),
+        "content": (f"Earlier conversation summary (kept for context, not shown in full):\n{summary}"),
     }
 
 
@@ -195,8 +188,7 @@ async def compact(
                     args = tc.get("function", {}).get("arguments", "{}")
                     if len(args) > config.max_tool_result_chars:
                         tc["function"]["arguments"] = (
-                            args[: config.max_tool_result_chars]
-                            + f"... [truncated from {len(args)} chars]"
+                            args[: config.max_tool_result_chars] + f"... [truncated from {len(args)} chars]"
                         )
                         trimmed = True
         if trimmed:
@@ -220,7 +212,7 @@ async def compact(
         return messages[-config.keep_messages :]
 
     summary_block = _format_summary_block(summary)
-    compacted = [messages[0], summary_block] + list(messages[min(config.keep_messages, len(messages)):])
+    compacted = [messages[0], summary_block] + list(messages[min(config.keep_messages, len(messages)) :])
     new_token_count = estimate_tokens(compacted)
 
     # If still over budget, hard truncate the summary block's content.

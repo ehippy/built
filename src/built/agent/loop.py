@@ -112,9 +112,7 @@ async def run_column_visit(
     try:
         for iteration in range(1, max_iterations + 1):
             # Compact if the message list approaches the context window.
-            messages = await _maybe_compact(
-                messages, llm_client, config, iteration
-            )
+            messages = await _maybe_compact(messages, llm_client, config, iteration)
 
             result = await llm_client.complete(messages=messages, tools=tools)
             await append_event(

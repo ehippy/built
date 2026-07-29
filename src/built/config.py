@@ -26,6 +26,15 @@ class Settings(BaseSettings):
     orchestrator_concurrency: int = 4
     orchestrator_poll_interval_seconds: float = 1.5
 
+    # The Reviver (agent/reviver.py): an autonomous background pass over blocked/failed
+    # cards that decides whether to retry them (with a diagnostic note) or leave them
+    # for a human. Wakes on its own on a timer — no manual trigger.
+    reviver_enabled: bool = True
+    reviver_poll_interval_seconds: float = 600
+    reviver_max_cards_per_pass: int = 5
+    reviver_max_auto_revives: int = 3
+    reviver_max_iterations: int = 20
+
 
 def get_settings() -> Settings:
     return Settings()

@@ -137,6 +137,7 @@ class CardOut(BaseModel):
     latest_feedback: str | None
     deploy_attempt_count: int
     deploy_url: str | None
+    auto_revive_count: int
     created_at: datetime
     updated_at: datetime
 

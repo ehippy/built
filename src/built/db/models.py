@@ -155,6 +155,11 @@ class Card(Base):
     # autonomous pipeline) — surfaced to whichever column runs next, then cleared
     # after that one visit so it doesn't linger across later, unrelated retries.
     retry_note: Mapped[str | None] = mapped_column(Text, default=None)
+    # How many times the autonomous Reviver (agent/reviver.py) has retried this card,
+    # capped at settings.reviver_max_auto_revives — once reached, the Reviver leaves
+    # it alone permanently and it waits for a human. Not touched by a human-initiated
+    # retry, which has its own unlimited touchpoint outside the pipeline.
+    auto_revive_count: Mapped[int] = mapped_column(Integer, default=0)
     # PR URL (pr_to_operator mode) so the dashboard can link straight to it. Unused
     # (stays None) in auto_main mode.
     deploy_url: Mapped[str | None] = mapped_column(default=None)

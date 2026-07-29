@@ -1,17 +1,12 @@
 <div id="transcript" class="transcript" hx-get="/ui/cards/{{ card.id }}/events/fragment" hx-trigger="every 2s" hx-swap="outerHTML">
   {% for event in events %}
-  <div class="event type-{{ event.type }}">
+  <div class="event type-{{ event.type }}" id="event-{{ event.seq }}" hx-preserve="true">
     <div class="event-head">
       <span>#{{ event.seq }} · {{ event.type }}</span>
       <span>{{ event.created_at|timeago }}</span>
     </div>
     {% if event.type == "llm_response" %}
-      {% if event.payload.content %}
-      <details class="collapsible">
-        <summary>LLM response ({{ event.payload.content|length }} chars)</summary>
-        <pre>{{ event.payload.content }}</pre>
-      </details>
-      {% endif %}
+      {% if event.payload.content %}<pre>{{ event.payload.content }}</pre>{% endif %}
       {% if event.payload.tool_calls %}<div class="hint">tool calls: {{ event.payload.tool_calls|join(", ") }}</div>{% endif %}
     {% elif event.type == "tool_call" %}
       <div class="hint"><strong>{{ event.payload.name }}</strong>{% if event.payload.is_error %} (error){% endif %}</div>
@@ -21,15 +16,9 @@
       </details>
     {% elif event.type == "transition" %}
       <div class="hint">{{ event.payload.column }} &rarr; {{ event.payload.outcome }}</div>
-      <details class="collapsible">
-        <summary>Summary ({{ event.payload.summary|length }} chars)</summary>
-        <pre>{{ event.payload.summary }}</pre>
-      </details>
+      <pre>{{ event.payload.summary }}</pre>
     {% else %}
-      <details class="collapsible">
-        <summary>Details</summary>
-        <pre>{{ event.payload }}</pre>
-      </details>
+      <pre>{{ event.payload }}</pre>
     {% endif %}
   </div>
   {% else %}

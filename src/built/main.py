@@ -17,6 +17,7 @@ from built.api.routers import health
 from built.api.routers import projects as api_projects
 from built.config import settings
 from built.db.base import create_all
+from built.orchestrator.reviver import run_reviver_loop
 from built.orchestrator.worker import run_worker_pool
 from built.ui.routers import board as ui_board
 from built.ui.routers import cards as ui_cards
@@ -33,6 +34,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await create_all()
 
     worker_task: asyncio.Task | None = None
+    reviver_task: asyncio.Task | None = None
     stop_event = asyncio.Event()
     if settings.orchestrator_enabled:
         worker_task = asyncio.create_task(
@@ -42,13 +44,23 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 stop_event=stop_event,
             )
         )
+    if settings.reviver_enabled:
+        reviver_task = asyncio.create_task(
+            run_reviver_loop(
+                stop_event=stop_event,
+                poll_interval=settings.reviver_poll_interval_seconds,
+            )
+        )
 
     try:
         yield
     finally:
-        if worker_task is not None:
+        if worker_task is not None or reviver_task is not None:
             stop_event.set()
+        if worker_task is not None:
             await worker_task
+        if reviver_task is not None:
+            await reviver_task
 
 
 def create_app() -> FastAPI:

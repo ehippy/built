@@ -117,9 +117,7 @@ class TestCompactSummarization:
         assert len(client.calls) == 1, "should make one summarizer call"
         assert result[0]["role"] == "system"
         assert any(
-            "Earlier conversation summary" in m.get("content", "")
-            for m in result
-            if m["role"] == "system"
+            "Earlier conversation summary" in m.get("content", "") for m in result if m["role"] == "system"
         )
 
     @pytest.mark.asyncio

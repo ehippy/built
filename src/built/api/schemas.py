@@ -14,6 +14,7 @@ class ProjectCreate(BaseModel):
     max_revisions: int | None = None
     max_deploy_attempts: int | None = None
     max_iterations_per_run: int | None = None
+    max_tokens: int | None = None
 
 
 class ProjectUpdate(BaseModel):
@@ -24,6 +25,7 @@ class ProjectUpdate(BaseModel):
     max_revisions: int | None = None
     max_deploy_attempts: int | None = None
     max_iterations_per_run: int | None = None
+    max_tokens: int | None = None
 
 
 class DeployConfigIn(BaseModel):
@@ -56,6 +58,7 @@ class ProjectOut(BaseModel):
     max_revisions: int
     max_deploy_attempts: int
     max_iterations_per_run: int
+    max_tokens: int | None
     created_at: datetime
     updated_at: datetime
     archived_at: datetime | None
@@ -73,6 +76,7 @@ class EndpointConfigCreate(BaseModel):
     extra_params: dict = {}
     enabled: bool = True
     max_concurrency: int = 1
+    context_window: int | None = None
 
 
 class EndpointConfigUpdate(BaseModel):
@@ -85,6 +89,7 @@ class EndpointConfigUpdate(BaseModel):
     extra_params: dict | None = None
     enabled: bool | None = None
     max_concurrency: int | None = None
+    context_window: int | None = None
 
 
 class EndpointConfigOut(BaseModel):
@@ -101,6 +106,7 @@ class EndpointConfigOut(BaseModel):
     extra_params: dict
     enabled: bool
     max_concurrency: int
+    context_window: int | None
     created_at: datetime
 
 

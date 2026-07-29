@@ -9,6 +9,12 @@ import json
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from built.agent.context import build_discovery_prompt
+from built.agent.context_window import (
+    ContextWindowConfig,
+    compact,
+    estimate_tokens,
+)
+from built.config import settings as builtin_settings
 from built.db.models import Card, Project
 from built.llm.client import LLMClient
 from built.llm.tool_schemas import DISCOVERY_TERMINAL_TOOL, DISCOVERY_TOOLS, MAX_PROPOSED_TASKS
@@ -23,6 +29,7 @@ async def run_pm_discovery(
     llm_client: LLMClient,
     dispatcher: ToolDispatcher,
     max_iterations: int,
+    context_window_config: ContextWindowConfig | None = None,
 ) -> list[Card]:
     """Runs one discovery pass and returns whatever new cards it created — possibly
     none, if the model never called propose_tasks within the iteration budget or an
@@ -35,8 +42,24 @@ async def run_pm_discovery(
         {"role": "user", "content": user},
     ]
 
+    config = context_window_config or ContextWindowConfig(
+        max_tokens=builtin_settings.default_max_tokens,
+        keep_messages=builtin_settings.default_keep_messages,
+    )
+
     try:
         for _ in range(max_iterations):
+            # Compact if the message list approaches the context window.
+            token_count = estimate_tokens(messages)
+            budget = config.max_tokens - config.keep_tokens
+            if token_count > budget * 0.85:
+                messages = await compact(
+                    messages,
+                    llm_client,
+                    config,
+                    model_name="discovery",
+                )
+
             result = await llm_client.complete(messages=messages, tools=DISCOVERY_TOOLS)
 
             if not result.tool_calls:

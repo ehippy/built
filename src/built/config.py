@@ -15,10 +15,12 @@ class Settings(BaseSettings):
     # v1 security floor: a single shared API key required on mutating endpoints.
     api_key: str | None = None
 
-    # Default safety-valve caps (overridable per project).
+    # Safety-valve caps (overridable per project).
     default_max_revisions: int = 3
     default_max_deploy_attempts: int = 2
     default_max_iterations_per_run: int = 25
+    default_max_tokens: int = 128_000
+    default_keep_messages: int = 10
 
     orchestrator_enabled: bool = True
     orchestrator_concurrency: int = 4

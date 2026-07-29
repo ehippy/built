@@ -9,6 +9,7 @@
 
 <h1>{{ project.name }}</h1>
 <p class="subtitle">{{ project.slug }}</p>
+<p class="hint">Created {{ project.created_at|timeago }} · Last modified {{ project.updated_at|timeago }}</p>
 
 {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
 

@@ -40,7 +40,40 @@
     --flash-border: #1f5c46;
     --flash-text: #6ee7b7;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 1px rgba(0, 0, 0, 0.2);
-  }
+}
+
+details.collapsible {
+  margin-top: 0.4rem;
+}
+details.collapsible summary {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  user-select: none;
+  padding: 0.2rem 0;
+}
+details.collapsible summary::-webkit-details-marker {
+  display: none;
+}
+details.collapsible summary::before {
+  content: "▸";
+  font-size: 0.7rem;
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+details.collapsible[open] summary::before {
+  transform: rotate(90deg);
+}
+details.collapsible summary:hover {
+  color: var(--text);
+}
+details.collapsible pre {
+  margin: 0.4rem 0 0 0;
+}
 }
 :root[data-theme="dark"] {
   --bg: #17171b;
@@ -471,3 +504,65 @@ th {
   margin-bottom: 1rem;
   font-size: 0.85rem;
 }
+
+.live {
+  color: var(--state-active);
+  font-size: 0.75rem;
+  animation: pulse 1.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.card-tile.active-card .timestamp,
+.card-tile.active-card {
+  border-left: 4px solid var(--state-active);
+}
+.card-tile .timestamp {
+  color: color-mix(in srgb, var(--text-muted) 70%, var(--surface));
+  font-size: 0.74rem;
+  line-height: 1;
+  margin-top: 0.2rem;
+}
+
+.project-meta {
+  color: color-mix(in srgb, var(--text-muted) 65%, var(--surface));
+  font-size: 0.76rem;
+  margin-top: 0.3rem;
+}
+
+details.collapsible {
+  margin-top: 0.4rem;
+}
+details.collapsible summary {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  user-select: none;
+  padding: 0.2rem 0;
+}
+details.collapsible summary::-webkit-details-marker {
+  display: none;
+}
+details.collapsible summary::before {
+  content: "▸";
+  font-size: 0.7rem;
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+details.collapsible[open] summary::before {
+  transform: rotate(90deg);
+}
+details.collapsible summary:hover {
+  color: var(--text);
+}
+details.collapsible pre {
+  margin: 0.4rem 0 0 0;
+}
+

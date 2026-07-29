@@ -20,6 +20,11 @@ from built.agent.context import (
     build_pm_prompt,
     build_tester_prompt,
 )
+from built.agent.context_window import (
+    ContextWindowConfig,
+    compact,
+    estimate_tokens,
+)
 from built.db.models import Card, CardColumnVisit, Project
 from built.domain import run_attempts, transitions
 from built.domain.enums import DeployMode, EventType
@@ -37,6 +42,30 @@ from built.llm.tool_schemas import (
 )
 from built.sandbox import deploy_runner
 from built.tools.dispatcher import DispatchOutcome, ToolDispatcher
+
+
+async def _maybe_compact(
+    messages: list[dict],
+    llm_client: LLMClient,
+    config: ContextWindowConfig,
+    iteration: int,
+) -> list[dict]:
+    """Compact messages if they approach the context window. Skips silently
+    when config.max_tokens is very large, and only does a first-time compact
+    to avoid repeated summarization overhead."""
+    token_count = estimate_tokens(messages)
+    budget = config.max_tokens - config.keep_tokens
+    if token_count <= budget * 0.85:
+        return messages
+    # Compact the message list — the summarizer uses the first endpoint in
+    # the chain (same model family is typical for a fallback chain).
+    compacted = await compact(
+        messages,
+        llm_client,
+        config,
+        model_name=f"iteration-{iteration}",
+    )
+    return compacted
 
 
 @dataclass
@@ -65,6 +94,7 @@ async def run_column_visit(
     user_prompt: str,
     tools: list[dict],
     terminal_handlers: dict[str, TerminalHandler],
+    context_window_config: ContextWindowConfig | None = None,
     on_tool_result: OnToolResult | None = None,
 ) -> Card:
     """Runs one column visit to completion and applies the resulting domain
@@ -75,8 +105,17 @@ async def run_column_visit(
         {"role": "user", "content": user_prompt},
     ]
 
+    config = context_window_config or ContextWindowConfig(
+        max_tokens=128_000,
+    )
+
     try:
         for iteration in range(1, max_iterations + 1):
+            # Compact if the message list approaches the context window.
+            messages = await _maybe_compact(
+                messages, llm_client, config, iteration
+            )
+
             result = await llm_client.complete(messages=messages, tools=tools)
             await append_event(
                 session,
@@ -293,6 +332,7 @@ async def run_pm_visit(
     llm_client: LLMClient,
     dispatcher: ToolDispatcher,
     max_iterations: int,
+    context_window_config: ContextWindowConfig | None = None,
     retry_recap: str | None = None,
     retry_note: str | None = None,
 ) -> Card:
@@ -308,6 +348,7 @@ async def run_pm_visit(
         user_prompt=user,
         tools=PM_TOOLS,
         terminal_handlers={PM_TERMINAL_TOOL: _pm_submit_spec_handler},
+        context_window_config=context_window_config,
     )
 
 
@@ -320,6 +361,7 @@ async def run_developer_visit(
     llm_client: LLMClient,
     dispatcher: ToolDispatcher,
     max_iterations: int,
+    context_window_config: ContextWindowConfig | None = None,
     retry_recap: str | None = None,
     retry_note: str | None = None,
 ) -> Card:
@@ -335,6 +377,7 @@ async def run_developer_visit(
         user_prompt=user,
         tools=DEVELOPER_TOOLS,
         terminal_handlers={DEVELOPER_TERMINAL_TOOL: _developer_submit_for_test_handler},
+        context_window_config=context_window_config,
     )
 
 
@@ -347,6 +390,7 @@ async def run_tester_visit(
     llm_client: LLMClient,
     dispatcher: ToolDispatcher,
     max_iterations: int,
+    context_window_config: ContextWindowConfig | None = None,
     developer_summary: str | None = None,
     retry_recap: str | None = None,
     retry_note: str | None = None,
@@ -373,6 +417,7 @@ async def run_tester_visit(
             "request_changes": _tester_request_changes_handler,
         },
         on_tool_result=_record_bash_run_attempt,
+        context_window_config=context_window_config,
     )
 
 
@@ -385,6 +430,7 @@ async def run_deployer_visit(
     llm_client: LLMClient,
     dispatcher: ToolDispatcher,
     max_iterations: int,
+    context_window_config: ContextWindowConfig | None = None,
     mode: DeployMode,
     retry_recap: str | None = None,
     retry_note: str | None = None,
@@ -407,4 +453,5 @@ async def run_deployer_visit(
         user_prompt=user,
         tools=deployer_tools(mode),
         terminal_handlers=terminal_handlers,
+        context_window_config=context_window_config,
     )

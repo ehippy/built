@@ -57,6 +57,7 @@
   <a class="project-card" href="/ui/projects/{{ project.id }}/board">
     <strong>{{ project.name }}</strong>
     <div class="goal">{{ project.overarching_goal }}</div>
+    <div class="project-meta">{{ project.updated_at|timeago }}</div>
   </a>
   {% else %}
   <p class="subtitle">No projects yet — click "New project" above to create one.</p>

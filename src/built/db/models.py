@@ -45,6 +45,9 @@ class Project(Base):
     max_revisions: Mapped[int] = mapped_column(Integer, default=3)
     max_deploy_attempts: Mapped[int] = mapped_column(Integer, default=2)
     max_iterations_per_run: Mapped[int] = mapped_column(Integer, default=25)
+    # Context window size in tokens. Falls back to settings.default_max_tokens (128k)
+    # if NULL — useful for smaller models that need a tighter budget.
+    max_tokens: Mapped[int | None] = mapped_column(Integer, default=None)
 
     # Python-side defaults (not server_default=func.now()): a server-computed default
     # is only known to SQLAlchemy after a post-flush refresh, which is itself a lazy
@@ -118,6 +121,10 @@ class EndpointConfig(Base):
     # Default of 1 matches a single local model instance with no continuous batching;
     # a hosted/scaled endpoint can be configured higher.
     max_concurrency: Mapped[int] = mapped_column(Integer, default=1)
+    # Context window size in tokens for this specific model. Falls back to
+    # Project.max_tokens, then to settings.default_max_tokens if NULL. Helps the
+    # agent loop know when to compact before hitting a context-error from the API.
+    context_window: Mapped[int | None] = mapped_column(Integer, default=None)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 

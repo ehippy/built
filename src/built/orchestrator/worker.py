@@ -11,8 +11,15 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from built.agent.context_window import ContextWindowConfig
 from built.agent.discovery import run_pm_discovery
-from built.agent.loop import run_deployer_visit, run_developer_visit, run_pm_visit, run_tester_visit
+from built.agent.loop import (
+    run_deployer_visit,
+    run_developer_visit,
+    run_pm_visit,
+    run_tester_visit,
+)
+from built.config import settings as builtin_settings
 from built.db.base import async_session_factory
 from built.db.models import Card, Project
 from built.domain import transitions
@@ -134,6 +141,19 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
         await release_claim(session, card)
         return
 
+    # Resolve the context window budget: per-endpoint model size → per-project override → default.
+    if project.max_tokens:
+        max_tokens = project.max_tokens
+    elif any(e.context_window for e in chain):
+        max_tokens = max(e.context_window for e in chain if e.context_window)
+    else:
+        max_tokens = builtin_settings.default_max_tokens
+
+    context_window_config = ContextWindowConfig(
+        max_tokens=max_tokens,
+        keep_messages=builtin_settings.default_keep_messages,
+    )
+
     if card.worktree_path != str(worktree_path):
         card.worktree_path = str(worktree_path)
         await session.commit()
@@ -168,6 +188,7 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
             llm_client=llm_client,
             dispatcher=dispatcher,
             max_iterations=max_iterations,
+            context_window_config=context_window_config,
             retry_recap=retry_recap,
             retry_note=retry_note,
         )
@@ -180,6 +201,7 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
             llm_client=llm_client,
             dispatcher=dispatcher,
             max_iterations=max_iterations,
+            context_window_config=context_window_config,
             retry_recap=retry_recap,
             retry_note=retry_note,
         )
@@ -193,6 +215,7 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
             llm_client=llm_client,
             dispatcher=dispatcher,
             max_iterations=max_iterations,
+            context_window_config=context_window_config,
             developer_summary=developer_summary,
             retry_recap=retry_recap,
             retry_note=retry_note,
@@ -206,6 +229,7 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
             llm_client=llm_client,
             dispatcher=dispatcher,
             max_iterations=max_iterations,
+            context_window_config=context_window_config,
             mode=project.deploy_config.mode,
             retry_recap=retry_recap,
             retry_note=retry_note,
@@ -265,12 +289,24 @@ async def run_project_discovery(project_id: str) -> None:
                 ctx=ToolContext(card_id=f"discovery-{project.id}", worktree_root=wt_path),
                 executor=DockerCommandExecutor(**executor_kwargs),
             )
+
+            if project.max_tokens:
+                max_tokens = project.max_tokens
+            elif any(e.context_window for e in chain):
+                max_tokens = max(e.context_window for e in chain if e.context_window)
+            else:
+                max_tokens = builtin_settings.default_max_tokens
+
             created = await run_pm_discovery(
                 session,
                 project,
                 llm_client=llm_client,
                 dispatcher=dispatcher,
                 max_iterations=project.max_iterations_per_run,
+                context_window_config=ContextWindowConfig(
+                    max_tokens=max_tokens,
+                    keep_messages=builtin_settings.default_keep_messages,
+                ),
             )
             logger.info("discovery for project %s created %d card(s)", project_id, len(created))
     finally:

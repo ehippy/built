@@ -31,3 +31,39 @@
 
   render();
 })();
+
+// --- Transcript details state preservation ---
+// HTMX replaces the entire <div id="transcript"> on each 2s poll, which clears native
+// <details> open/closed state. This handler remembers which details were expanded before
+// swap and re-opens them on the new fragment.
+(function () {
+  "use strict";
+  var transcript = document.getElementById("transcript");
+  if (!transcript) return;
+
+  transcript.addEventListener("htmx:aroundSwap", function (evt) {
+    // Collect identifiers of open details before swap wipes the DOM.
+    var openKeys = [];
+    transcript.querySelectorAll("details[open]").forEach(function (det) {
+      var eventDiv = det.closest(".event");
+      if (!eventDiv) return;
+      var head = eventDiv.querySelector(".event-head span:first-child");
+      if (!head) return;
+      openKeys.push(head.textContent.trim());
+    });
+    this._openKeys = openKeys;
+  }.bind(transcript));
+
+  transcript.addEventListener("htmx:afterSwap", function (evt) {
+    if (!this._openKeys) return;
+    this.querySelectorAll(".event").forEach(function (eventDiv) {
+      var head = eventDiv.querySelector(".event-head span:first-child");
+      if (!head) return;
+      var key = head.textContent.trim();
+      if (this._openKeys.indexOf(key) !== -1) {
+        var det = eventDiv.querySelector("details");
+        if (det) det.setAttribute("open", "");
+      }
+    }.bind(this));
+  });
+})();

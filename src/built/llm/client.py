@@ -69,17 +69,33 @@ class AllEndpointsFailedError(Exception):
         super().__init__(f"every endpoint in the fallback chain failed: {errors}")
 
 
+def _resolve_context_window(chain: list[EndpointConfig]) -> int:
+    """Return the smallest non-NULL context_window from the chain, or 128k as default."""
+    from built.config import settings
+
+    configured = [e.context_window for e in chain if e.context_window]
+    if configured:
+        return min(configured)
+    return settings.default_max_tokens
+
+
 class FallbackLLMClient:
     """Tries each EndpointConfig in priority order; the first one that responds wins.
     Endpoints not flagged `supports_tool_calling` are dropped at construction time —
     every column relies on tool calls for its terminal actions, so such an endpoint
-    can never usefully serve this client regardless of how the call goes."""
+    can never usefully serve this client regardless of how the call goes.
 
-    def __init__(self, chain: list[EndpointConfig]):
+    Optionally carries a `context_window` budget (in tokens) so the agent loop
+    knows when to compact before the API returns a context-length error.
+    """
+
+    def __init__(self, chain: list[EndpointConfig], *, context_window: int | None = None):
         usable = [e for e in chain if e.supports_tool_calling]
         if not usable:
             raise ValueError("no usable (tool-calling) endpoints in the resolved fallback chain")
         self._chain = usable
+        # Resolve context window: explicit override → endpoint-level → project-level → default.
+        self.context_window = context_window or _resolve_context_window(usable)
 
     async def complete(self, *, messages: list[dict], tools: list[dict]) -> LLMResult:
         errors: dict[str, str] = {}

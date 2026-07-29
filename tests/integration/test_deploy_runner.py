@@ -103,6 +103,36 @@ async def test_run_auto_main_deploy_clean_merge_and_deploy_success(db_session, d
     assert (deployable_repo_remote / "app.py").read_text().count("farewell") == 1
 
 
+async def test_run_auto_main_deploy_discards_stray_untracked_files_before_a_fresh_merge(
+    db_session, deployable_repo_remote
+):
+    """Regression: observed in production — a Deployer agent preemptively wrote a
+    file into the worktree before ever calling run_deploy (misreading "the file
+    isn't here yet" as something it needed to create). That stray untracked file
+    then blocked the real merge with an unrelated git error ("untracked working
+    tree file would be overwritten"), not a real conflict — and the agent has no
+    tool that can clean that up itself. A fresh merge attempt must discard
+    anything sitting in the worktree first, precisely so a model's mistake here
+    can never wedge the deploy."""
+    project = await _make_project(db_session, deployable_repo_remote, command="true")
+    card = await _make_card_with_change(
+        db_session,
+        project,
+        "add farewell",
+        content="def greet():\n    return 'hi'\n\n\ndef farewell():\n    return 'bye'\n",
+    )
+
+    wt_path = await ensure_tool_worktree(project, tool="deployer")
+    (wt_path / "app.py").write_text("this is NOT what the card actually implemented\n")
+
+    result = await deploy_runner.run_auto_main_deploy(project, card, wt_path)
+
+    assert result.success is True, result.message
+    assert result.conflict is False
+    assert "farewell" in (deployable_repo_remote / "app.py").read_text()
+    assert "NOT what the card" not in (deployable_repo_remote / "app.py").read_text()
+
+
 async def test_run_auto_main_deploy_with_no_deploy_step_still_merges_and_succeeds(
     db_session, deployable_repo_remote
 ):

@@ -78,6 +78,16 @@ async def run_auto_main_deploy(project: Project, card: Card, wt_path: Path) -> D
             author_email=_MERGE_AUTHOR_EMAIL,
         )
     else:
+        # A fresh merge attempt, not a continuation — discard anything sitting in
+        # the worktree first. The agent's file tools exist to fix an *actual*
+        # merge conflict, but nothing stops it from writing files before ever
+        # calling run_deploy (observed in practice: a model preemptively
+        # reimplementing a file it expected to already be there). Stray writes
+        # like that would otherwise block the merge with an unrelated git error
+        # ("untracked working tree file would be overwritten"), not a real
+        # conflict — and the agent has no tool that can clean that up itself.
+        await run_git("reset", "--hard", "HEAD", cwd=wt_path)
+        await run_git("clean", "-fd", cwd=wt_path)
         try:
             await run_git(
                 "-c",

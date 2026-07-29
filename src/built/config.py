@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -10,7 +11,14 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="BUILT_", env_file=".env", extra="ignore")
 
     data_dir: Path = DEFAULT_DATA_DIR
-    database_url: str = f"sqlite+aiosqlite:///{DEFAULT_DATA_DIR / 'built.db'}"
+    # Derived from data_dir in _default_database_url below unless BUILT_DATABASE_URL
+    # is set explicitly. A bare f-string default here would bake in DEFAULT_DATA_DIR
+    # at class-definition time and silently ignore BUILT_DATA_DIR overrides at
+    # runtime — confirmed the hard way: pointing BUILT_DATA_DIR at a scratch
+    # directory for an isolated test run still wrote straight into the real
+    # data/built.db, because this field's old hardcoded default never looked at
+    # data_dir at all.
+    database_url: str = ""
 
     # Level for the unified "built" logger (see logging_config.py) — every
     # built.* module logger is a child of it. "INFO" surfaces normal background-
@@ -92,6 +100,15 @@ class Settings(BaseSettings):
     # How long to keep polling a commit whose checks are still in progress before
     # giving up and blocking the card for a human.
     ci_watcher_timeout_seconds: int = 3600
+
+    @model_validator(mode="after")
+    def _default_database_url(self) -> "Settings":
+        """Only fills in database_url when it wasn't explicitly provided (env var
+        or constructor kwarg) — model_fields_set excludes fields still on their
+        class default, so an explicit BUILT_DATABASE_URL always wins over this."""
+        if "database_url" not in self.model_fields_set:
+            self.database_url = f"sqlite+aiosqlite:///{self.data_dir / 'built.db'}"
+        return self
 
 
 def get_settings() -> Settings:

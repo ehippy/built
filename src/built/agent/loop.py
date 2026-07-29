@@ -225,7 +225,11 @@ async def run_column_visit(
         await session.commit()
         return card
     except Exception as exc:  # noqa: BLE001 — deliberate: any unhandled failure blocks the card, not the process
-        await transitions.fail_visit_with_error(session, card, visit, message=f"unhandled error: {exc!r}")
+        # str(), not repr() — this is displayed as-is in the card transcript, and
+        # repr() on something like AllEndpointsFailedError (whose own message is
+        # already assembled from other exceptions' messages) just re-escapes an
+        # already-readable string into a wall of backslashes.
+        await transitions.fail_visit_with_error(session, card, visit, message=f"unhandled error: {exc}")
         await session.commit()
         return card
 

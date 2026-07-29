@@ -5,7 +5,7 @@ import pytest
 
 import built.llm.client as llm_client_module
 from built.db.models import EndpointConfig
-from built.llm.client import FallbackLLMClient
+from built.llm.client import AllEndpointsFailedError, FallbackLLMClient
 
 
 def _endpoint(**overrides) -> EndpointConfig:
@@ -27,6 +27,36 @@ def test_drops_endpoints_that_dont_support_tool_calling():
     non_tool_calling = _endpoint(supports_tool_calling=False)
     with pytest.raises(ValueError, match="no usable"):
         FallbackLLMClient([non_tool_calling])
+
+
+async def test_all_endpoints_failed_error_preserves_the_original_message_verbatim(monkeypatch):
+    """Regression: repr()'ing an exception's message at multiple layers (per-endpoint
+    capture, dict interpolation, the caller's own error handling) turned a single
+    JSON parse error into a wall of stacked backslashes in the dashboard transcript
+    — each layer re-escaped a string that was already fully escaped by the layer
+    before it. str(), not repr(), at every layer must leave the original message
+    byte-for-byte, not multiply its backslash count."""
+    endpoint = _endpoint(max_concurrency=1)
+    # Mimics a real litellm JSON-parse-error message: it quotes a fragment of raw
+    # JSON, which itself contains literal backslash-n sequences (not real
+    # newlines) — exactly the shape that exposed the bug.
+    raw_message = (
+        "OpenAIException - Failed to parse tool call arguments as JSON: "
+        "invalid string; last read: '\"use strict\";\\n'"
+    )
+
+    async def _failing_acompletion(**kwargs):
+        raise RuntimeError(raw_message)
+
+    monkeypatch.setattr(llm_client_module.litellm, "acompletion", _failing_acompletion)
+    client = FallbackLLMClient([endpoint])
+
+    with pytest.raises(AllEndpointsFailedError) as exc_info:
+        await client.complete(messages=[], tools=[])
+
+    message = str(exc_info.value)
+    assert raw_message in message
+    assert message.count("\\") == raw_message.count("\\")
 
 
 def test_keeps_only_tool_calling_endpoints_in_priority_order():

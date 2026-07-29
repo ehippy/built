@@ -165,7 +165,7 @@ async def run_curation_pass(
         # Still record what happened — otherwise a broken endpoint just looks like
         # the pass never ran at all, with no clue why in the status panel.
         await append_curation_event(
-            session, project_id=project.id, kind=kind, type=EventType.ERROR, payload={"error": repr(exc)}
+            session, project_id=project.id, kind=kind, type=EventType.ERROR, payload={"error": str(exc)}
         )
         await session.commit()
         return []

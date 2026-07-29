@@ -65,7 +65,13 @@ class LLMClient(Protocol):
 class AllEndpointsFailedError(Exception):
     def __init__(self, errors: dict[str, str]):
         self.errors = errors
-        super().__init__(f"every endpoint in the fallback chain failed: {errors}")
+        # Built by hand, not an f-string embedding `errors` directly — interpolating
+        # a dict calls repr() on every value, re-escaping a message that (per
+        # FallbackLLMClient.complete below) is already a plain str. Stacked repr()
+        # calls are exactly what turned a single JSON parse error into a wall of
+        # backslashes in the dashboard transcript.
+        detail = "; ".join(f"{endpoint}: {message}" for endpoint, message in errors.items())
+        super().__init__(f"every endpoint in the fallback chain failed: {detail}")
 
 
 def _resolve_context_window(chain: list[EndpointConfig]) -> int:
@@ -102,7 +108,10 @@ class FallbackLLMClient:
             try:
                 return await self._complete_one(endpoint, messages=messages, tools=tools)
             except Exception as exc:  # noqa: BLE001 — deliberate: fall through to the next endpoint
-                errors[f"{endpoint.base_url}::{endpoint.model}"] = repr(exc)
+                # str(), not repr() — this message is displayed as-is (see
+                # AllEndpointsFailedError and agent/loop.py's error transcript),
+                # and repr() would wrap it in an extra layer of quoting/escaping.
+                errors[f"{endpoint.base_url}::{endpoint.model}"] = str(exc)
         raise AllEndpointsFailedError(errors)
 
     async def _complete_one(

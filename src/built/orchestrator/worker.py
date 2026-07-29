@@ -208,7 +208,8 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
             worktree_path = await create_card_worktree(project, card)
     except Exception as exc:  # noqa: BLE001 — deliberate: setup failures block the card, not the worker
         visit = await transitions.start_visit(session, card)
-        await transitions.fail_visit_with_error(session, card, visit, message=f"setup failed: {exc!r}")
+        # str(), not repr() — see agent/loop.py's identical comment on the same fix.
+        await transitions.fail_visit_with_error(session, card, visit, message=f"setup failed: {exc}")
         await session.commit()
         await release_claim(session, card)
         return

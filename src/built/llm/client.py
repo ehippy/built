@@ -21,7 +21,6 @@ import litellm
 
 from built.db.models import EndpointConfig
 
-DEFAULT_TIMEOUT_SECONDS = 120
 DEFAULT_NUM_RETRIES = 1
 
 # Keyed by (base_url, model) — the physical backend, not the EndpointConfig row —
@@ -109,6 +108,8 @@ class FallbackLLMClient:
     async def _complete_one(
         self, endpoint: EndpointConfig, *, messages: list[dict], tools: list[dict]
     ) -> LLMResult:
+        from built.config import settings
+
         # Never let more than endpoint.max_concurrency requests reach this physical
         # backend at once — a local single-model server doesn't parallelize well, and
         # letting concurrent visits pile requests onto it is what actually caused the
@@ -123,7 +124,7 @@ class FallbackLLMClient:
                 messages=messages,
                 tools=tools or None,
                 num_retries=DEFAULT_NUM_RETRIES,
-                timeout=DEFAULT_TIMEOUT_SECONDS,
+                timeout=settings.llm_timeout_seconds,
             )
             latency_ms = int((time.monotonic() - start) * 1000)
 

@@ -183,6 +183,26 @@ async def test_claims_cards_closer_to_done_first(db_session):
     assert claimed.id == deployer_card.id
 
 
+async def test_does_not_claim_an_archived_card(db_session):
+    project = await _project(db_session, _n="15")
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    await card_service.archive_card(db_session, card.id)
+
+    assert await claim_next_card(db_session, "worker-a") is None
+
+
+async def test_unarchiving_a_card_makes_it_claimable_again(db_session):
+    project = await _project(db_session, _n="16")
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    await card_service.archive_card(db_session, card.id)
+    await card_service.unarchive_card(db_session, card.id)
+
+    claimed = await claim_next_card(db_session, "worker-a")
+
+    assert claimed is not None
+    assert claimed.id == card.id
+
+
 async def test_requeue_stale_claims_frees_expired_but_not_fresh_claims(db_session):
     project = await _project(db_session, _n="7")
     stale = await card_service.create_card(db_session, project.id, title="stale", raw_request="r")

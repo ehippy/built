@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query, status
 
 from built.api.deps import RequireApiKey, SessionDep
-from built.api.schemas import CardColumnVisitOut, CardCreate, CardEventOut, CardOut, CardRetryIn
+from built.api.schemas import CardColumnVisitOut, CardCreate, CardEditIn, CardEventOut, CardOut, CardRetryIn
 from built.services import card_service
 from built.services.project_service import NotFoundError
 
@@ -18,8 +18,8 @@ async def create_card(project_id: str, body: CardCreate, session: SessionDep, _:
 
 
 @router.get("/projects/{project_id}/cards", response_model=list[CardOut])
-async def list_cards(project_id: str, session: SessionDep) -> list[CardOut]:
-    cards = await card_service.list_cards(session, project_id)
+async def list_cards(project_id: str, session: SessionDep, include_archived: bool = False) -> list[CardOut]:
+    cards = await card_service.list_cards(session, project_id, include_archived=include_archived)
     return [CardOut.model_validate(c) for c in cards]
 
 
@@ -79,4 +79,31 @@ async def cancel_card(card_id: str, session: SessionDep, _: RequireApiKey) -> Ca
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return CardOut.model_validate(card)
+
+
+@router.patch("/cards/{card_id}", response_model=CardOut)
+async def edit_card(card_id: str, body: CardEditIn, session: SessionDep, _: RequireApiKey) -> CardOut:
+    try:
+        card = await card_service.update_card(session, card_id, **body.model_dump())
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return CardOut.model_validate(card)
+
+
+@router.post("/cards/{card_id}/archive", response_model=CardOut)
+async def archive_card(card_id: str, session: SessionDep, _: RequireApiKey) -> CardOut:
+    try:
+        card = await card_service.archive_card(session, card_id)
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return CardOut.model_validate(card)
+
+
+@router.post("/cards/{card_id}/unarchive", response_model=CardOut)
+async def unarchive_card(card_id: str, session: SessionDep, _: RequireApiKey) -> CardOut:
+    try:
+        card = await card_service.unarchive_card(session, card_id)
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     return CardOut.model_validate(card)

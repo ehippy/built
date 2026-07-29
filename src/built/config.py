@@ -23,8 +23,19 @@ class Settings(BaseSettings):
     default_keep_messages: int = 10
 
     orchestrator_enabled: bool = True
-    orchestrator_concurrency: int = 4
+    # Matched to the single local LLM endpoint's real serial capacity (max_concurrency=1
+    # today) — a higher value just lets more projects' cards get claimed than the
+    # backend can actually get to before their lease/timeout, piling up queued LLM
+    # calls that time out instead of completing. Raise this only alongside more (or
+    # faster) LLM capacity.
+    orchestrator_concurrency: int = 1
     orchestrator_poll_interval_seconds: float = 1.5
+
+    # Per-call timeout passed to litellm.acompletion. Local single-model servers can be
+    # slow, especially under queued load from the per-endpoint concurrency semaphore —
+    # too tight a timeout fails calls that just needed more time, not calls that are
+    # actually stuck.
+    llm_timeout_seconds: float = 300
 
     # The Reviver (agent/reviver.py): an autonomous background pass over blocked/failed
     # cards that decides whether to retry them (with a diagnostic note) or leave them

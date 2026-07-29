@@ -12,18 +12,22 @@ router = APIRouter(prefix="/ui", tags=["ui"])
 
 
 @router.get("/projects/{project_id}/board")
-async def board(project_id: str, request: Request, session: SessionDep):
+async def board(project_id: str, request: Request, session: SessionDep, show_archived: bool = False):
     project = await project_service.get_project(session, project_id)
-    board = await card_service.get_board(session, project_id)
-    return templates.TemplateResponse(request, "board.html.j2", {"project": project, "board": board})
+    board = await card_service.get_board(session, project_id, include_archived=show_archived)
+    return templates.TemplateResponse(
+        request, "board.html.j2", {"project": project, "board": board, "show_archived": show_archived}
+    )
 
 
 @router.get("/projects/{project_id}/board/fragment")
-async def board_fragment(project_id: str, request: Request, session: SessionDep):
+async def board_fragment(project_id: str, request: Request, session: SessionDep, show_archived: bool = False):
     project = await project_service.get_project(session, project_id)
-    board = await card_service.get_board(session, project_id)
+    board = await card_service.get_board(session, project_id, include_archived=show_archived)
     return templates.TemplateResponse(
-        request, "_board_fragment.html.j2", {"project": project, "board": board}
+        request,
+        "_board_fragment.html.j2",
+        {"project": project, "board": board, "show_archived": show_archived},
     )
 
 

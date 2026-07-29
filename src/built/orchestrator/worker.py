@@ -73,7 +73,9 @@ async def claim_next_card(session: AsyncSession, worker_id: str) -> Card | None:
 
     A paused project (Project.paused_at set) is excluded the same way — a human
     asked to have this repo left alone, so no new claims start; a claim already in
-    flight when pause was clicked still runs to completion."""
+    flight when pause was clicked still runs to completion. An archived card
+    (Card.archived_at set) is excluded outright — a human decided this one isn't
+    worth doing."""
     now = datetime.now(UTC)
     busy_project_ids = select(Card.project_id).where(
         Card.claimed_by_worker_id.is_not(None),
@@ -85,6 +87,7 @@ async def claim_next_card(session: AsyncSession, worker_id: str) -> Card | None:
         .where(
             Card.lifecycle_state == LifecycleState.ACTIVE,
             Card.column.in_(IMPLEMENTED_COLUMNS),
+            Card.archived_at.is_(None),
             or_(Card.claimed_by_worker_id.is_(None), Card.lease_expires_at < now),
             Card.project_id.not_in(busy_project_ids),
             Card.project_id.not_in(paused_project_ids),
@@ -99,6 +102,7 @@ async def claim_next_card(session: AsyncSession, worker_id: str) -> Card | None:
         update(Card)
         .where(
             Card.id == candidate_id,
+            Card.archived_at.is_(None),
             or_(Card.claimed_by_worker_id.is_(None), Card.lease_expires_at < now),
             Card.project_id.not_in(busy_project_ids),
             Card.project_id.not_in(paused_project_ids),

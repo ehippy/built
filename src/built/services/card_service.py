@@ -1,4 +1,5 @@
 import re
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,15 +54,20 @@ async def get_card(session: AsyncSession, card_id: str, *, with_visits: bool = F
     return card
 
 
-async def list_cards(session: AsyncSession, project_id: str) -> list[Card]:
+async def list_cards(session: AsyncSession, project_id: str, *, include_archived: bool = False) -> list[Card]:
     stmt = select(Card).where(Card.project_id == project_id).order_by(Card.created_at)
+    if not include_archived:
+        stmt = stmt.where(Card.archived_at.is_(None))
     return list((await session.scalars(stmt)).all())
 
 
-async def get_board(session: AsyncSession, project_id: str) -> dict[Column, list[Card]]:
+async def get_board(
+    session: AsyncSession, project_id: str, *, include_archived: bool = False
+) -> dict[Column, list[Card]]:
     """Cards for a project, grouped by their current column — what the dashboard and
-    the `/board` API endpoint render."""
-    cards = await list_cards(session, project_id)
+    the `/board` API endpoint render. Archived cards are left off by default — that's
+    the whole point of archiving something."""
+    cards = await list_cards(session, project_id, include_archived=include_archived)
     board: dict[Column, list[Card]] = {column: [] for column in Column}
     for card in cards:
         board[card.column].append(card)
@@ -253,5 +259,34 @@ async def retry_card(session: AsyncSession, card_id: str, *, note: str | None = 
 async def cancel_card(session: AsyncSession, card_id: str) -> Card:
     card = await get_card(session, card_id)
     await transitions.cancel_card(session, card)
+    await session.flush()
+    return card
+
+
+async def update_card(session: AsyncSession, card_id: str, *, title: str, raw_request: str) -> Card:
+    """Edits the two fields a human actually authors (title, raw_request). Doesn't
+    touch spec/acceptance_criteria — those are PM-generated once the card's been
+    through that column, and an in-flight visit may already be relying on them."""
+    card = await get_card(session, card_id)
+    card.title = title
+    card.raw_request = raw_request
+    await session.flush()
+    return card
+
+
+async def archive_card(session: AsyncSession, card_id: str) -> Card:
+    """Hides the card from the board and stops the orchestrator from ever claiming
+    it again — doesn't touch lifecycle_state or an in-flight claim, so a visit
+    already running finishes normally. History/events/visits are untouched; the card
+    stays reachable at its own URL, which is where Unarchive lives."""
+    card = await get_card(session, card_id)
+    card.archived_at = datetime.now(UTC)
+    await session.flush()
+    return card
+
+
+async def unarchive_card(session: AsyncSession, card_id: str) -> Card:
+    card = await get_card(session, card_id)
+    card.archived_at = None
     await session.flush()
     return card

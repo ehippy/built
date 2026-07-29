@@ -330,6 +330,13 @@ th {
 .card-tile.blocked { border-left-color: var(--state-blocked); }
 .card-tile.done { border-left-color: var(--state-done); }
 .card-tile.failed { border-left-color: var(--state-failed); }
+.card-tile.archived-card {
+  border-left-color: var(--text-muted);
+  opacity: 0.6;
+}
+.show-archived-toggle {
+  margin: 0 0 0.75rem;
+}
 .card-tile .title {
   display: flex;
   align-items: center;

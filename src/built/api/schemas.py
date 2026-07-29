@@ -120,6 +120,11 @@ class CardRetryIn(BaseModel):
     note: str | None = None
 
 
+class CardEditIn(BaseModel):
+    title: str
+    raw_request: str
+
+
 class CardOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -139,6 +144,7 @@ class CardOut(BaseModel):
     deploy_attempt_count: int
     deploy_url: str | None
     auto_revive_count: int
+    archived_at: datetime | None
     created_at: datetime
     updated_at: datetime
 

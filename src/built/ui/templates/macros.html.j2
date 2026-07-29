@@ -3,13 +3,14 @@
 {%- endmacro %}
 
 {% macro card_tile(card) -%}
-<a class="card-tile {{ card.lifecycle_state }} {% if card.is_being_worked %}active-card{% endif %}" href="/ui/cards/{{ card.id }}">
+<a class="card-tile {{ card.lifecycle_state }} {% if card.is_being_worked %}active-card{% endif %} {% if card.archived_at %}archived-card{% endif %}" href="/ui/cards/{{ card.id }}">
   <div class="title">
     {{ card.title }}
     {% if card.is_being_worked %}<span class="spinner" title="An agent is actively working on this card"></span>{% endif %}
   </div>
   <div class="meta">
     {{ badge(card.lifecycle_state) }}
+    {% if card.archived_at %}<span class="badge paused">archived</span>{% endif %}
     {% if card.revision_count %} · rev {{ card.revision_count }}{% endif %}
     {% if card.deploy_attempt_count %} · deploy attempt {{ card.deploy_attempt_count }}{% endif %}
   </div>

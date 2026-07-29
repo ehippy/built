@@ -97,6 +97,31 @@ async def test_project_and_card_lifecycle_via_api():
         assert noted_retry_resp.status_code == 200
         assert noted_retry_resp.json()["retry_note"] == "rebase onto main first"
 
+        # Basic task editing: fix the title/request, then archive it off the board.
+        edit_resp = await client.patch(
+            f"/api/v1/cards/{card['id']}",
+            headers=AUTH,
+            json={"title": "Add a health check (v2)", "raw_request": "add /healthz, return 200"},
+        )
+        assert edit_resp.status_code == 200
+        assert edit_resp.json()["title"] == "Add a health check (v2)"
+
+        archive_resp = await client.post(f"/api/v1/cards/{card['id']}/archive", headers=AUTH)
+        assert archive_resp.status_code == 200
+        assert archive_resp.json()["archived_at"] is not None
+
+        board_after_archive = await client.get(f"/api/v1/projects/{project['id']}/board")
+        assert board_after_archive.json()["pm"] == []
+
+        board_with_archived = await client.get(
+            f"/api/v1/projects/{project['id']}/board", params={"include_archived": True}
+        )
+        assert [c["id"] for c in board_with_archived.json()["pm"]] == [card["id"]]
+
+        unarchive_resp = await client.post(f"/api/v1/cards/{card['id']}/unarchive", headers=AUTH)
+        assert unarchive_resp.status_code == 200
+        assert unarchive_resp.json()["archived_at"] is None
+
 
 async def test_discover_tasks_endpoint_requires_auth_and_starts_in_background():
     async with _client() as client:

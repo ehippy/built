@@ -180,6 +180,10 @@ class Card(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+    # Soft-hide, not delete: an archived card drops off the board and out of claiming
+    # but its history/events/visits stay intact and it's still reachable at its direct
+    # URL — the one place its own Archive/Unarchive control lives.
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     # raise on both: transitions.py fetches the project explicitly via session.get()
     # instead, and callers that need visits ask for them with an explicit

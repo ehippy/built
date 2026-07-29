@@ -1,16 +1,25 @@
 {% import "macros.html.j2" as m %}
-<div id="board" class="board" hx-get="/ui/projects/{{ project.id }}/board/fragment" hx-trigger="every 3s" hx-swap="outerHTML">
-  {% for column, label in [("pm", "Product Manager"), ("developer", "Developer"), ("tester", "Tester"), ("deployer", "Deployer")] %}
-  <div class="column">
-    <div class="column-header">
-      <span>{{ label }}</span>
-      <span>{{ board[column]|length }}</span>
-    </div>
-    {% for card in board[column] %}
-      {{ m.card_tile(card) }}
+<div id="board-wrap" hx-get="/ui/projects/{{ project.id }}/board/fragment?show_archived={{ 'true' if show_archived else 'false' }}" hx-trigger="every 3s" hx-swap="outerHTML">
+  <p class="hint show-archived-toggle">
+    {% if show_archived %}
+    <a href="/ui/projects/{{ project.id }}/board">Hide archived cards</a>
     {% else %}
-      <div class="empty-column">No cards</div>
+    <a href="/ui/projects/{{ project.id }}/board?show_archived=true">Show archived cards</a>
+    {% endif %}
+  </p>
+  <div id="board" class="board">
+    {% for column, label in [("pm", "Product Manager"), ("developer", "Developer"), ("tester", "Tester"), ("deployer", "Deployer")] %}
+    <div class="column">
+      <div class="column-header">
+        <span>{{ label }}</span>
+        <span>{{ board[column]|length }}</span>
+      </div>
+      {% for card in board[column] %}
+        {{ m.card_tile(card) }}
+      {% else %}
+        <div class="empty-column">No cards</div>
+      {% endfor %}
+    </div>
     {% endfor %}
   </div>
-  {% endfor %}
 </div>

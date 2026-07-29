@@ -6,13 +6,45 @@
   <a href="/ui/projects/{{ project.id }}/board">&larr; {{ project.name }} board</a>
 </div>
 
-<h1>{{ card.title }}</h1>
-<p class="subtitle">
-  {{ m.badge(card.lifecycle_state) }}
-  <span class="badge active" style="background:#6b6b76">{{ card.column }}</span>
-  {% if card.branch_name %}· <code>{{ card.branch_name }}</code>{% endif %}
-</p>
-<p class="hint">Last updated {{ card.updated_at|timeago }}</p>
+<div class="page-header">
+  <div>
+    <h1>{{ card.title }}</h1>
+    <p class="subtitle">
+      {{ m.badge(card.lifecycle_state) }}
+      <span class="badge active" style="background:#6b6b76">{{ card.column }}</span>
+      {% if card.archived_at %}<span class="badge paused">archived</span>{% endif %}
+      {% if card.branch_name %}· <code>{{ card.branch_name }}</code>{% endif %}
+    </p>
+    <p class="hint">Last updated {{ card.updated_at|timeago }}</p>
+  </div>
+  <div class="page-header-actions">
+    <details class="action-disclosure">
+      <summary class="btn secondary">Edit</summary>
+      <div class="panel">
+        <form method="post" action="/ui/cards/{{ card.id }}/edit">
+          <div class="field">
+            <label for="title">Title</label>
+            <input type="text" id="title" name="title" required value="{{ card.title }}">
+          </div>
+          <div class="field">
+            <label for="raw_request">Request</label>
+            <textarea id="raw_request" name="raw_request" required>{{ card.raw_request }}</textarea>
+          </div>
+          <button class="btn" type="submit">Save</button>
+        </form>
+      </div>
+    </details>
+    {% if card.archived_at %}
+    <form method="post" action="/ui/cards/{{ card.id }}/unarchive">
+      <button class="btn secondary" type="submit">Unarchive</button>
+    </form>
+    {% else %}
+    <form method="post" action="/ui/cards/{{ card.id }}/archive" onsubmit="return confirm('Archive this card? It will drop off the board until unarchived.');">
+      <button class="btn secondary" type="submit">Archive</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
 
 {% if card.lifecycle_state in ("blocked", "failed") %}
 <div class="panel">

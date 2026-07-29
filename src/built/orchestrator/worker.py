@@ -39,7 +39,6 @@ logger = logging.getLogger(__name__)
 
 IMPLEMENTED_COLUMNS = (Column.PM, Column.DEVELOPER, Column.TESTER, Column.REVIEWER, Column.DEPLOYER)
 
-DEFAULT_LEASE_SECONDS = 600
 DEFAULT_POLL_INTERVAL_SECONDS = 1.5
 DEFAULT_CONCURRENCY = 4
 
@@ -121,7 +120,7 @@ async def claim_next_card(session: AsyncSession, worker_id: str) -> Card | None:
         .values(
             claimed_by_worker_id=worker_id,
             claimed_at=now,
-            lease_expires_at=now + timedelta(seconds=DEFAULT_LEASE_SECONDS),
+            lease_expires_at=now + timedelta(seconds=builtin_settings.claim_lease_seconds),
         )
     )
     await session.commit()
@@ -148,7 +147,7 @@ async def requeue_stale_claims(session: AsyncSession) -> int:
     process startup, before this process's own workers have claimed anything, so
     *every* existing claim by definition belongs to a now-dead process; waiting out
     the rest of a lease that still happens to be within its window (up to
-    DEFAULT_LEASE_SECONDS) would just leave the card idle for no reason. An
+    settings.claim_lease_seconds) would just leave the card idle for no reason. An
     interrupted visit starts over from scratch rather than resuming mid-tool-call —
     v1 simplification, see the plan."""
     result = await session.execute(

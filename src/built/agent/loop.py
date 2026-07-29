@@ -11,6 +11,7 @@ so a card's progress is visible to anything polling CardEvent mid-run — the da
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +27,7 @@ from built.agent.context_window import (
     compact,
     estimate_tokens,
 )
+from built.config import settings
 from built.db.models import Card, CardColumnVisit, Project
 from built.domain import run_attempts, transitions
 from built.domain.enums import DeployMode, EventType, LifecycleState
@@ -129,6 +131,17 @@ async def run_column_visit(
                 await transitions.abandon_visit_for_lifecycle_change(session, card, visit)
                 await session.commit()
                 return card
+
+            # Renew the claim lease every iteration, piggybacking on whichever commit
+            # this iteration makes first (below) rather than committing separately.
+            # Card.is_being_worked (the dashboard spinner) and claim_next_card's
+            # staleness check both key off lease_expires_at — without this, any visit
+            # that runs longer than claim_lease_seconds looks abandoned to both of
+            # them: the spinner goes dark and, at concurrency > 1, another worker
+            # could claim this same card out from under the one still running it.
+            # Renewing here instead of once at claim time keeps the lease alive for
+            # exactly as long as the loop keeps making real progress, and no longer.
+            card.lease_expires_at = datetime.now(UTC) + timedelta(seconds=settings.claim_lease_seconds)
 
             # Compact if the message list approaches the context window.
             messages = await _maybe_compact(messages, llm_client, config, iteration)

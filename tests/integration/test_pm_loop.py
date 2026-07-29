@@ -1,6 +1,9 @@
 """PM agent loop against a real toy git repo — LLM faked, everything else real."""
 
+from datetime import UTC, datetime, timedelta
+
 from built.agent.loop import run_pm_visit
+from built.config import settings
 from built.domain import transitions
 from built.domain.enums import Column, LifecycleState, VisitOutcome
 from built.llm.client import LLMResult, ToolCallRequest
@@ -73,6 +76,58 @@ async def test_pm_loop_explores_then_submits_a_spec(db_session, toy_repo_remote)
     assert result.spec == "Add subtract(a, b) returning a - b."
     assert result.acceptance_criteria == ["app.py defines subtract(a, b)", "subtract(2, 1) == 1"]
     assert visit.outcome == VisitOutcome.SUBMITTED
+
+
+async def test_lease_is_renewed_each_iteration_so_a_long_visit_never_looks_abandoned(
+    db_session, toy_repo_remote
+):
+    """Card.is_being_worked (the dashboard spinner) and claim_next_card's staleness
+    check both key off lease_expires_at. A multi-iteration visit must keep renewing
+    it every iteration — otherwise a visit that simply runs longer than
+    claim_lease_seconds looks abandoned even though it's still making real
+    progress: the spinner goes dark, and at concurrency > 1 another worker could
+    claim the same card out from under the one still running it."""
+    project, card, wt_path = await _make_pm_card(db_session, toy_repo_remote)
+    visit = await transitions.start_visit(db_session, card)
+    # Simulate exactly what a long-running visit produces in production: a claim
+    # whose lease has already gone stale by the time a later iteration runs.
+    card.claimed_by_worker_id = "worker-a"
+    card.lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    await db_session.commit()
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[ToolCallRequest(id="call_1", name="list_files", arguments={"path": "."})],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_2",
+                        name="submit_spec",
+                        arguments={
+                            "spec": "Add subtract(a, b) returning a - b.",
+                            "acceptance_criteria": ["subtract(2, 1) == 1"],
+                            "summary": "Spec ready",
+                        },
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+        ]
+    )
+    executor = FakeCommandExecutor(CommandResult(exit_code=0, stdout="", stderr=""))
+    dispatcher = ToolDispatcher(ctx=ToolContext(card_id=card.id, worktree_root=wt_path), executor=executor)
+
+    before = datetime.now(UTC)
+    await run_pm_visit(
+        db_session, project, card, visit, llm_client=llm, dispatcher=dispatcher, max_iterations=10
+    )
+
+    assert card.lease_expires_at > before + timedelta(seconds=settings.claim_lease_seconds - 5)
 
 
 async def test_pm_loop_rejects_malformed_acceptance_criteria_and_recovers(db_session, toy_repo_remote):

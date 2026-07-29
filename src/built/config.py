@@ -45,6 +45,16 @@ class Settings(BaseSettings):
     orchestrator_concurrency: int = 1
     orchestrator_poll_interval_seconds: float = 1.5
 
+    # How long a claim is valid without being renewed — the safety window that lets
+    # a *different* worker recognize a crashed one and take over its card (see
+    # orchestrator/worker.claim_next_card's staleness check). agent/loop.run_column_visit
+    # renews this every iteration while a visit is genuinely still running, so it
+    # only actually expires on a real crash — not on an ordinary long visit. Must
+    # comfortably exceed the time a single iteration can take (one llm_timeout_seconds
+    # call plus tool execution), or a slow-but-healthy iteration would look expired
+    # before it ever gets to renew.
+    claim_lease_seconds: int = 600
+
     # Per-call timeout passed to litellm.acompletion. Local single-model servers can be
     # slow, especially under queued load from the per-endpoint concurrency semaphore —
     # too tight a timeout fails calls that just needed more time, not calls that are

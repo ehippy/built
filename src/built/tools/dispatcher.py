@@ -72,6 +72,10 @@ class ToolDispatcher:
             return ToolResult.ok(await git_tools.status(self.ctx.worktree_root)), None
         if name == "git_diff":
             return ToolResult.ok(await git_tools.diff(self.ctx.worktree_root)), None
+        if name == "review_diff":
+            assert self.ctx.base_ref is not None, "review_diff requires ToolContext.base_ref"
+            diff = await git_tools.diff_against_ref(self.ctx.worktree_root, self.ctx.base_ref)
+            return ToolResult.ok(diff), None
         return ToolResult.error(f"unknown tool: {name!r}"), None
 
 

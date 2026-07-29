@@ -15,5 +15,6 @@ async def get_board(project_id: str, session: SessionDep, include_archived: bool
         pm=[CardOut.model_validate(c) for c in board[Column.PM]],
         developer=[CardOut.model_validate(c) for c in board[Column.DEVELOPER]],
         tester=[CardOut.model_validate(c) for c in board[Column.TESTER]],
+        reviewer=[CardOut.model_validate(c) for c in board[Column.REVIEWER]],
         deployer=[CardOut.model_validate(c) for c in board[Column.DEPLOYER]],
     )

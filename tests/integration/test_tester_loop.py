@@ -74,7 +74,7 @@ async def test_tester_approve_is_rejected_without_a_passing_run_then_succeeds(db
         developer_summary="Added subtract()",
     )
 
-    assert result.column == Column.DEPLOYER
+    assert result.column == Column.REVIEWER
     assert result.lifecycle_state == LifecycleState.ACTIVE
     assert visit.outcome == VisitOutcome.APPROVED
     # The rejected first attempt shows up in the transcript as a normal tool round-trip,

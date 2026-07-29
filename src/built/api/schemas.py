@@ -156,6 +156,7 @@ class BoardOut(BaseModel):
     pm: list[CardOut]
     developer: list[CardOut]
     tester: list[CardOut]
+    reviewer: list[CardOut]
     deployer: list[CardOut]
 
 

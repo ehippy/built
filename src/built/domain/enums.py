@@ -2,15 +2,22 @@ from enum import StrEnum
 
 
 class Column(StrEnum):
-    """The four fixed kanban columns a card moves through, in order."""
+    """The five fixed kanban columns a card moves through, in order."""
 
     PM = "pm"
     DEVELOPER = "developer"
     TESTER = "tester"
+    REVIEWER = "reviewer"
     DEPLOYER = "deployer"
 
 
-COLUMN_ORDER: list[Column] = [Column.PM, Column.DEVELOPER, Column.TESTER, Column.DEPLOYER]
+COLUMN_ORDER: list[Column] = [
+    Column.PM,
+    Column.DEVELOPER,
+    Column.TESTER,
+    Column.REVIEWER,
+    Column.DEPLOYER,
+]
 
 
 class LifecycleState(StrEnum):

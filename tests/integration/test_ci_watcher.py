@@ -15,13 +15,12 @@ from built.sandbox.deploy_runner import CheckRun, CIStatusUnavailableError
 from built.services import card_service, project_service
 
 
-async def _make_pending_card(session, *, deploying_since=None, max_revisions=3):
+async def _make_pending_card(session, *, deploying_since=None):
     project = await project_service.create_project(
         session,
         name=f"ci-watcher-{id(session)}-{id(deploying_since)}",
         overarching_goal="goal",
         repo_remote_url="https://github.com/octocat/hello-world.git",
-        max_revisions=max_revisions,
     )
     await project_service.set_deploy_config(
         session,
@@ -50,14 +49,19 @@ async def test_all_checks_green_confirms_done(db_session, monkeypatch):
 
     counts = await run_ci_watcher_once()
 
-    assert counts == {"confirmed": 1, "bounced": 0, "timed_out": 0, "still_pending": 0}
+    assert counts == {"confirmed": 1, "ci_failed": 0, "timed_out": 0, "still_pending": 0}
     await db_session.refresh(card)
     assert card.lifecycle_state == LifecycleState.DONE
     assert card.deploying_commit_sha is None
     assert card.deploying_since is None
 
 
-async def test_a_failing_check_bounces_back_to_developer(db_session, monkeypatch):
+async def test_a_failing_check_confirms_done_and_opens_a_followup_card(db_session, monkeypatch):
+    """The merge and deploy themselves genuinely succeeded — that was this card's
+    job — so it still reaches DONE rather than getting reopened or blocked. Nothing
+    attempts to revert the shared default branch automatically; instead a fresh
+    card is opened describing the failure, exactly like a human filing a bug
+    report, so it flows through the ordinary pipeline to fix it forward."""
     card = await _make_pending_card(db_session)
     monkeypatch.setattr(
         deploy_runner,
@@ -72,30 +76,22 @@ async def test_a_failing_check_bounces_back_to_developer(db_session, monkeypatch
 
     counts = await run_ci_watcher_once()
 
-    assert counts == {"confirmed": 0, "bounced": 1, "timed_out": 0, "still_pending": 0}
+    assert counts == {"confirmed": 0, "ci_failed": 1, "timed_out": 0, "still_pending": 0}
     await db_session.refresh(card)
-    assert card.column == Column.DEVELOPER
-    assert card.lifecycle_state == LifecycleState.ACTIVE
-    assert card.revision_count == 1
-    assert "e2e" in card.latest_feedback
-    assert "failure" in card.latest_feedback
+    assert card.lifecycle_state == LifecycleState.DONE
     assert card.deploying_commit_sha is None
+    assert card.deploying_since is None
 
-
-async def test_bounce_past_max_revisions_blocks_instead(db_session, monkeypatch):
-    card = await _make_pending_card(db_session, max_revisions=0)
-    monkeypatch.setattr(
-        deploy_runner,
-        "fetch_check_runs",
-        lambda project, sha: _async_result(
-            [CheckRun(name="e2e", status="completed", conclusion="failure")]
-        ),
-    )
-
-    await run_ci_watcher_once()
-
-    await db_session.refresh(card)
-    assert card.lifecycle_state == LifecycleState.BLOCKED
+    all_cards = await card_service.list_cards(db_session, card.project_id)
+    followups = [c for c in all_cards if c.id != card.id]
+    assert len(followups) == 1
+    followup = followups[0]
+    assert followup.column == Column.PM
+    assert followup.lifecycle_state == LifecycleState.ACTIVE
+    assert "abc123de" in followup.title
+    assert card.id in followup.raw_request
+    assert "e2e" in followup.raw_request
+    assert "failure" in followup.raw_request
 
 
 async def test_still_running_checks_are_left_alone_within_the_timeout(db_session, monkeypatch):
@@ -108,7 +104,7 @@ async def test_still_running_checks_are_left_alone_within_the_timeout(db_session
 
     counts = await run_ci_watcher_once()
 
-    assert counts == {"confirmed": 0, "bounced": 0, "timed_out": 0, "still_pending": 1}
+    assert counts == {"confirmed": 0, "ci_failed": 0, "timed_out": 0, "still_pending": 1}
     await db_session.refresh(card)
     assert card.lifecycle_state == LifecycleState.ACTIVE
     assert card.deploying_commit_sha is not None
@@ -125,7 +121,7 @@ async def test_still_running_checks_past_the_timeout_block_for_a_human(db_sessio
 
     counts = await run_ci_watcher_once()
 
-    assert counts == {"confirmed": 0, "bounced": 0, "timed_out": 1, "still_pending": 0}
+    assert counts == {"confirmed": 0, "ci_failed": 0, "timed_out": 1, "still_pending": 0}
     await db_session.refresh(card)
     assert card.lifecycle_state == LifecycleState.BLOCKED
     assert card.deploying_commit_sha is None
@@ -137,7 +133,7 @@ async def test_no_checks_reported_yet_waits_out_the_grace_period(db_session, mon
 
     counts = await run_ci_watcher_once()
 
-    assert counts == {"confirmed": 0, "bounced": 0, "timed_out": 0, "still_pending": 1}
+    assert counts == {"confirmed": 0, "ci_failed": 0, "timed_out": 0, "still_pending": 1}
     await db_session.refresh(card)
     assert card.deploying_commit_sha is not None
 
@@ -149,7 +145,7 @@ async def test_no_checks_reported_past_the_grace_period_confirms_done(db_session
 
     counts = await run_ci_watcher_once()
 
-    assert counts == {"confirmed": 1, "bounced": 0, "timed_out": 0, "still_pending": 0}
+    assert counts == {"confirmed": 1, "ci_failed": 0, "timed_out": 0, "still_pending": 0}
     await db_session.refresh(card)
     assert card.lifecycle_state == LifecycleState.DONE
 
@@ -163,7 +159,7 @@ async def test_no_ci_possible_confirms_immediately_regardless_of_elapsed_time(db
 
     counts = await run_ci_watcher_once()
 
-    assert counts == {"confirmed": 1, "bounced": 0, "timed_out": 0, "still_pending": 0}
+    assert counts == {"confirmed": 1, "ci_failed": 0, "timed_out": 0, "still_pending": 0}
     await db_session.refresh(card)
     assert card.lifecycle_state == LifecycleState.DONE
 
@@ -178,7 +174,7 @@ async def test_transient_fetch_failure_does_not_prematurely_confirm(db_session, 
 
     counts = await run_ci_watcher_once()
 
-    assert counts == {"confirmed": 0, "bounced": 0, "timed_out": 0, "still_pending": 1}
+    assert counts == {"confirmed": 0, "ci_failed": 0, "timed_out": 0, "still_pending": 1}
     await db_session.refresh(card)
     assert card.lifecycle_state == LifecycleState.ACTIVE
     assert card.deploying_commit_sha is not None
@@ -196,7 +192,7 @@ async def test_ignores_cards_that_are_not_awaiting_ci(db_session):
 
     counts = await run_ci_watcher_once()
 
-    assert counts == {"confirmed": 0, "bounced": 0, "timed_out": 0, "still_pending": 0}
+    assert counts == {"confirmed": 0, "ci_failed": 0, "timed_out": 0, "still_pending": 0}
 
 
 async def _async_result(value):

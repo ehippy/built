@@ -3,7 +3,13 @@ orchestrator/archiver.py. Polls GitHub's Checks API for every card whose
 auto_main deploy pushed successfully but hasn't been confirmed yet
 (Card.deploying_commit_sha — see domain/transitions.complete_deployer_visit):
 the Deployer's own job, the git-level push, is done, but the card's overall
-completion isn't until CI actually confirms it."""
+completion isn't until CI actually confirms it. A red result does NOT attempt to
+revert anything on the default branch — an automated revert of a shared branch that
+may already have other work built on top of it is a bigger, riskier action than this
+watcher should take unattended. Instead it files a fresh follow-up card describing
+the failure, exactly like a human would open a bug report, and lets that flow
+through the ordinary PM -> Developer -> Tester -> Reviewer -> Deployer pipeline to
+fix it forward."""
 
 import asyncio
 import logging
@@ -16,6 +22,7 @@ from built.db.base import async_session_factory
 from built.db.models import Card, Project
 from built.domain import transitions
 from built.sandbox import deploy_runner
+from built.services import card_service
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +70,25 @@ async def _check_one(session, card: Card) -> str:
     failing = [r for r in check_runs if r.conclusion in deploy_runner.FAILING_CONCLUSIONS]
     if failing:
         lines = "\n".join(f"- {r.name}: {r.conclusion} ({r.html_url or 'no URL'})" for r in failing)
-        summary = f"CI failed on commit {card.deploying_commit_sha[:8]}:\n{lines}"
-        await transitions.bounce_deployed_card_to_developer(session, card, ci_summary=summary)
-        return "bounced"
+        commit_sha = card.deploying_commit_sha
+        followup = await card_service.create_card(
+            session,
+            card.project_id,
+            title=f"Fix CI failure on {commit_sha[:8]} (from {card.title!r})",
+            raw_request=(
+                f"Card {card.id} ({card.title!r}) merged to {project.default_branch} and deployed, but CI "
+                f"failed on the resulting commit {commit_sha}:\n{lines}\n\n"
+                f"Diagnose and fix the regression on {project.default_branch}."
+            ),
+            source="ci_watcher",
+        )
+        await transitions.confirm_ci_failed_with_followup(
+            session,
+            card,
+            note=f"CI failed on commit {commit_sha[:8]}:\n{lines}\n\nOpened follow-up card {followup.id} "
+            f"({followup.title!r}) to fix it.",
+        )
+        return "ci_failed"
 
     await transitions.confirm_ci_passed(session, card, note=f"all {len(check_runs)} check(s) passed")
     return "confirmed"
@@ -74,7 +97,7 @@ async def _check_one(session, card: Card) -> str:
 async def run_ci_watcher_once() -> dict:
     """One pass, in its own session — checks every card currently waiting on CI.
     Returns per-outcome counts."""
-    counts = {"confirmed": 0, "bounced": 0, "timed_out": 0, "still_pending": 0}
+    counts = {"confirmed": 0, "ci_failed": 0, "timed_out": 0, "still_pending": 0}
     async with async_session_factory() as session:
         cards = list(
             (await session.scalars(select(Card).where(Card.deploying_commit_sha.is_not(None)))).all()
@@ -82,12 +105,12 @@ async def run_ci_watcher_once() -> dict:
         for card in cards:
             outcome = await _check_one(session, card)
             counts[outcome] += 1
-        if counts["confirmed"] or counts["bounced"] or counts["timed_out"]:
+        if counts["confirmed"] or counts["ci_failed"] or counts["timed_out"]:
             await session.commit()
             logger.info(
-                "ci watcher: confirmed=%d bounced=%d timed_out=%d still_pending=%d",
+                "ci watcher: confirmed=%d ci_failed=%d timed_out=%d still_pending=%d",
                 counts["confirmed"],
-                counts["bounced"],
+                counts["ci_failed"],
                 counts["timed_out"],
                 counts["still_pending"],
             )

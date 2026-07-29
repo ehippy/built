@@ -8,7 +8,7 @@
     {% endif %}
   </p>
   <div id="board" class="board">
-    {% for column, label in [("pm", "Product Manager"), ("developer", "Developer"), ("tester", "Tester"), ("deployer", "Deployer")] %}
+    {% for column, label in [("pm", "Product Manager"), ("developer", "Developer"), ("tester", "Tester"), ("reviewer", "Reviewer"), ("deployer", "Deployer")] %}
     {% set in_flight = board[column]|rejectattr("lifecycle_state", "equalto", "done")|list %}
     {% set done = board[column]|selectattr("lifecycle_state", "equalto", "done")|list %}
     <div class="column">

@@ -51,7 +51,7 @@ async def test_empty_column_still_shows_no_cards_message(db_session):
         page = await client.get(f"/ui/projects/{project.id}/board")
 
     assert page.status_code == 200
-    assert page.text.count("No cards") == 4  # every column genuinely empty
+    assert page.text.count("No cards") == 5  # every column genuinely empty
 
 
 async def test_column_with_only_done_cards_has_no_empty_message(db_session):
@@ -66,6 +66,6 @@ async def test_column_with_only_done_cards_has_no_empty_message(db_session):
 
     assert page.status_code == 200
     assert "1 done" in page.text
-    # pm/developer/tester are genuinely empty; deployer isn't (one collapsed done
-    # card), so "No cards" shows for exactly the other 3 columns.
-    assert page.text.count("No cards") == 3
+    # pm/developer/tester/reviewer are genuinely empty; deployer isn't (one collapsed
+    # done card), so "No cards" shows for exactly the other 4 columns.
+    assert page.text.count("No cards") == 4

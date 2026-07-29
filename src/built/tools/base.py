@@ -20,6 +20,11 @@ class ToolContext:
     # a merge with leftover conflict markers still baked into an untouched file.
     # deploy_runner completes that commit itself once every conflicted path is clear.
     auto_commit: bool = True
+    # Reviewer only: the branch to diff HEAD against (project.default_branch). Every
+    # other role's worktree either has no committed history worth comparing (PM) or
+    # auto-commits after each tool call, so an ordinary uncommitted `git diff` is
+    # meaningless for them — Reviewer needs the full since-branched diff instead.
+    base_ref: str | None = None
 
     @property
     def root(self) -> Path:

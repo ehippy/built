@@ -96,12 +96,58 @@ async def complete_tester_visit_approved(
     summary: str,
     endpoint_used: str | None = None,
 ) -> Card:
-    """Tester's approve: advance to Deployer. The caller (Phase 3+ tool dispatcher) is
+    """Tester's approve: advance to Reviewer. The caller (Phase 3+ tool dispatcher) is
     responsible for rejecting `approve` server-side unless the latest RunAttempt for
-    this visit actually succeeded — this function trusts that check already happened."""
+    this visit actually succeeded — this function trusts that check already happened.
+    Passing tests only establishes the implementation behaves as specified; Reviewer
+    is the separate gate on whether the diff itself (design, security, maintainability)
+    is something worth shipping."""
+    card.column = Column.REVIEWER
+    await _close_visit(
+        session, visit, outcome=VisitOutcome.APPROVED, summary=summary, endpoint_used=endpoint_used
+    )
+    return card
+
+
+async def complete_reviewer_visit_approved(
+    session: AsyncSession,
+    card: Card,
+    visit: CardColumnVisit,
+    *,
+    summary: str,
+    endpoint_used: str | None = None,
+) -> Card:
+    """Reviewer's approve: advance to Deployer. Reviewer has no file-write or bash
+    tools (see llm/tool_schemas.REVIEWER_TOOLS) — it can only read the diff and
+    either approve or bounce it back, so this is a real second opinion on the
+    implementation, not the same test-passing check Tester already did."""
     card.column = Column.DEPLOYER
     await _close_visit(
         session, visit, outcome=VisitOutcome.APPROVED, summary=summary, endpoint_used=endpoint_used
+    )
+    return card
+
+
+async def complete_reviewer_visit_changes_requested(
+    session: AsyncSession,
+    card: Card,
+    visit: CardColumnVisit,
+    *,
+    feedback: str,
+    summary: str,
+    endpoint_used: str | None = None,
+) -> Card:
+    """Reviewer's request_changes: bounce back to Developer, sharing the same
+    revision_count budget as Tester's request_changes — both represent "another
+    round of Developer work needed" against the same safety valve."""
+    card.revision_count += 1
+    card.latest_feedback = feedback
+    card.column = Column.DEVELOPER
+    project = await session.get(Project, card.project_id)
+    if card.revision_count > project.max_revisions:
+        card.lifecycle_state = LifecycleState.BLOCKED
+    await _close_visit(
+        session, visit, outcome=VisitOutcome.CHANGES_REQUESTED, summary=summary, endpoint_used=endpoint_used
     )
     return card
 
@@ -155,8 +201,8 @@ async def complete_deployer_visit(
     there's nothing this pipeline should gate on). The Deployer's own job — the
     git-level push — is genuinely finished, but the card's overall completion
     isn't: it stays ACTIVE with the commit tracked for
-    orchestrator/ci_watcher.py to poll, and only reaches DONE once CI actually
-    confirms it (see confirm_ci_passed / bounce_deployed_card_to_developer /
+    orchestrator/ci_watcher.py to poll, and only reaches DONE once CI resolves one
+    way or the other (see confirm_ci_passed / confirm_ci_failed_with_followup /
     mark_ci_wait_timed_out below)."""
     if success:
         if deploy_url is not None:
@@ -202,25 +248,22 @@ async def confirm_ci_passed(session: AsyncSession, card: Card, *, note: str) -> 
     return card
 
 
-async def bounce_deployed_card_to_developer(session: AsyncSession, card: Card, *, ci_summary: str) -> Card:
+async def confirm_ci_failed_with_followup(session: AsyncSession, card: Card, *, note: str) -> Card:
     """orchestrator/ci_watcher.py: CI came back red on the commit this card's
-    auto_main deploy produced. Treated the same as Tester's request_changes — it's
-    almost always a real problem the code has that local tests/Tester didn't catch
-    (env-specific, flaky, a build/config issue) — same revision_count budget, since
-    both represent "another round of Developer work needed"."""
-    card.revision_count += 1
-    card.latest_feedback = ci_summary
-    card.column = Column.DEVELOPER
+    auto_main deploy produced. The merge and deploy themselves genuinely
+    succeeded — that was this card's job, and it did it — so this still reaches
+    DONE rather than reopening the card or attempting to revert a commit the
+    default branch may already have other work built on top of (an automated
+    revert of shared history is a bigger, riskier action than this pipeline
+    should take unsupervised). The regression itself is a new, separate problem:
+    orchestrator/ci_watcher.py opens a fresh follow-up card for it — exactly like
+    a human filing a bug report — which flows through the ordinary pipeline to
+    fix it forward."""
+    card.lifecycle_state = LifecycleState.DONE
     card.deploying_commit_sha = None
     card.deploying_since = None
-    project = await session.get(Project, card.project_id)
-    if card.revision_count > project.max_revisions:
-        card.lifecycle_state = LifecycleState.BLOCKED
     await append_event(
-        session,
-        card_id=card.id,
-        type=EventType.SYSTEM_NOTE,
-        payload={"action": "ci_failed", "summary": ci_summary},
+        session, card_id=card.id, type=EventType.SYSTEM_NOTE, payload={"action": "ci_failed", "note": note}
     )
     return card
 

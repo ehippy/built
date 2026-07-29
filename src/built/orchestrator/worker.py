@@ -16,6 +16,7 @@ from built.agent.loop import (
     run_deployer_visit,
     run_developer_visit,
     run_pm_visit,
+    run_reviewer_visit,
     run_tester_visit,
 )
 from built.config import settings as builtin_settings
@@ -36,7 +37,7 @@ from built.tools.dispatcher import ToolDispatcher
 
 logger = logging.getLogger(__name__)
 
-IMPLEMENTED_COLUMNS = (Column.PM, Column.DEVELOPER, Column.TESTER, Column.DEPLOYER)
+IMPLEMENTED_COLUMNS = (Column.PM, Column.DEVELOPER, Column.TESTER, Column.REVIEWER, Column.DEPLOYER)
 
 DEFAULT_LEASE_SECONDS = 600
 DEFAULT_POLL_INTERVAL_SECONDS = 1.5
@@ -225,7 +226,12 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
 
     executor_kwargs = {"image": project.sandbox_image} if project.sandbox_image else {}
     dispatcher = ToolDispatcher(
-        ctx=ToolContext(card_id=card.id, worktree_root=worktree_path, auto_commit=not is_deployer_auto_main),
+        ctx=ToolContext(
+            card_id=card.id,
+            worktree_root=worktree_path,
+            auto_commit=not is_deployer_auto_main,
+            base_ref=project.default_branch,
+        ),
         executor=DockerCommandExecutor(**executor_kwargs),
     )
     visit = await transitions.start_visit(session, card)
@@ -298,6 +304,22 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
             max_iterations=max_iterations,
             context_window_config=context_window_config,
             developer_summary=developer_summary,
+            retry_recap=retry_recap,
+            retry_note=retry_note,
+            agents_doc=agents_doc,
+        )
+    elif card.column == Column.REVIEWER:
+        tester_summary = await card_service.get_latest_visit_summary(session, card.id, Column.TESTER)
+        await run_reviewer_visit(
+            session,
+            project,
+            card,
+            visit,
+            llm_client=llm_client,
+            dispatcher=dispatcher,
+            max_iterations=max_iterations,
+            context_window_config=context_window_config,
+            tester_summary=tester_summary,
             retry_recap=retry_recap,
             retry_note=retry_note,
             agents_doc=agents_doc,

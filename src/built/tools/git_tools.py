@@ -50,6 +50,15 @@ async def diff(worktree: Path, *, staged: bool = False) -> str:
     return await run_git(*args, cwd=worktree)
 
 
+async def diff_against_ref(worktree: Path, ref: str) -> str:
+    """Diff of everything HEAD has done since it diverged from `ref` (three-dot,
+    against the merge-base — not a straight two-dot diff, which would also include
+    commits `ref` picked up on its own side since the branch point). What Reviewer
+    actually needs: an ordinary `git diff` only shows uncommitted changes, and this
+    pipeline auto-commits after every tool call, so there's normally nothing there."""
+    return await run_git("diff", f"{ref}...HEAD", cwd=worktree)
+
+
 _CONFLICT_STATUS_CODES = {"UU", "AA", "DD", "AU", "UA", "DU", "UD"}
 # Classic git conflict marker lines: '<<<<<<< HEAD', a bare '=======', '>>>>>>> branch'.
 _CONFLICT_MARKER_RE = re.compile(r"^<{7} |^={7}$|^>{7} ", re.MULTILINE)

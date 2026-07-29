@@ -1,5 +1,5 @@
 """Drives built.domain.transitions directly (no HTTP, no agents) — this is the
-Phase 2 verification called for in the plan: a card pushed through all four columns,
+Phase 2 verification called for in the plan: a card pushed through all five columns,
 a revision loop that trips the cap, a deploy that exhausts its retries, and a run
 error, asserting CardColumnVisit/CardEvent bookkeeping at each step."""
 
@@ -40,6 +40,10 @@ async def test_full_pipeline_to_done(db_session):
 
     visit = await transitions.start_visit(db_session, card)
     await transitions.complete_tester_visit_approved(db_session, card, visit, summary="Tests pass")
+    assert card.column == Column.REVIEWER
+
+    visit = await transitions.start_visit(db_session, card)
+    await transitions.complete_reviewer_visit_approved(db_session, card, visit, summary="LGTM")
     assert card.column == Column.DEPLOYER
 
     # Deployer fails once (retryable — under the project's max_deploy_attempts=2)...
@@ -60,16 +64,17 @@ async def test_full_pipeline_to_done(db_session):
         Column.PM,
         Column.DEVELOPER,
         Column.TESTER,
+        Column.REVIEWER,
         Column.DEPLOYER,
         Column.DEPLOYER,
     ]
-    assert [v.attempt_number for v in visits] == [1, 1, 1, 1, 2]
+    assert [v.attempt_number for v in visits] == [1, 1, 1, 1, 1, 2]
     assert visits[-2].outcome == VisitOutcome.FAILED
     assert visits[-1].outcome == VisitOutcome.DONE
 
     events = await card_service.list_events(db_session, card.id)
     assert any(e.payload.get("action") == "created" for e in events)
-    assert sum(1 for e in events if e.type.value == "transition") == 5
+    assert sum(1 for e in events if e.type.value == "transition") == 6
 
 
 async def test_revision_loop_blocks_after_cap_then_retry_unsticks_it(db_session):
@@ -111,6 +116,46 @@ async def test_revision_loop_blocks_after_cap_then_retry_unsticks_it(db_session)
     assert card.lifecycle_state == LifecycleState.ACTIVE
     assert card.revision_count == 0
     assert card.latest_feedback is None
+
+
+async def test_reviewer_request_changes_bounces_to_developer_and_shares_revision_cap(db_session):
+    project = await _make_project(db_session, name="reviewer-loop", max_revisions=1)
+    card = await card_service.create_card(db_session, project.id, title="Risky change", raw_request="do it")
+
+    visit = await transitions.start_visit(db_session, card)
+    await transitions.complete_pm_visit(
+        db_session, card, visit, spec="spec", acceptance_criteria=["a"], summary="ok"
+    )
+    visit = await transitions.start_visit(db_session, card)
+    await transitions.complete_developer_visit(db_session, card, visit, summary="ok")
+    visit = await transitions.start_visit(db_session, card)
+    await transitions.complete_tester_visit_approved(db_session, card, visit, summary="tests pass")
+    assert card.column == Column.REVIEWER
+
+    # Reviewer finds a real problem tests didn't catch — bounces to Developer,
+    # consuming the same revision_count budget as Tester's request_changes.
+    visit = await transitions.start_visit(db_session, card)
+    await transitions.complete_reviewer_visit_changes_requested(
+        db_session, card, visit, feedback="SQL built via string formatting", summary="security issue"
+    )
+    assert card.column == Column.DEVELOPER
+    assert card.lifecycle_state == LifecycleState.ACTIVE
+    assert card.revision_count == 1
+    assert card.latest_feedback == "SQL built via string formatting"
+
+    # Developer fixes it, Tester re-approves, Reviewer rejects again — now over
+    # max_revisions=1, so it blocks for a human exactly like the Tester<->Developer
+    # loop does.
+    visit = await transitions.start_visit(db_session, card)
+    await transitions.complete_developer_visit(db_session, card, visit, summary="fixed")
+    visit = await transitions.start_visit(db_session, card)
+    await transitions.complete_tester_visit_approved(db_session, card, visit, summary="tests still pass")
+    visit = await transitions.start_visit(db_session, card)
+    await transitions.complete_reviewer_visit_changes_requested(
+        db_session, card, visit, feedback="still not fixed", summary="still a security issue"
+    )
+    assert card.lifecycle_state == LifecycleState.BLOCKED
+    assert card.revision_count == 2
 
 
 async def test_retry_with_a_note_stores_it_on_the_card(db_session):

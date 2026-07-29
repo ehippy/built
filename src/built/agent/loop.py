@@ -18,6 +18,7 @@ from built.agent.context import (
     build_deployer_prompt,
     build_developer_prompt,
     build_pm_prompt,
+    build_reviewer_prompt,
     build_tester_prompt,
 )
 from built.agent.context_window import (
@@ -38,6 +39,7 @@ from built.llm.tool_schemas import (
     DEVELOPER_TOOLS,
     PM_TERMINAL_TOOL,
     PM_TOOLS,
+    REVIEWER_TOOLS,
     TESTER_TOOLS,
     deployer_tools,
 )
@@ -308,6 +310,26 @@ async def _tester_request_changes_handler(
     return TerminalHandlerResult(handled=True)
 
 
+async def _reviewer_approve_handler(
+    session: AsyncSession, card: Card, visit: CardColumnVisit, tool_call: ToolCallRequest, endpoint_used: str
+) -> TerminalHandlerResult:
+    await transitions.complete_reviewer_visit_approved(
+        session, card, visit, summary=str(tool_call.arguments.get("notes", "")), endpoint_used=endpoint_used
+    )
+    return TerminalHandlerResult(handled=True)
+
+
+async def _reviewer_request_changes_handler(
+    session: AsyncSession, card: Card, visit: CardColumnVisit, tool_call: ToolCallRequest, endpoint_used: str
+) -> TerminalHandlerResult:
+    feedback = str(tool_call.arguments.get("feedback", ""))
+    summary = str(tool_call.arguments.get("summary") or feedback[:120])
+    await transitions.complete_reviewer_visit_changes_requested(
+        session, card, visit, feedback=feedback, summary=summary, endpoint_used=endpoint_used
+    )
+    return TerminalHandlerResult(handled=True)
+
+
 async def _deployer_abandon_handler(
     session: AsyncSession, card: Card, visit: CardColumnVisit, tool_call: ToolCallRequest, endpoint_used: str
 ) -> TerminalHandlerResult:
@@ -464,6 +486,47 @@ async def run_tester_visit(
             "request_changes": _tester_request_changes_handler,
         },
         on_tool_result=_record_bash_run_attempt,
+        context_window_config=context_window_config,
+    )
+
+
+async def run_reviewer_visit(
+    session: AsyncSession,
+    project: Project,
+    card: Card,
+    visit: CardColumnVisit,
+    *,
+    llm_client: LLMClient,
+    dispatcher: ToolDispatcher,
+    max_iterations: int,
+    context_window_config: ContextWindowConfig | None = None,
+    tester_summary: str | None = None,
+    retry_recap: str | None = None,
+    retry_note: str | None = None,
+    agents_doc: str | None = None,
+) -> Card:
+    system, user = build_reviewer_prompt(
+        project,
+        card,
+        tester_summary=tester_summary,
+        retry_recap=retry_recap,
+        retry_note=retry_note,
+        agents_doc=agents_doc,
+    )
+    return await run_column_visit(
+        session,
+        card,
+        visit,
+        llm_client=llm_client,
+        dispatcher=dispatcher,
+        max_iterations=max_iterations,
+        system_prompt=system,
+        user_prompt=user,
+        tools=REVIEWER_TOOLS,
+        terminal_handlers={
+            "approve": _reviewer_approve_handler,
+            "request_changes": _reviewer_request_changes_handler,
+        },
         context_window_config=context_window_config,
     )
 

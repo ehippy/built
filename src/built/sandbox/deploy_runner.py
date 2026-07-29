@@ -5,7 +5,9 @@ the LLM never gets shell access to anything that can see them.
 
 Two independent flows, selected by the project's DeployConfig.mode:
   - auto_main: merge the card's branch into default_branch, push, run the configured
-    deploy command. Zero human gate.
+    deploy command. Zero human gate — if CI comes back red on the pushed commit,
+    orchestrator/ci_watcher.py does not attempt to revert it (too risky to do
+    unsupervised against shared history); it opens a follow-up card instead.
   - pr_to_operator: push the card's branch as-is and open a GitHub PR. No merge, no
     deploy command — a human takes over from the PR onward."""
 

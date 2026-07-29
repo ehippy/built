@@ -295,6 +295,76 @@ REQUEST_CHANGES = {
 TESTER_TOOLS = [READ_FILE, GREP_FILES, BASH, WRITE_FILE, EDIT_FILE, APPROVE, REQUEST_CHANGES]
 TESTER_TERMINAL_TOOLS = ("approve", "request_changes")
 
+REVIEW_DIFF = {
+    "type": "function",
+    "function": {
+        "name": "review_diff",
+        "description": (
+            "Show the full diff of everything this card's branch has changed relative to the "
+            "project's default branch — the actual change under review. Unlike git_diff, this is not "
+            "limited to uncommitted changes."
+        ),
+        "parameters": {"type": "object", "properties": {}},
+    },
+}
+
+REVIEWER_APPROVE = {
+    "type": "function",
+    "function": {
+        "name": "approve",
+        "description": (
+            "Approve this implementation from a code-review perspective and advance the card to "
+            "Deployer. The Tester has already verified the tests pass — your job is a second, "
+            "independent opinion on the diff itself: design, security, maintainability, and whether "
+            "it actually satisfies the spec and acceptance criteria. Call this only once you've "
+            "actually read the diff and have no unresolved concerns."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {"notes": {"type": "string", "description": "Brief notes for the audit log."}},
+            "required": ["notes"],
+        },
+    },
+}
+
+REVIEWER_REQUEST_CHANGES = {
+    "type": "function",
+    "function": {
+        "name": "request_changes",
+        "description": (
+            "Send the card back to the Developer with specific, actionable review feedback — a design "
+            "problem, a security issue, unmaintainable code, or a gap versus the spec/acceptance "
+            "criteria that passing tests didn't catch."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "feedback": {
+                    "type": "string",
+                    "description": "Specific, actionable feedback for the Developer — what's wrong and why.",
+                },
+                "summary": {"type": "string", "description": "A one-line summary for the audit log."},
+            },
+            "required": ["feedback", "summary"],
+        },
+    },
+}
+
+# Read-only on purpose: Reviewer can inspect the diff and the surrounding code but
+# cannot edit anything or run commands — unlike Tester (which can strengthen tests)
+# its whole job is to judge the diff as it stands, not to fix it. That's what makes
+# it a genuine independent check rather than the same actor wearing a different hat.
+REVIEWER_TOOLS = [
+    READ_FILE,
+    LIST_FILES,
+    GLOB_FILES,
+    GREP_FILES,
+    REVIEW_DIFF,
+    REVIEWER_APPROVE,
+    REVIEWER_REQUEST_CHANGES,
+]
+REVIEWER_TERMINAL_TOOLS = ("approve", "request_changes")
+
 RUN_DEPLOY = {
     "type": "function",
     "function": {

@@ -180,7 +180,7 @@ def build_deployer_prompt(
     """Returns (system_prompt, initial_user_message)."""
     intro = (
         "You are the Deployer agent in an autonomous software factory. "
-        "The Tester has already approved this card's implementation. "
+        "The Tester and Reviewer have already approved this card's implementation. "
     )
     if mode == DeployMode.AUTO_MAIN:
         system = (
@@ -214,6 +214,54 @@ def build_deployer_prompt(
             "Nobody is watching this run interactively — do not stop to ask a question."
         )
     user = f"Card: {card.title}\n\nSpec:\n{card.spec or '(no spec)'}\n\nBranch: {card.branch_name}"
+    if retry_recap:
+        user += f"\n\nContext from your previous attempt at this column:\n{retry_recap}"
+    if retry_note:
+        user += f"\n\nA human left this instruction for this attempt:\n{retry_note}"
+    system = _with_agents_doc(system, agents_doc)
+    return system, user
+
+
+def build_reviewer_prompt(
+    project: Project,
+    card: Card,
+    *,
+    tester_summary: str | None,
+    retry_recap: str | None = None,
+    retry_note: str | None = None,
+    agents_doc: str | None = None,
+) -> tuple[str, str]:
+    """Returns (system_prompt, initial_user_message). Reviewer runs after Tester has
+    already verified the acceptance criteria pass — its job is a genuinely separate
+    concern (design, security, maintainability, real spec fit) rather than
+    re-checking that the tests are green, which is why it has no bash/write/edit
+    tools at all (see llm/tool_schemas.REVIEWER_TOOLS): it can only read and judge
+    the diff as it stands, never fix it itself."""
+    system = (
+        "You are the Reviewer agent in an autonomous software factory — an independent code-review "
+        "gate between Tester and Deployer. The Tester has already confirmed the test suite passes; "
+        "that is NOT your job to re-check. Your job is everything passing tests doesn't verify:\n"
+        "- Security: injection, secrets or credentials handled unsafely, unsafe deserialization/eval, "
+        "missing authorization/input validation at trust boundaries.\n"
+        "- Design and maintainability: is this a reasonable way to solve the problem, or does it bolt "
+        "on complexity, duplicate existing logic, or leave the codebase harder to work in?\n"
+        "- Real fit to the spec and acceptance criteria — including anything technically passing "
+        "tests but missing the actual intent of the request.\n\n"
+        "Start with review_diff to see the full change, then use read_file/grep_files/list_files/"
+        "glob_files to pull in whatever surrounding context you need to judge it fairly (existing "
+        "conventions, related code, what it touches). You have no write/edit/bash tools — you cannot "
+        "fix anything yourself, only approve or send it back with specific, actionable feedback.\n\n"
+        f"Project goal: {project.overarching_goal}\n\n"
+        "Call approve once you have no unresolved concerns, or request_changes with concrete feedback "
+        "if you do. Nobody is watching this run interactively — do not stop to ask a question."
+    )
+    criteria = "\n".join(f"- {c}" for c in card.acceptance_criteria) or "(none specified)"
+    user = (
+        f"Card: {card.title}\n\n"
+        f"Spec:\n{card.spec or '(no spec)'}\n\n"
+        f"Acceptance criteria:\n{criteria}\n\n"
+        f"Tester's summary:\n{tester_summary or '(not available)'}"
+    )
     if retry_recap:
         user += f"\n\nContext from your previous attempt at this column:\n{retry_recap}"
     if retry_note:

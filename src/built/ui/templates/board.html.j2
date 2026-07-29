@@ -7,30 +7,38 @@
   <a href="/ui/projects">&larr; All projects</a>
 </div>
 
-<h1>{{ project.name }}</h1>
-<p class="subtitle">{{ project.overarching_goal }}</p>
-
-<div class="panel">
-  <h2>New card</h2>
-  <form method="post" action="/ui/projects/{{ project.id }}/cards">
-    <div class="field">
-      <label for="title">Title</label>
-      <input type="text" id="title" name="title" required placeholder="Add a health check endpoint">
-    </div>
-    <div class="field">
-      <label for="raw_request">Request</label>
-      <textarea id="raw_request" name="raw_request" required placeholder="Describe what you want built..."></textarea>
-    </div>
-    <button class="btn" type="submit">Add to board</button>
-  </form>
-</div>
-
-<div class="panel">
-  <h2>Autonomous discovery</h2>
-  <p class="subtitle">Let PM explore the repository on its own and propose new cards — gaps, bugs, rough edges, or opportunities it finds, up to 5 at a time.</p>
-  <form method="post" action="/ui/projects/{{ project.id }}/discover-tasks">
-    <button class="btn secondary" type="submit">Discover tasks</button>
-  </form>
+<div class="page-header">
+  <div>
+    <h1>{{ project.name }}</h1>
+    <p class="subtitle">{{ project.overarching_goal }}</p>
+  </div>
+  <div class="page-header-actions">
+    <details class="action-disclosure">
+      <summary class="btn secondary">Discover tasks</summary>
+      <div class="panel">
+        <p class="subtitle">Let PM explore the repository on its own and propose new cards — gaps, bugs, rough edges, or opportunities it finds, up to 5 at a time.</p>
+        <form method="post" action="/ui/projects/{{ project.id }}/discover-tasks">
+          <button class="btn secondary" type="submit">Discover tasks</button>
+        </form>
+      </div>
+    </details>
+    <details class="action-disclosure">
+      <summary class="btn">New card</summary>
+      <div class="panel">
+        <form method="post" action="/ui/projects/{{ project.id }}/cards">
+          <div class="field">
+            <label for="title">Title</label>
+            <input type="text" id="title" name="title" required placeholder="Add a health check endpoint">
+          </div>
+          <div class="field">
+            <label for="raw_request">Request</label>
+            <textarea id="raw_request" name="raw_request" required placeholder="Describe what you want built..."></textarea>
+          </div>
+          <button class="btn" type="submit">Add to board</button>
+        </form>
+      </div>
+    </details>
+  </div>
 </div>
 
 {% include "_board_fragment.html.j2" %}

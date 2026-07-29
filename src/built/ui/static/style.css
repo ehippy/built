@@ -362,23 +362,33 @@ th {
   margin-bottom: 0;
 }
 
-.new-project {
+.page-header-actions {
+  display: flex;
+  gap: 0.5rem;
   flex-shrink: 0;
 }
-.new-project summary.btn {
+.action-disclosure {
+  flex-shrink: 0;
+  position: relative;
+}
+.action-disclosure summary.btn {
   display: inline-block;
   width: fit-content;
   list-style: none;
   cursor: pointer;
 }
-.new-project summary.btn::-webkit-details-marker {
+.action-disclosure summary.btn::-webkit-details-marker {
   display: none;
 }
-.new-project .panel {
-  margin-top: 0.6rem;
-  margin-bottom: 0;
+.action-disclosure .panel {
+  position: absolute;
+  top: calc(100% + 0.6rem);
+  right: 0;
+  z-index: 20;
+  margin: 0;
   width: 420px;
   max-width: 90vw;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
 .project-list .project-card {

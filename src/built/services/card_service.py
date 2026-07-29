@@ -17,6 +17,34 @@ def _branch_slug(card_id: str, title: str) -> str:
     return f"card/{card_id[:8]}-{slug}"
 
 
+def _as_utc(dt: datetime) -> datetime:
+    # SQLite doesn't reliably round-trip tzinfo (see Card.is_being_worked, templates._timeago)
+    # — a value just read back from the DB can be naive even though it was written as UTC.
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+async def _attach_last_activity(session: AsyncSession, cards: list[Card]) -> None:
+    """Sets card.last_activity_at to the more recent of the Card row's own
+    updated_at and its most recent transcript event. updated_at only moves on a
+    column transition or claim/release — while an agent is mid-run (a tool call
+    every few seconds, no Card-row write in between), it reads as stale next to
+    what's actually happening, which is what the board tile and card header show."""
+    if not cards:
+        return
+    stmt = (
+        select(CardEvent.card_id, func.max(CardEvent.created_at))
+        .where(CardEvent.card_id.in_([c.id for c in cards]))
+        .group_by(CardEvent.card_id)
+    )
+    latest_event_at = dict((await session.execute(stmt)).all())
+    for card in cards:
+        candidates = [_as_utc(card.updated_at)]
+        event_at = latest_event_at.get(card.id)
+        if event_at is not None:
+            candidates.append(_as_utc(event_at))
+        card.last_activity_at = max(candidates)
+
+
 async def create_card(
     session: AsyncSession, project_id: str, *, title: str, raw_request: str, source: str = "human"
 ) -> Card:
@@ -44,13 +72,17 @@ async def list_recent_card_titles(session: AsyncSession, project_id: str, *, lim
     return list((await session.scalars(stmt)).all())
 
 
-async def get_card(session: AsyncSession, card_id: str, *, with_visits: bool = False) -> Card:
+async def get_card(
+    session: AsyncSession, card_id: str, *, with_visits: bool = False, with_last_activity: bool = False
+) -> Card:
     stmt = select(Card).where(Card.id == card_id)
     if with_visits:
         stmt = stmt.options(selectinload(Card.column_visits))
     card = await session.scalar(stmt)
     if card is None:
         raise NotFoundError(f"no card {card_id!r}")
+    if with_last_activity:
+        await _attach_last_activity(session, [card])
     return card
 
 
@@ -81,6 +113,7 @@ async def get_board(
     the `/board` API endpoint render. Archived cards are left off by default — that's
     the whole point of archiving something."""
     cards = await list_cards(session, project_id, include_archived=include_archived)
+    await _attach_last_activity(session, cards)
     board: dict[Column, list[Card]] = {column: [] for column in Column}
     for card in cards:
         board[card.column].append(card)

@@ -10,7 +10,7 @@ router = APIRouter(prefix="/ui", tags=["ui"])
 
 @router.get("/cards/{card_id}")
 async def card_detail(card_id: str, request: Request, session: SessionDep):
-    card = await card_service.get_card(session, card_id)
+    card = await card_service.get_card(session, card_id, with_last_activity=True)
     project = await project_service.get_project(session, card.project_id)
     visits = await card_service.list_column_visits(session, card_id)
     events = await card_service.list_events(session, card_id, limit=200)

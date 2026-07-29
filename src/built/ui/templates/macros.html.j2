@@ -14,6 +14,6 @@
     {% if card.revision_count %} · rev {{ card.revision_count }}{% endif %}
     {% if card.deploy_attempt_count %} · deploy attempt {{ card.deploy_attempt_count }}{% endif %}
   </div>
-  <div class="timestamp">{{ card.updated_at|timeago }}</div>
+  <div class="timestamp">{{ card.last_activity_at|timeago }}</div>
 </a>
 {%- endmacro %}

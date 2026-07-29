@@ -15,7 +15,7 @@
       {% if card.archived_at %}<span class="badge paused">archived</span>{% endif %}
       {% if card.branch_name %}· <code>{{ card.branch_name }}</code>{% endif %}
     </p>
-    <p class="hint">Last updated {{ card.updated_at|timeago }}</p>
+    <p class="hint">Last updated {{ card.last_activity_at|timeago }}</p>
   </div>
   <div class="page-header-actions">
     <details class="action-disclosure">

@@ -62,6 +62,15 @@ class Settings(BaseSettings):
     # can ever work through it.
     curator_max_pm_backlog: int = 15
 
+    # Auto-archiver: a deterministic sweep (no LLM, unlike Reviver/Curator) that
+    # archives DONE cards once they've sat idle past auto_archive_done_after_days —
+    # keeps the board from accumulating finished work forever without a human
+    # remembering to archive it by hand. Hourly polling is plenty for a day-scale
+    # threshold.
+    archiver_enabled: bool = True
+    archiver_poll_interval_seconds: float = 3600
+    auto_archive_done_after_days: int = 7
+
 
 def get_settings() -> Settings:
     return Settings()

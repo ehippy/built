@@ -9,16 +9,28 @@
   </p>
   <div id="board" class="board">
     {% for column, label in [("pm", "Product Manager"), ("developer", "Developer"), ("tester", "Tester"), ("deployer", "Deployer")] %}
+    {% set in_flight = board[column]|rejectattr("lifecycle_state", "equalto", "done")|list %}
+    {% set done = board[column]|selectattr("lifecycle_state", "equalto", "done")|list %}
     <div class="column">
       <div class="column-header">
         <span>{{ label }}</span>
         <span>{{ board[column]|length }}</span>
       </div>
-      {% for card in board[column] %}
-        {{ m.card_tile(card) }}
-      {% else %}
+      {% if in_flight %}
+        {% for card in in_flight %}
+          {{ m.card_tile(card) }}
+        {% endfor %}
+      {% elif not done %}
         <div class="empty-column">No cards</div>
-      {% endfor %}
+      {% endif %}
+      {% if done %}
+      <details class="collapsible" data-column="{{ column }}">
+        <summary>{{ done|length }} done</summary>
+        {% for card in done %}
+          {{ m.card_tile(card) }}
+        {% endfor %}
+      </details>
+      {% endif %}
     </div>
     {% endfor %}
   </div>

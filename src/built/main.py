@@ -17,6 +17,7 @@ from built.api.routers import health
 from built.api.routers import projects as api_projects
 from built.config import settings
 from built.db.base import create_all
+from built.orchestrator.archiver import run_archiver_loop
 from built.orchestrator.curator import run_curator_loop
 from built.orchestrator.reviver import run_reviver_loop
 from built.orchestrator.worker import run_worker_pool
@@ -37,6 +38,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     worker_task: asyncio.Task | None = None
     reviver_task: asyncio.Task | None = None
     curator_task: asyncio.Task | None = None
+    archiver_task: asyncio.Task | None = None
     stop_event = asyncio.Event()
     if settings.orchestrator_enabled:
         worker_task = asyncio.create_task(
@@ -60,8 +62,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 poll_interval=settings.curator_poll_interval_seconds,
             )
         )
+    if settings.archiver_enabled:
+        archiver_task = asyncio.create_task(
+            run_archiver_loop(
+                stop_event=stop_event,
+                poll_interval=settings.archiver_poll_interval_seconds,
+            )
+        )
 
-    background_tasks = [t for t in (worker_task, reviver_task, curator_task) if t is not None]
+    background_tasks = [
+        t for t in (worker_task, reviver_task, curator_task, archiver_task) if t is not None
+    ]
     try:
         yield
     finally:

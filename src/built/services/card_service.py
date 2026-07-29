@@ -109,11 +109,13 @@ async def count_column_backlog(session: AsyncSession, project_id: str, column: C
 async def get_board(
     session: AsyncSession, project_id: str, *, include_archived: bool = False
 ) -> dict[Column, list[Card]]:
-    """Cards for a project, grouped by their current column — what the dashboard and
-    the `/board` API endpoint render. Archived cards are left off by default — that's
-    the whole point of archiving something."""
+    """Cards for a project, grouped by their current column and ordered within each
+    column by most recent activity first — what the dashboard and the `/board` API
+    endpoint render. Archived cards are left off by default — that's the whole
+    point of archiving something."""
     cards = await list_cards(session, project_id, include_archived=include_archived)
     await _attach_last_activity(session, cards)
+    cards.sort(key=lambda c: c.last_activity_at, reverse=True)
     board: dict[Column, list[Card]] = {column: [] for column in Column}
     for card in cards:
         board[card.column].append(card)

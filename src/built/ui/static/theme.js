@@ -33,37 +33,77 @@
 })();
 
 // --- Transcript details state preservation ---
-// HTMX replaces the entire <div id="transcript"> on each 2s poll, which clears native
-// <details> open/closed state. This handler remembers which details were expanded before
-// swap and re-opens them on the new fragment.
+// HTMX replaces the entire <div id="transcript"> on each 2s poll, which clears
+// native <details> open/closed state. This handler remembers which details were
+// expanded before swap and re-opens them on the new fragment.
+//
+// Listens on `document` rather than on #transcript itself: an outerHTML swap
+// detaches the original #transcript node and inserts a fresh one, so a listener
+// attached directly to that original node stops receiving anything after the
+// first swap. Also: the real event names are htmx:beforeSwap/htmx:afterSwap —
+// there is no htmx:aroundSwap in this htmx version (a prior version of this
+// handler used that name and silently never fired at all).
 (function () {
   "use strict";
-  var transcript = document.getElementById("transcript");
-  if (!transcript) return;
+  var openKeys = null;
 
-  transcript.addEventListener("htmx:aroundSwap", function (evt) {
-    // Collect identifiers of open details before swap wipes the DOM.
-    var openKeys = [];
+  document.addEventListener("htmx:beforeSwap", function () {
+    var transcript = document.getElementById("transcript");
+    if (!transcript) return;
+    var keys = [];
     transcript.querySelectorAll("details[open]").forEach(function (det) {
       var eventDiv = det.closest(".event");
       if (!eventDiv) return;
       var head = eventDiv.querySelector(".event-head span:first-child");
-      if (!head) return;
-      openKeys.push(head.textContent.trim());
+      if (head) keys.push(head.textContent.trim());
     });
-    this._openKeys = openKeys;
-  }.bind(transcript));
+    openKeys = keys;
+  });
 
-  transcript.addEventListener("htmx:afterSwap", function (evt) {
-    if (!this._openKeys) return;
-    this.querySelectorAll(".event").forEach(function (eventDiv) {
+  document.addEventListener("htmx:afterSwap", function () {
+    if (!openKeys) return;
+    var transcript = document.getElementById("transcript");
+    if (!transcript) return;
+    transcript.querySelectorAll(".event").forEach(function (eventDiv) {
       var head = eventDiv.querySelector(".event-head span:first-child");
       if (!head) return;
-      var key = head.textContent.trim();
-      if (this._openKeys.indexOf(key) !== -1) {
+      if (openKeys.indexOf(head.textContent.trim()) !== -1) {
         var det = eventDiv.querySelector("details");
         if (det) det.setAttribute("open", "");
       }
-    }.bind(this));
+    });
+  });
+})();
+
+// --- Board "N done" collapse state preservation ---
+// Same problem and same fix as the transcript above: HTMX replaces the entire
+// #board-wrap on each 3s poll, which clears native <details> open/closed state on
+// the per-column "N done" sections. Each one has a stable data-column attribute
+// (one per pm/developer/tester/deployer column), so — unlike the transcript,
+// whose events have no stable identity across polls — matching by that attribute
+// is enough.
+(function () {
+  "use strict";
+  var openColumns = null;
+
+  document.addEventListener("htmx:beforeSwap", function () {
+    var boardWrap = document.getElementById("board-wrap");
+    if (!boardWrap) return;
+    var cols = [];
+    boardWrap.querySelectorAll("details[data-column][open]").forEach(function (det) {
+      cols.push(det.dataset.column);
+    });
+    openColumns = cols;
+  });
+
+  document.addEventListener("htmx:afterSwap", function () {
+    if (!openColumns) return;
+    var boardWrap = document.getElementById("board-wrap");
+    if (!boardWrap) return;
+    boardWrap.querySelectorAll("details[data-column]").forEach(function (det) {
+      if (openColumns.indexOf(det.dataset.column) !== -1) {
+        det.setAttribute("open", "");
+      }
+    });
   });
 })();

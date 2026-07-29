@@ -148,6 +148,61 @@ async def test_developer_loop_exceeds_iteration_cap_blocks_the_card(db_session, 
     assert "max_iterations_per_run" in (visit.summary or "")
 
 
+async def test_developer_loop_second_attempt_gets_a_recap_of_the_first(db_session, toy_repo_remote):
+    project, card, wt_path = await _make_developer_card(db_session, toy_repo_remote, max_iterations_per_run=1)
+
+    first_visit = await transitions.start_visit(db_session, card)
+    executor = FakeCommandExecutor(CommandResult(exit_code=0, stdout="ok", stderr=""))
+    dispatcher = ToolDispatcher(ctx=ToolContext(card_id=card.id, worktree_root=wt_path), executor=executor)
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[ToolCallRequest(id="call_1", name="bash", arguments={"command": "npm install"})],
+                endpoint_used="fake::model",
+            )
+        ]
+    )
+    await run_developer_visit(
+        db_session, project, card, first_visit, llm_client=llm, dispatcher=dispatcher, max_iterations=1
+    )
+    assert card.lifecycle_state == LifecycleState.BLOCKED  # iteration cap of 1 tripped
+
+    await transitions.retry_card(db_session, card)
+    second_visit = await transitions.start_visit(db_session, card)
+    recap = await card_service.get_previous_attempt_recap(
+        db_session, card.id, card.column, before_attempt=second_visit.attempt_number
+    )
+    assert recap is not None
+    assert "npm install" in recap
+
+    llm2 = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(id="call_2", name="submit_for_test", arguments={"summary": "done"})
+                ],
+                endpoint_used="fake::model",
+            )
+        ]
+    )
+    await run_developer_visit(
+        db_session,
+        project,
+        card,
+        second_visit,
+        llm_client=llm2,
+        dispatcher=dispatcher,
+        max_iterations=5,
+        retry_recap=recap,
+    )
+
+    sent_user_message = llm2.calls[0]["messages"][1]["content"]
+    assert "Context from your previous attempt at this column" in sent_user_message
+    assert "npm install" in sent_user_message
+
+
 async def test_developer_loop_endpoint_chain_exhausted_blocks_the_card(db_session, toy_repo_remote):
     project, card, wt_path = await _make_developer_card(db_session, toy_repo_remote)
     visit = await transitions.start_visit(db_session, card)

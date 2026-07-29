@@ -153,6 +153,22 @@ class Card(Base):
         lazy="raise",
     )
 
+    @property
+    def is_being_worked(self) -> bool:
+        """True while an orchestrator worker actually holds this card's claim/lease —
+        distinct from lifecycle_state == ACTIVE, which also covers a card sitting idle
+        in the queue waiting for a free worker. Drives the "still working" spinner in
+        the dashboard."""
+        if self.claimed_by_worker_id is None or self.lease_expires_at is None:
+            return False
+        lease_expires_at = self.lease_expires_at
+        if lease_expires_at.tzinfo is None:
+            # SQLite doesn't reliably round-trip tzinfo (see _timeago) — a Card just
+            # read back from the DB can have a naive lease_expires_at even though it
+            # was written as UTC.
+            lease_expires_at = lease_expires_at.replace(tzinfo=UTC)
+        return lease_expires_at > _utcnow()
+
 
 class CardColumnVisit(Base):
     """One row per time a card enters a column — a revision loop creates multiple

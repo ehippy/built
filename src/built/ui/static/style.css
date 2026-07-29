@@ -298,6 +298,9 @@ th {
 .card-tile.done { border-left-color: var(--state-done); }
 .card-tile.failed { border-left-color: var(--state-failed); }
 .card-tile .title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
   font-weight: 600;
   margin-bottom: 0.3rem;
 }
@@ -361,6 +364,31 @@ th {
 .event.type-tool_call { border-left: 3px solid var(--accent); }
 .event.type-transition { border-left: 3px solid var(--state-done); }
 .event.type-error { border-left: 3px solid var(--state-failed); }
+
+.thinking {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.7rem;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-style: italic;
+}
+
+.spinner {
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
 
 .chain-list {
   list-style: none;

@@ -4,7 +4,10 @@
 
 {% macro card_tile(card) -%}
 <a class="card-tile {{ card.lifecycle_state }}" href="/ui/cards/{{ card.id }}">
-  <div class="title">{{ card.title }}</div>
+  <div class="title">
+    {{ card.title }}
+    {% if card.is_being_worked %}<span class="spinner" title="An agent is actively working on this card"></span>{% endif %}
+  </div>
   <div class="meta">
     {{ badge(card.lifecycle_state) }}
     {% if card.revision_count %} · rev {{ card.revision_count }}{% endif %}

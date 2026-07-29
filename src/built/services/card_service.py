@@ -77,6 +77,64 @@ async def get_latest_visit_summary(session: AsyncSession, card_id: str, column: 
     return await session.scalar(stmt)
 
 
+_RECAP_EVENT_LIMIT = 12
+_RECAP_RESULT_CHARS = 300
+
+
+def _describe_tool_call_event(payload: dict) -> str:
+    name = payload.get("name", "?")
+    args = payload.get("arguments") or {}
+    descriptor = args.get("command") or args.get("path") or args.get("pattern") or ""
+    status = "FAILED" if payload.get("is_error") else "ok"
+    result = str(payload.get("result", ""))[:_RECAP_RESULT_CHARS]
+    return f"- {name}({descriptor!r}) [{status}]: {result}"
+
+
+async def get_previous_attempt_recap(
+    session: AsyncSession, card_id: str, column: Column, *, before_attempt: int
+) -> str | None:
+    """A compact recap of the most recent prior attempt at this same column (if any):
+    how it ended, plus its last few tool calls. Handed to a retried or bounced-back
+    visit so it doesn't start completely cold — re-reading files and re-discovering
+    environment quirks (e.g. a sandbox toolchain workaround) it already learned last
+    time, burning iterations on rediscovery instead of picking up where it left off."""
+    if before_attempt <= 1:
+        return None
+    prev_visit = await session.scalar(
+        select(CardColumnVisit)
+        .where(
+            CardColumnVisit.card_id == card_id,
+            CardColumnVisit.column == column,
+            CardColumnVisit.attempt_number < before_attempt,
+        )
+        .order_by(CardColumnVisit.attempt_number.desc())
+        .limit(1)
+    )
+    if prev_visit is None:
+        return None
+
+    events = list(
+        (
+            await session.scalars(
+                select(CardEvent)
+                .where(CardEvent.column_visit_id == prev_visit.id, CardEvent.type == EventType.TOOL_CALL)
+                .order_by(CardEvent.seq.desc())
+                .limit(_RECAP_EVENT_LIMIT)
+            )
+        ).all()
+    )
+    events.reverse()
+
+    outcome = prev_visit.outcome.value if prev_visit.outcome else "unknown"
+    lines = [
+        f"Attempt #{prev_visit.attempt_number} ended: {outcome} — {prev_visit.summary or '(no summary)'}"
+    ]
+    if events:
+        lines.append("Its last actions there, most recent last (avoid repeating work already done):")
+        lines.extend(_describe_tool_call_event(e.payload) for e in events)
+    return "\n".join(lines)
+
+
 async def list_events(
     session: AsyncSession, card_id: str, *, since_seq: int = 0, limit: int = 200
 ) -> list[CardEvent]:

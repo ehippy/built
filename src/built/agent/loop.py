@@ -254,8 +254,9 @@ async def run_pm_visit(
     llm_client: LLMClient,
     dispatcher: ToolDispatcher,
     max_iterations: int,
+    retry_recap: str | None = None,
 ) -> Card:
-    system, user = build_pm_prompt(project, card)
+    system, user = build_pm_prompt(project, card, retry_recap=retry_recap)
     return await run_column_visit(
         session,
         card,
@@ -279,8 +280,9 @@ async def run_developer_visit(
     llm_client: LLMClient,
     dispatcher: ToolDispatcher,
     max_iterations: int,
+    retry_recap: str | None = None,
 ) -> Card:
-    system, user = build_developer_prompt(project, card)
+    system, user = build_developer_prompt(project, card, retry_recap=retry_recap)
     return await run_column_visit(
         session,
         card,
@@ -305,8 +307,11 @@ async def run_tester_visit(
     dispatcher: ToolDispatcher,
     max_iterations: int,
     developer_summary: str | None = None,
+    retry_recap: str | None = None,
 ) -> Card:
-    system, user = build_tester_prompt(project, card, developer_summary=developer_summary)
+    system, user = build_tester_prompt(
+        project, card, developer_summary=developer_summary, retry_recap=retry_recap
+    )
     return await run_column_visit(
         session,
         card,

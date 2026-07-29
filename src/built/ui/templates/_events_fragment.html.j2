@@ -21,4 +21,7 @@
   {% else %}
   <p class="subtitle">No activity yet.</p>
   {% endfor %}
+  {% if card.is_being_worked %}
+  <div class="thinking"><span class="spinner"></span> Agent is working…</div>
+  {% endif %}
 </div>

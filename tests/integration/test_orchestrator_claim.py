@@ -86,6 +86,45 @@ async def test_release_claim_clears_claim_fields(db_session):
     assert claimed.lease_expires_at is None
 
 
+async def test_does_not_claim_a_second_card_from_a_project_already_claimed(db_session):
+    project = await _project(db_session, _n="8")
+    await card_service.create_card(db_session, project.id, title="first", raw_request="r")
+    await card_service.create_card(db_session, project.id, title="second", raw_request="r")
+
+    first = await claim_next_card(db_session, "worker-a")
+    assert first is not None
+
+    second = await claim_next_card(db_session, "worker-b")
+    assert second is None
+
+
+async def test_claims_cards_from_different_projects_concurrently(db_session):
+    project_a = await _project(db_session, _n="9a")
+    project_b = await _project(db_session, _n="9b")
+    await card_service.create_card(db_session, project_a.id, title="a", raw_request="r")
+    await card_service.create_card(db_session, project_b.id, title="b", raw_request="r")
+
+    first = await claim_next_card(db_session, "worker-a")
+    second = await claim_next_card(db_session, "worker-b")
+
+    assert first is not None
+    assert second is not None
+    assert first.project_id != second.project_id
+
+
+async def test_frees_up_the_project_once_the_held_card_is_released(db_session):
+    project = await _project(db_session, _n="10")
+    await card_service.create_card(db_session, project.id, title="first", raw_request="r")
+    await card_service.create_card(db_session, project.id, title="second", raw_request="r")
+
+    first = await claim_next_card(db_session, "worker-a")
+    assert first is not None
+    await release_claim(db_session, first)
+
+    second = await claim_next_card(db_session, "worker-b")
+    assert second is not None
+
+
 async def test_requeue_stale_claims_frees_expired_but_not_fresh_claims(db_session):
     project = await _project(db_session, _n="7")
     stale = await card_service.create_card(db_session, project.id, title="stale", raw_request="r")

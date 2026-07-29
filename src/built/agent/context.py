@@ -4,7 +4,9 @@ not Jinja2 — these prompts are short, linear, and don't need a templating engi
 from built.db.models import Card, Project
 
 
-def build_developer_prompt(project: Project, card: Card) -> tuple[str, str]:
+def build_developer_prompt(
+    project: Project, card: Card, *, retry_recap: str | None = None
+) -> tuple[str, str]:
     """Returns (system_prompt, initial_user_message)."""
     system = (
         "You are the Developer agent in an autonomous software factory. You implement "
@@ -30,10 +32,12 @@ def build_developer_prompt(project: Project, card: Card) -> tuple[str, str]:
             "\n\nThe Tester previously rejected this work with the following feedback — "
             f"address it:\n{card.latest_feedback}"
         )
+    if retry_recap:
+        user += f"\n\nContext from your previous attempt at this column:\n{retry_recap}"
     return system, user
 
 
-def build_pm_prompt(project: Project, card: Card) -> tuple[str, str]:
+def build_pm_prompt(project: Project, card: Card, *, retry_recap: str | None = None) -> tuple[str, str]:
     """Returns (system_prompt, initial_user_message). PM has read-only repo tools and
     is expected to use them to explore before writing a spec, rather than being handed
     a pre-fetched file tree — closer to how a real PM would work."""
@@ -49,10 +53,14 @@ def build_pm_prompt(project: Project, card: Card) -> tuple[str, str]:
         "watching this run interactively — do not stop to ask a question."
     )
     user = f"Card: {card.title}\n\nRequest: {card.raw_request}"
+    if retry_recap:
+        user += f"\n\nContext from your previous attempt at this column:\n{retry_recap}"
     return system, user
 
 
-def build_tester_prompt(project: Project, card: Card, *, developer_summary: str | None) -> tuple[str, str]:
+def build_tester_prompt(
+    project: Project, card: Card, *, developer_summary: str | None, retry_recap: str | None = None
+) -> tuple[str, str]:
     """Returns (system_prompt, initial_user_message)."""
     system = (
         "You are the Tester agent in an autonomous software factory. Verify the "
@@ -73,4 +81,6 @@ def build_tester_prompt(project: Project, card: Card, *, developer_summary: str 
         f"Acceptance criteria:\n{criteria}\n\n"
         f"Developer's summary of changes:\n{developer_summary or '(not available)'}"
     )
+    if retry_recap:
+        user += f"\n\nContext from your previous attempt at this column:\n{retry_recap}"
     return system, user

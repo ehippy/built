@@ -37,14 +37,28 @@ DEFAULT_CONCURRENCY = 4
 async def claim_next_card(session: AsyncSession, worker_id: str) -> Card | None:
     """Atomic conditional UPDATE, checked by rowcount — works against SQLite from a
     single process, and is a drop-in seam for a future `SELECT...FOR UPDATE SKIP
-    LOCKED` multi-process claim."""
+    LOCKED` multi-process claim.
+
+    Also enforces per-project serialization: a card is only claimable if no other
+    card in the same project currently holds an active (non-expired) claim. Two
+    cards in the same repo never build concurrently and step on each other's
+    worktree/branch assumptions with zero coordination between them. The busy-project
+    check is repeated in the UPDATE's WHERE clause (not just the candidate SELECT) so
+    it's re-evaluated against committed state at claim time, closing the race where
+    two workers both pick a different card from the same idle project in the same
+    poll cycle."""
     now = datetime.now(UTC)
+    busy_project_ids = select(Card.project_id).where(
+        Card.claimed_by_worker_id.is_not(None),
+        Card.lease_expires_at >= now,
+    )
     candidate_id = await session.scalar(
         select(Card.id)
         .where(
             Card.lifecycle_state == LifecycleState.ACTIVE,
             Card.column.in_(IMPLEMENTED_COLUMNS),
             or_(Card.claimed_by_worker_id.is_(None), Card.lease_expires_at < now),
+            Card.project_id.not_in(busy_project_ids),
         )
         .order_by(Card.updated_at)
         .limit(1)
@@ -57,6 +71,7 @@ async def claim_next_card(session: AsyncSession, worker_id: str) -> Card | None:
         .where(
             Card.id == candidate_id,
             or_(Card.claimed_by_worker_id.is_(None), Card.lease_expires_at < now),
+            Card.project_id.not_in(busy_project_ids),
         )
         .values(
             claimed_by_worker_id=worker_id,
@@ -66,7 +81,7 @@ async def claim_next_card(session: AsyncSession, worker_id: str) -> Card | None:
     )
     await session.commit()
     if result.rowcount == 0:
-        return None  # lost the race to another worker
+        return None  # lost the race to another worker, or another card in this project got claimed first
 
     # session.get() checks the identity map first — an already-loaded Card (e.g. the
     # object create_card() just returned) comes back as-is, without picking up the
@@ -128,6 +143,12 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
     visit = await transitions.start_visit(session, card)
     await session.commit()
 
+    # A retried or bounced-back visit isn't the first attempt at this column — hand it
+    # a recap of what the previous attempt already did, so it doesn't start cold.
+    retry_recap = await card_service.get_previous_attempt_recap(
+        session, card.id, card.column, before_attempt=visit.attempt_number
+    )
+
     max_iterations = project.max_iterations_per_run
     if card.column == Column.PM:
         await run_pm_visit(
@@ -138,6 +159,7 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
             llm_client=llm_client,
             dispatcher=dispatcher,
             max_iterations=max_iterations,
+            retry_recap=retry_recap,
         )
     elif card.column == Column.DEVELOPER:
         await run_developer_visit(
@@ -148,6 +170,7 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
             llm_client=llm_client,
             dispatcher=dispatcher,
             max_iterations=max_iterations,
+            retry_recap=retry_recap,
         )
     elif card.column == Column.TESTER:
         developer_summary = await card_service.get_latest_visit_summary(session, card.id, Column.DEVELOPER)
@@ -160,6 +183,7 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
             dispatcher=dispatcher,
             max_iterations=max_iterations,
             developer_summary=developer_summary,
+            retry_recap=retry_recap,
         )
     else:  # pragma: no cover — guarded by IMPLEMENTED_COLUMNS in claim_next_card
         raise AssertionError(f"unimplemented column: {card.column}")

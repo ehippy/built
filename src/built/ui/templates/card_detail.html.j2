@@ -73,7 +73,7 @@
 
   {% if card.spec %}
   <h2>Spec</h2>
-  <p>{{ card.spec }}</p>
+  <div class="markdown-body">{{ card.spec|markdown }}</div>
   <h2>Acceptance criteria</h2>
   <ul>
     {% for c in card.acceptance_criteria %}<li>{{ c }}</li>{% endfor %}

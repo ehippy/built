@@ -3,9 +3,15 @@ the REST API directly — no self-HTTP-calling."""
 
 from pathlib import Path
 
+import mistune
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+
+# escape=True (the default) escapes any raw HTML embedded in the markdown source
+# rather than passing it through, so agent-generated spec text can't inject markup.
+_markdown = mistune.create_markdown()
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 # Starlette's default autoescape only fires for names ending in .html/.htm/.xml —
@@ -33,4 +39,11 @@ def _timeago(dt) -> str:
     return f"{int(seconds // 86400)}d ago"
 
 
+def _render_markdown(text: str | None) -> Markup:
+    if not text:
+        return Markup("")
+    return Markup(_markdown(text))
+
+
 templates.env.filters["timeago"] = _timeago
+templates.env.filters["markdown"] = _render_markdown

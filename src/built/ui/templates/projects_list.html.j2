@@ -1,0 +1,56 @@
+{% extends "base.html.j2" %}
+{% block title %}Projects{% endblock %}
+{% block content %}
+<h1>Projects</h1>
+<p class="subtitle">Each project is a git repo plus an overarching goal — cards flow through PM &rarr; Developer &rarr; Tester &rarr; Deployer.</p>
+
+<div class="panel">
+  <h2>New project</h2>
+  <form method="post" action="/ui/projects">
+    <div class="field-row">
+      <div class="field">
+        <label for="name">Name</label>
+        <input type="text" id="name" name="name" required placeholder="URL Shortener">
+      </div>
+      <div class="field">
+        <label for="default_branch">Default branch</label>
+        <input type="text" id="default_branch" name="default_branch" value="main">
+      </div>
+    </div>
+    <div class="field">
+      <label for="repo_remote_url">Git repo (URL or local path)</label>
+      <input type="text" id="repo_remote_url" name="repo_remote_url" required placeholder="https://github.com/you/repo.git">
+    </div>
+    <div class="field">
+      <label for="overarching_goal">Overarching goal</label>
+      <textarea id="overarching_goal" name="overarching_goal" required placeholder="Build a fast, well-tested URL shortener API."></textarea>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label for="max_revisions">Max revisions</label>
+        <input type="number" id="max_revisions" name="max_revisions" min="0" placeholder="3">
+      </div>
+      <div class="field">
+        <label for="max_deploy_attempts">Max deploy attempts</label>
+        <input type="number" id="max_deploy_attempts" name="max_deploy_attempts" min="0" placeholder="2">
+      </div>
+      <div class="field">
+        <label for="max_iterations_per_run">Max iterations / run</label>
+        <input type="number" id="max_iterations_per_run" name="max_iterations_per_run" min="1" placeholder="25">
+      </div>
+    </div>
+    <button class="btn" type="submit">Create project</button>
+  </form>
+</div>
+
+<div class="project-list">
+  {% for project in projects %}
+  <a class="project-card" href="/ui/projects/{{ project.id }}/board">
+    <strong>{{ project.name }}</strong>
+    <div class="goal">{{ project.overarching_goal }}</div>
+  </a>
+  {% else %}
+  <p class="subtitle">No projects yet — create one above.</p>
+  {% endfor %}
+</div>
+{% endblock %}

@@ -2,18 +2,30 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 # Imported for its side effect: registers all ORM models on Base.metadata before
 # create_all() runs. Nothing in this module references the import directly.
 import built.db.models  # noqa: F401
-from built.api.routers import board, cards, endpoint_configs, health, projects
+from built.api.routers import board as api_board
+from built.api.routers import cards as api_cards
+from built.api.routers import endpoint_configs as api_endpoint_configs
+from built.api.routers import health
+from built.api.routers import projects as api_projects
 from built.config import settings
 from built.db.base import create_all
 from built.orchestrator.worker import run_worker_pool
+from built.ui.routers import board as ui_board
+from built.ui.routers import cards as ui_cards
+from built.ui.routers import endpoint_configs as ui_endpoint_configs
+from built.ui.routers import projects as ui_projects
 
 logger = logging.getLogger(__name__)
+
+STATIC_DIR = Path(__file__).parent / "ui" / "static"
 
 
 @asynccontextmanager
@@ -42,11 +54,18 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     app = FastAPI(title="built", description="Agentic software factory", lifespan=lifespan)
 
+    app.mount("/ui/static", StaticFiles(directory=str(STATIC_DIR)), name="ui-static")
+
     app.include_router(health.router)
-    app.include_router(projects.router)
-    app.include_router(endpoint_configs.router)
-    app.include_router(cards.router)
-    app.include_router(board.router)
+    app.include_router(api_projects.router)
+    app.include_router(api_endpoint_configs.router)
+    app.include_router(api_cards.router)
+    app.include_router(api_board.router)
+
+    app.include_router(ui_projects.router)
+    app.include_router(ui_board.router)
+    app.include_router(ui_cards.router)
+    app.include_router(ui_endpoint_configs.router)
 
     return app
 

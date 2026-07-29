@@ -1,0 +1,14 @@
+{% macro badge(state) -%}
+<span class="badge {{ state }}">{{ state }}</span>
+{%- endmacro %}
+
+{% macro card_tile(card) -%}
+<a class="card-tile {{ card.lifecycle_state }}" href="/ui/cards/{{ card.id }}">
+  <div class="title">{{ card.title }}</div>
+  <div class="meta">
+    {{ badge(card.lifecycle_state) }}
+    {% if card.revision_count %} · rev {{ card.revision_count }}{% endif %}
+    {% if card.deploy_attempt_count %} · deploy attempt {{ card.deploy_attempt_count }}{% endif %}
+  </div>
+</a>
+{%- endmacro %}

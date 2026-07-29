@@ -1,0 +1,78 @@
+{% extends "base.html.j2" %}
+{% import "macros.html.j2" as m %}
+{% block title %}{{ card.title }}{% endblock %}
+{% block content %}
+<div class="tabs">
+  <a href="/ui/projects/{{ project.id }}/board">&larr; {{ project.name }} board</a>
+</div>
+
+<h1>{{ card.title }}</h1>
+<p class="subtitle">
+  {{ m.badge(card.lifecycle_state) }}
+  <span class="badge active" style="background:#6b6b76">{{ card.column }}</span>
+  {% if card.branch_name %}· <code>{{ card.branch_name }}</code>{% endif %}
+</p>
+
+{% if card.lifecycle_state in ("blocked", "failed") %}
+<div class="panel">
+  <form class="inline" method="post" action="/ui/cards/{{ card.id }}/retry">
+    <button class="btn" type="submit">Retry</button>
+  </form>
+  <span class="hint">Resets the revision/deploy-attempt counters and makes the card claimable again — the one human touchpoint outside the autonomous pipeline.</span>
+</div>
+{% elif card.lifecycle_state == "active" %}
+<div class="panel">
+  <form class="inline" method="post" action="/ui/cards/{{ card.id }}/cancel" onsubmit="return confirm('Cancel this card?');">
+    <button class="btn danger" type="submit">Cancel</button>
+  </form>
+</div>
+{% endif %}
+
+<div class="panel">
+  <h2>Request</h2>
+  <p>{{ card.raw_request }}</p>
+
+  {% if card.spec %}
+  <h2>Spec</h2>
+  <p>{{ card.spec }}</p>
+  <h2>Acceptance criteria</h2>
+  <ul>
+    {% for c in card.acceptance_criteria %}<li>{{ c }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if card.latest_feedback %}
+  <h2>Latest Tester feedback</h2>
+  <p>{{ card.latest_feedback }}</p>
+  {% endif %}
+
+  <p class="hint">Revision {{ card.revision_count }} · Deploy attempts {{ card.deploy_attempt_count }}</p>
+</div>
+
+<div class="panel">
+  <h2>Column visits</h2>
+  {% if visits %}
+  <table>
+    <thead><tr><th>Column</th><th>Attempt</th><th>Outcome</th><th>Summary</th><th>Started</th></tr></thead>
+    <tbody>
+    {% for v in visits %}
+      <tr>
+        <td>{{ v.column }}</td>
+        <td>{{ v.attempt_number }}</td>
+        <td>{{ v.outcome or "in progress" }}</td>
+        <td>{{ v.summary or "" }}</td>
+        <td>{{ v.started_at|timeago }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="subtitle">This card hasn't been picked up by an agent yet.</p>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>Transcript</h2>
+  {% include "_events_fragment.html.j2" %}
+</div>
+{% endblock %}

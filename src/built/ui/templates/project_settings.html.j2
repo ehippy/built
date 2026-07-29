@@ -1,0 +1,162 @@
+{% extends "base.html.j2" %}
+{% block title %}{{ project.name }} · Settings{% endblock %}
+{% block content %}
+<div class="tabs">
+  <a href="/ui/projects/{{ project.id }}/board">Board</a>
+  <a class="active" href="/ui/projects/{{ project.id }}/settings">Settings</a>
+  <a href="/ui/projects">&larr; All projects</a>
+</div>
+
+<h1>{{ project.name }}</h1>
+<p class="subtitle">{{ project.slug }}</p>
+
+{% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+
+<div class="panel">
+  <h2>Project details</h2>
+  <form method="post" action="/ui/projects/{{ project.id }}/settings">
+    <div class="field-row">
+      <div class="field">
+        <label for="name">Name</label>
+        <input type="text" id="name" name="name" value="{{ project.name }}" required>
+      </div>
+      <div class="field">
+        <label for="default_branch">Default branch</label>
+        <input type="text" id="default_branch" name="default_branch" value="{{ project.default_branch }}">
+      </div>
+    </div>
+    <div class="field">
+      <label>Git repo</label>
+      <input type="text" value="{{ project.repo_remote_url }}" disabled>
+      <div class="hint">Not editable after creation — create a new project to point at a different repo.</div>
+    </div>
+    <div class="field">
+      <label for="overarching_goal">Overarching goal</label>
+      <textarea id="overarching_goal" name="overarching_goal" required>{{ project.overarching_goal }}</textarea>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label for="max_revisions">Max revisions</label>
+        <input type="number" id="max_revisions" name="max_revisions" min="0" value="{{ project.max_revisions }}">
+      </div>
+      <div class="field">
+        <label for="max_deploy_attempts">Max deploy attempts</label>
+        <input type="number" id="max_deploy_attempts" name="max_deploy_attempts" min="0" value="{{ project.max_deploy_attempts }}">
+      </div>
+      <div class="field">
+        <label for="max_iterations_per_run">Max iterations / run</label>
+        <input type="number" id="max_iterations_per_run" name="max_iterations_per_run" min="1" value="{{ project.max_iterations_per_run }}">
+      </div>
+    </div>
+    <button class="btn" type="submit">Save changes</button>
+  </form>
+</div>
+
+<div class="panel">
+  <h2>LLM endpoints</h2>
+  <p class="subtitle">
+    The fallback chain for this project. Entries scoped to a specific role win over "All roles" entries here;
+    if nothing is configured for a role at all, it falls back to the
+    <a href="/ui/endpoint-configs">global defaults</a>. Lower priority number = tried first.
+  </p>
+  {% if endpoint_configs %}
+  <table>
+    <thead><tr><th>Role</th><th>Base URL</th><th>Model</th><th>Priority</th><th>Enabled</th><th></th></tr></thead>
+    <tbody>
+    {% for ep in endpoint_configs %}
+      <tr>
+        <td>{{ ep.role or "All roles" }}</td>
+        <td>{{ ep.base_url }}</td>
+        <td>{{ ep.model }}</td>
+        <td>{{ ep.priority }}</td>
+        <td>{{ "yes" if ep.enabled else "no" }}</td>
+        <td>
+          <form class="inline" method="post" action="/ui/endpoint-configs/{{ ep.id }}/toggle?next=/ui/projects/{{ project.id }}/settings">
+            <button class="btn secondary small" type="submit">{{ "Disable" if ep.enabled else "Enable" }}</button>
+          </form>
+          <form class="inline" method="post" action="/ui/endpoint-configs/{{ ep.id }}/delete?next=/ui/projects/{{ project.id }}/settings">
+            <button class="btn danger small" type="submit">Delete</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="subtitle">No project-specific endpoints configured — this project uses the global defaults for every role.</p>
+  {% endif %}
+
+  <h2>Add endpoint</h2>
+  <form method="post" action="/ui/projects/{{ project.id }}/endpoint-configs">
+    <div class="field-row">
+      <div class="field">
+        <label for="role">Role</label>
+        <select id="role" name="role">
+          <option value="">All roles</option>
+          <option value="pm">Product Manager</option>
+          <option value="developer">Developer</option>
+          <option value="tester">Tester</option>
+          <option value="deployer">Deployer</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="priority">Priority</label>
+        <input type="number" id="priority" name="priority" value="0">
+      </div>
+    </div>
+    <div class="field">
+      <label for="base_url">Base URL</label>
+      <input type="text" id="base_url" name="base_url" required placeholder="http://localhost:11434/v1">
+    </div>
+    <div class="field">
+      <label for="model">Model</label>
+      <input type="text" id="model" name="model" required placeholder="Qwen3.6-35B-A3B-GGUF">
+    </div>
+    <div class="field">
+      <label for="api_key_ref">API key env var (optional)</label>
+      <input type="text" id="api_key_ref" name="api_key_ref" placeholder="OPENAI_API_KEY">
+      <div class="hint">Name of an environment variable on the server — never the raw key.</div>
+    </div>
+    <button class="btn" type="submit">Add endpoint</button>
+  </form>
+</div>
+
+<div class="panel">
+  <h2>Deploy configuration</h2>
+  <p class="subtitle">Used by the Deployer column once a card is approved. Zero LLM-supplied arguments — this command runs exactly as configured.</p>
+  <form method="post" action="/ui/projects/{{ project.id }}/deploy-config">
+    <div class="field">
+      <label for="kind">Kind</label>
+      <select id="kind" name="kind">
+        <option value="command" {{ "selected" if deploy_config and deploy_config.kind == "command" }}>Command</option>
+        <option value="script" {{ "selected" if deploy_config and deploy_config.kind == "script" }}>Script path</option>
+        <option value="webhook" {{ "selected" if deploy_config and deploy_config.kind == "webhook" }}>Webhook</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="command">Command</label>
+      <input type="text" id="command" name="command" value="{{ deploy_config.command if deploy_config else '' }}" placeholder="docker build -t app . && docker push app">
+    </div>
+    <div class="field">
+      <label for="script_path">Script path</label>
+      <input type="text" id="script_path" name="script_path" value="{{ deploy_config.script_path if deploy_config else '' }}" placeholder="./deploy.sh">
+    </div>
+    <div class="field">
+      <label for="webhook_url">Webhook URL</label>
+      <input type="url" id="webhook_url" name="webhook_url" value="{{ deploy_config.webhook_url if deploy_config else '' }}">
+    </div>
+    <div class="field">
+      <label for="timeout_seconds">Timeout (seconds)</label>
+      <input type="number" id="timeout_seconds" name="timeout_seconds" value="{{ deploy_config.timeout_seconds if deploy_config else 600 }}">
+    </div>
+    <button class="btn" type="submit">Save deploy config</button>
+  </form>
+</div>
+
+<div class="panel">
+  <h2>Danger zone</h2>
+  <form method="post" action="/ui/projects/{{ project.id }}/archive" onsubmit="return confirm('Archive this project? It will be hidden from the project list.');">
+    <button class="btn danger" type="submit">Archive project</button>
+  </form>
+</div>
+{% endblock %}

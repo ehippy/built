@@ -9,7 +9,7 @@
 
 {% if endpoint_configs %}
 <table>
-  <thead><tr><th>Role</th><th>Base URL</th><th>Model</th><th>Priority</th><th>Enabled</th><th></th></tr></thead>
+  <thead><tr><th>Role</th><th>Base URL</th><th>Model</th><th>Priority</th><th>Max concurrency</th><th>Enabled</th><th></th></tr></thead>
   <tbody>
   {% for ep in endpoint_configs %}
     <tr>
@@ -17,6 +17,7 @@
       <td>{{ ep.base_url }}</td>
       <td>{{ ep.model }}</td>
       <td>{{ ep.priority }}</td>
+      <td>{{ ep.max_concurrency }}</td>
       <td>{{ "yes" if ep.enabled else "no" }}</td>
       <td>
         <form class="inline" method="post" action="/ui/endpoint-configs/{{ ep.id }}/toggle?next=/ui/endpoint-configs">
@@ -65,6 +66,11 @@
       <label for="api_key_ref">API key env var (optional)</label>
       <input type="text" id="api_key_ref" name="api_key_ref" placeholder="OPENAI_API_KEY">
       <div class="hint">Name of an environment variable on the server — never the raw key.</div>
+    </div>
+    <div class="field">
+      <label for="max_concurrency">Max concurrency</label>
+      <input type="number" id="max_concurrency" name="max_concurrency" min="1" value="1">
+      <div class="hint">Max simultaneous requests this backend should ever receive from this app, shared across every project/role that resolves to it. A single local model instance can rarely usefully handle more than 1 at once; raise it for a hosted/scaled endpoint.</div>
     </div>
     <button class="btn" type="submit">Add endpoint</button>
   </form>

@@ -107,6 +107,7 @@ async def add_project_endpoint_config(
     role: str = Form(""),
     priority: int = Form(0),
     api_key_ref: str = Form(""),
+    max_concurrency: int = Form(1),
 ) -> RedirectResponse:
     await endpoint_service.create_endpoint_config(
         session,
@@ -116,6 +117,7 @@ async def add_project_endpoint_config(
         role=Column(role) if role else None,
         priority=priority,
         api_key_ref=api_key_ref or None,
+        max_concurrency=max_concurrency,
     )
     return RedirectResponse(f"/ui/projects/{project_id}/settings", status_code=303)
 

@@ -314,6 +314,40 @@ th {
   padding: 0.5rem 0.35rem;
 }
 
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+}
+.page-header h1 {
+  margin-bottom: 0.25rem;
+}
+.page-header .subtitle {
+  margin-bottom: 0;
+}
+
+.new-project {
+  flex-shrink: 0;
+}
+.new-project summary.btn {
+  display: inline-block;
+  width: fit-content;
+  list-style: none;
+  cursor: pointer;
+}
+.new-project summary.btn::-webkit-details-marker {
+  display: none;
+}
+.new-project .panel {
+  margin-top: 0.6rem;
+  margin-bottom: 0;
+  width: 420px;
+  max-width: 90vw;
+}
+
 .project-list a.project-card {
   display: block;
   padding: 0.9rem 1rem;

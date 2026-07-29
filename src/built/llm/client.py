@@ -10,6 +10,7 @@ once litellm gives up on the current one. Router's own fallback configuration wo
 do something similar, but through a config surface this loop makes explicit instead.
 """
 
+import asyncio
 import json
 import os
 import time
@@ -22,6 +23,23 @@ from built.db.models import EndpointConfig
 
 DEFAULT_TIMEOUT_SECONDS = 120
 DEFAULT_NUM_RETRIES = 1
+
+# Keyed by (base_url, model) — the physical backend, not the EndpointConfig row —
+# so a project-specific and a global EndpointConfig that happen to point at the same
+# server share one cap instead of each getting their own and doubling the load it
+# actually sees. Module-level and never cleared: a handful of long-lived semaphores
+# for the lifetime of the process is negligible, and there's no natural point at
+# which an endpoint is known to be permanently gone.
+_endpoint_semaphores: dict[tuple[str, str], asyncio.Semaphore] = {}
+
+
+def _semaphore_for(endpoint: EndpointConfig) -> asyncio.Semaphore:
+    key = (endpoint.base_url, endpoint.model)
+    semaphore = _endpoint_semaphores.get(key)
+    if semaphore is None:
+        semaphore = asyncio.Semaphore(max(1, endpoint.max_concurrency))
+        _endpoint_semaphores[key] = semaphore
+    return semaphore
 
 
 @dataclass
@@ -75,17 +93,23 @@ class FallbackLLMClient:
     async def _complete_one(
         self, endpoint: EndpointConfig, *, messages: list[dict], tools: list[dict]
     ) -> LLMResult:
-        start = time.monotonic()
-        response = await litellm.acompletion(
-            model=f"openai/{endpoint.model}",
-            api_base=endpoint.base_url,
-            api_key=_resolve_api_key(endpoint.api_key_ref),
-            messages=messages,
-            tools=tools or None,
-            num_retries=DEFAULT_NUM_RETRIES,
-            timeout=DEFAULT_TIMEOUT_SECONDS,
-        )
-        latency_ms = int((time.monotonic() - start) * 1000)
+        # Never let more than endpoint.max_concurrency requests reach this physical
+        # backend at once — a local single-model server doesn't parallelize well, and
+        # letting concurrent visits pile requests onto it is what actually caused the
+        # request-timeout failures this was added to fix. Queued time isn't counted
+        # in latency_ms below — that measures the call itself, not time spent waiting.
+        async with _semaphore_for(endpoint):
+            start = time.monotonic()
+            response = await litellm.acompletion(
+                model=f"openai/{endpoint.model}",
+                api_base=endpoint.base_url,
+                api_key=_resolve_api_key(endpoint.api_key_ref),
+                messages=messages,
+                tools=tools or None,
+                num_retries=DEFAULT_NUM_RETRIES,
+                timeout=DEFAULT_TIMEOUT_SECONDS,
+            )
+            latency_ms = int((time.monotonic() - start) * 1000)
 
         message = response.choices[0].message
         tool_calls = [

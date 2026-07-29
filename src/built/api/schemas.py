@@ -72,6 +72,7 @@ class EndpointConfigCreate(BaseModel):
     supports_tool_calling: bool = True
     extra_params: dict = {}
     enabled: bool = True
+    max_concurrency: int = 1
 
 
 class EndpointConfigUpdate(BaseModel):
@@ -83,6 +84,7 @@ class EndpointConfigUpdate(BaseModel):
     supports_tool_calling: bool | None = None
     extra_params: dict | None = None
     enabled: bool | None = None
+    max_concurrency: int | None = None
 
 
 class EndpointConfigOut(BaseModel):
@@ -98,6 +100,7 @@ class EndpointConfigOut(BaseModel):
     supports_tool_calling: bool
     extra_params: dict
     enabled: bool
+    max_concurrency: int
     created_at: datetime
 
 

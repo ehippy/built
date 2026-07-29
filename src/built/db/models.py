@@ -113,6 +113,11 @@ class EndpointConfig(Base):
     supports_tool_calling: Mapped[bool] = mapped_column(default=True)
     extra_params: Mapped[dict] = mapped_column(JSON, default=dict)
     enabled: Mapped[bool] = mapped_column(default=True)
+    # Max simultaneous in-flight requests this physical (base_url, model) backend
+    # should ever receive from this app — see llm/client.py's per-endpoint semaphore.
+    # Default of 1 matches a single local model instance with no continuous batching;
+    # a hosted/scaled endpoint can be configured higher.
+    max_concurrency: Mapped[int] = mapped_column(Integer, default=1)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 

@@ -19,6 +19,7 @@ async def create_endpoint_config(
     supports_tool_calling: bool = True,
     extra_params: dict | None = None,
     enabled: bool = True,
+    max_concurrency: int = 1,
 ) -> EndpointConfig:
     endpoint = EndpointConfig(
         project_id=project_id,
@@ -30,6 +31,7 @@ async def create_endpoint_config(
         supports_tool_calling=supports_tool_calling,
         extra_params=extra_params or {},
         enabled=enabled,
+        max_concurrency=max_concurrency,
     )
     session.add(endpoint)
     await session.flush()

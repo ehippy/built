@@ -70,6 +70,10 @@ class DockerCommandExecutor:
                 ["bash", "-lc", command],
                 working_dir="/workspace",
                 volumes={str(worktree): {"bind": "/workspace", "mode": "rw"}},
+                # HOME defaults to a path under the read-only root FS (e.g. /home/node) —
+                # package managers that cache there (npm, pip, etc.) fail or silently
+                # corrupt writes. Point HOME at the writable /tmp tmpfs instead.
+                environment={"HOME": "/tmp"},
                 mem_limit=DEFAULT_MEM_LIMIT,
                 cpu_period=DEFAULT_CPU_PERIOD,
                 cpu_quota=DEFAULT_CPU_QUOTA,

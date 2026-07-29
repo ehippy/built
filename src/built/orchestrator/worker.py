@@ -120,8 +120,10 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
         card.worktree_path = str(worktree_path)
         await session.commit()
 
+    executor_kwargs = {"image": project.sandbox_image} if project.sandbox_image else {}
     dispatcher = ToolDispatcher(
-        ctx=ToolContext(card_id=card.id, worktree_root=worktree_path), executor=DockerCommandExecutor()
+        ctx=ToolContext(card_id=card.id, worktree_root=worktree_path),
+        executor=DockerCommandExecutor(**executor_kwargs),
     )
     visit = await transitions.start_visit(session, card)
     await session.commit()

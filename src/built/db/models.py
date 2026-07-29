@@ -35,6 +35,10 @@ class Project(Base):
     repo_remote_url: Mapped[str]
     managed_repo_path: Mapped[str | None] = mapped_column(default=None)
     default_branch: Mapped[str] = mapped_column(default="main")
+    # Docker image the bash tool runs in for this project's Developer/Tester columns —
+    # e.g. "node:22-slim" for a JS/TS repo. NULL = sandbox.container.DEFAULT_IMAGE
+    # (python:3.12-slim), which has no Node/Go/Rust/etc. toolchain.
+    sandbox_image: Mapped[str | None] = mapped_column(default=None)
 
     # Safety-valve caps — copied from service-level defaults at creation, overridable per project.
     max_revisions: Mapped[int] = mapped_column(Integer, default=3)

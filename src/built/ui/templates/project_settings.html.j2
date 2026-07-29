@@ -34,6 +34,15 @@
       <label for="overarching_goal">Overarching goal</label>
       <textarea id="overarching_goal" name="overarching_goal" required>{{ project.overarching_goal }}</textarea>
     </div>
+    <div class="field">
+      <label for="sandbox_image">Sandbox image (for the bash tool)</label>
+      <input type="text" id="sandbox_image" name="sandbox_image" value="{{ project.sandbox_image or '' }}" placeholder="python:3.12-slim (default)">
+      <div class="hint">
+        The Docker image Developer/Tester run builds and tests in. Defaults to a Python-only image — set this to
+        <code>node:22-slim</code>, <code>golang:1.23-slim</code>, etc. to match your project's language.
+        Leave blank to use the default.
+      </div>
+    </div>
     <div class="field-row">
       <div class="field">
         <label for="max_revisions">Max revisions</label>

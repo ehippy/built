@@ -36,6 +36,7 @@ async def create_project(
     overarching_goal: str,
     repo_remote_url: str,
     default_branch: str = "main",
+    sandbox_image: str | None = None,
     max_revisions: int | None = None,
     max_deploy_attempts: int | None = None,
     max_iterations_per_run: int | None = None,
@@ -46,6 +47,7 @@ async def create_project(
         overarching_goal=overarching_goal,
         repo_remote_url=repo_remote_url,
         default_branch=default_branch,
+        sandbox_image=sandbox_image,
         max_revisions=max_revisions if max_revisions is not None else settings.default_max_revisions,
         max_deploy_attempts=(
             max_deploy_attempts if max_deploy_attempts is not None else settings.default_max_deploy_attempts

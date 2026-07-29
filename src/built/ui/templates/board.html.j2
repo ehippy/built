@@ -45,6 +45,14 @@
             <label for="raw_request">Request</label>
             <textarea id="raw_request" name="raw_request" required placeholder="Describe what you want built..."></textarea>
           </div>
+          <div class="field">
+            <label for="priority">Priority</label>
+            <select id="priority" name="priority">
+              <option value="high">High</option>
+              <option value="normal" selected>Normal</option>
+              <option value="low">Low</option>
+            </select>
+          </div>
           <button class="btn" type="submit">Add to board</button>
         </form>
       </div>

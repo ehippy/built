@@ -12,12 +12,20 @@
     <p class="subtitle">
       {{ m.badge(card.lifecycle_state) }}
       <span class="badge active" style="background:#6b6b76">{{ card.column }}</span>
+      {% if card.priority != "normal" %}<span class="badge priority-{{ card.priority }}">{{ card.priority }} priority</span>{% endif %}
       {% if card.archived_at %}<span class="badge paused">archived</span>{% endif %}
       {% if card.branch_name %}· <code>{{ card.branch_name }}</code>{% endif %}
     </p>
     <p class="hint">Last updated {{ card.last_activity_at|timeago }}</p>
   </div>
   <div class="page-header-actions">
+    <form class="inline" method="post" action="/ui/cards/{{ card.id }}/priority">
+      <select name="priority" onchange="this.form.submit()">
+        <option value="high" {% if card.priority == "high" %}selected{% endif %}>High priority</option>
+        <option value="normal" {% if card.priority == "normal" %}selected{% endif %}>Normal priority</option>
+        <option value="low" {% if card.priority == "low" %}selected{% endif %}>Low priority</option>
+      </select>
+    </form>
     <details class="action-disclosure">
       <summary class="btn secondary">Edit</summary>
       <div class="panel">

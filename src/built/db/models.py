@@ -11,6 +11,7 @@ from built.domain.enums import (
     DeployMode,
     EventType,
     LifecycleState,
+    Priority,
     RunAttemptStatus,
     VisitOutcome,
 )
@@ -191,6 +192,9 @@ class Card(Base):
 
     column: Mapped[ColumnEnum] = mapped_column(default=ColumnEnum.PM)
     lifecycle_state: Mapped[LifecycleState] = mapped_column(default=LifecycleState.ACTIVE)
+    # A human's manual bless/deprioritize signal — see orchestrator/worker.py's
+    # _CLAIM_PRIORITY_ORDER, which sorts on this before column-depth or recency.
+    priority: Mapped[Priority] = mapped_column(default=Priority.NORMAL)
 
     branch_name: Mapped[str | None] = mapped_column(default=None)
     worktree_path: Mapped[str | None] = mapped_column(default=None)

@@ -62,7 +62,14 @@ async def test_project_and_card_lifecycle_via_api():
         card = card_resp.json()
         assert card["column"] == "pm"
         assert card["lifecycle_state"] == "active"
+        assert card["priority"] == "normal"
         assert card["branch_name"] == f"card/{card['id'][:8]}-add-a-health-check"
+
+        priority_resp = await client.post(
+            f"/api/v1/cards/{card['id']}/priority", headers=AUTH, json={"priority": "high"}
+        )
+        assert priority_resp.status_code == 200, priority_resp.text
+        assert priority_resp.json()["priority"] == "high"
 
         board_resp = await client.get(f"/api/v1/projects/{project['id']}/board")
         assert board_resp.status_code == 200

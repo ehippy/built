@@ -8,7 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from built.db.models import Card, CardColumnVisit, CardEvent, Project
 from built.domain import transitions
-from built.domain.enums import Column, EventType, LifecycleState
+from built.domain.enums import Column, EventType, LifecycleState, Priority
 from built.domain.events import append_event
 from built.services.project_service import NotFoundError, get_project
 
@@ -49,10 +49,16 @@ async def _attach_last_activity(session: AsyncSession, cards: list[Card]) -> Non
 
 
 async def create_card(
-    session: AsyncSession, project_id: str, *, title: str, raw_request: str, source: str = "human"
+    session: AsyncSession,
+    project_id: str,
+    *,
+    title: str,
+    raw_request: str,
+    source: str = "human",
+    priority: Priority = Priority.NORMAL,
 ) -> Card:
     await get_project(session, project_id)  # 404s early if the project doesn't exist
-    card = Card(project_id=project_id, title=title, raw_request=raw_request)
+    card = Card(project_id=project_id, title=title, raw_request=raw_request, priority=priority)
     session.add(card)
     await session.flush()
     card.branch_name = _branch_slug(card.id, title)
@@ -110,16 +116,23 @@ async def count_column_backlog(session: AsyncSession, project_id: str, column: C
     return await session.scalar(stmt) or 0
 
 
+_PRIORITY_SORT_RANK = {Priority.HIGH: 0, Priority.NORMAL: 1, Priority.LOW: 2}
+
+
 async def get_board(
     session: AsyncSession, project_id: str, *, include_archived: bool = False
 ) -> dict[Column, list[Card]]:
     """Cards for a project, grouped by their current column and ordered within each
-    column by most recent activity first — what the dashboard and the `/board` API
-    endpoint render. Archived cards are left off by default — that's the whole
-    point of archiving something."""
+    column by priority first, then most recent activity — what the dashboard and
+    the `/board` API endpoint render. Archived cards are left off by default —
+    that's the whole point of archiving something."""
     cards = await list_cards(session, project_id, include_archived=include_archived)
     await _attach_last_activity(session, cards)
+    # Two stable sorts: recency first, then priority — the second pass reorders by
+    # priority rank while preserving each rank's existing (already recency-sorted)
+    # relative order, without needing a combined sort key.
     cards.sort(key=lambda c: c.last_activity_at, reverse=True)
+    cards.sort(key=lambda c: _PRIORITY_SORT_RANK[c.priority])
     board: dict[Column, list[Card]] = {column: [] for column in Column}
     for card in cards:
         board[card.column].append(card)
@@ -330,6 +343,18 @@ async def update_card(session: AsyncSession, card_id: str, *, title: str, raw_re
     card = await get_card(session, card_id)
     card.title = title
     card.raw_request = raw_request
+    await session.flush()
+    return card
+
+
+async def set_priority(session: AsyncSession, card_id: str, priority: Priority) -> Card:
+    """The one-click "bless this as important" action — deliberately separate from
+    update_card (which edits authored content) since this is a quick, no-context
+    action a human should be able to take from anywhere the card appears. Purely a
+    manual signal: never touched by any agent or automated pass. See
+    orchestrator/worker.py's _CLAIM_PRIORITY_ORDER for how it affects claim order."""
+    card = await get_card(session, card_id)
+    card.priority = priority
     await session.flush()
     return card
 

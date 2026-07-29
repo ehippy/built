@@ -1,7 +1,15 @@
 from fastapi import APIRouter, HTTPException, Query, status
 
 from built.api.deps import RequireApiKey, SessionDep
-from built.api.schemas import CardColumnVisitOut, CardCreate, CardEditIn, CardEventOut, CardOut, CardRetryIn
+from built.api.schemas import (
+    CardColumnVisitOut,
+    CardCreate,
+    CardEditIn,
+    CardEventOut,
+    CardOut,
+    CardPriorityIn,
+    CardRetryIn,
+)
 from built.services import card_service
 from built.services.project_service import NotFoundError
 
@@ -86,6 +94,17 @@ async def cancel_card(card_id: str, session: SessionDep, _: RequireApiKey) -> Ca
 async def edit_card(card_id: str, body: CardEditIn, session: SessionDep, _: RequireApiKey) -> CardOut:
     try:
         card = await card_service.update_card(session, card_id, **body.model_dump())
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return CardOut.model_validate(card)
+
+
+@router.post("/cards/{card_id}/priority", response_model=CardOut)
+async def set_card_priority(
+    card_id: str, body: CardPriorityIn, session: SessionDep, _: RequireApiKey
+) -> CardOut:
+    try:
+        card = await card_service.set_priority(session, card_id, body.priority)
     except NotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     return CardOut.model_validate(card)

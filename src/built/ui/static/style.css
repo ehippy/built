@@ -321,6 +321,8 @@ th {
 .badge.done { background: var(--state-done); }
 .badge.failed { background: var(--state-failed); }
 .badge.watching-ci { background: var(--accent); }
+.badge.priority-high { background: #c0392b; }
+.badge.priority-low { background: #6b6b76; }
 
 .board {
   display: grid;

@@ -23,7 +23,7 @@ from built.config import settings as builtin_settings
 from built.db.base import async_session_factory
 from built.db.models import Card, CardColumnVisit, Project
 from built.domain import transitions
-from built.domain.enums import Column, DeployMode, LifecycleState
+from built.domain.enums import Column, DeployMode, LifecycleState, Priority
 from built.llm.client import FallbackLLMClient
 from built.sandbox.container import DockerCommandExecutor
 from built.sandbox.worktree import (
@@ -43,15 +43,21 @@ DEFAULT_LEASE_SECONDS = 600
 DEFAULT_POLL_INTERVAL_SECONDS = 1.5
 DEFAULT_CONCURRENCY = 4
 
-# "Stop starting, start finishing": claim cards closer to done first (Deployer, then
-# Tester, then Developer, then PM), so limited concurrency drains work-in-progress
-# toward completion instead of spreading thin by starting new cards while older ones
-# sit half-finished. updated_at only breaks ties within the same column.
+# Claim order, in this precedence: a human's manual Priority bless/deprioritize
+# first, then "stop starting, start finishing" (cards closer to done — Deployer,
+# then Tester, then Developer, then PM — so limited concurrency drains
+# work-in-progress toward completion instead of spreading thin by starting new
+# cards while older ones sit half-finished), then updated_at to break any
+# remaining tie.
 #
 # Explicit (Card.column == X, priority) comparisons, not case()'s dict/value= form —
 # the dict form binds each key as a bare literal without the column's enum type
 # decorator applied, so every WHEN silently fails to match and the whole expression
 # evaluates to NULL for every row (confirmed empirically).
+_PRIORITY_ORDER = (Priority.HIGH, Priority.NORMAL, Priority.LOW)
+_CLAIM_PRIORITY_ORDER = case(
+    *((Card.priority == priority, idx) for idx, priority in enumerate(_PRIORITY_ORDER))
+)
 _CLAIM_COLUMN_PRIORITY = case(
     *((Card.column == column, idx) for idx, column in enumerate(reversed(IMPLEMENTED_COLUMNS)))
 )
@@ -96,7 +102,7 @@ async def claim_next_card(session: AsyncSession, worker_id: str) -> Card | None:
             Card.project_id.not_in(busy_project_ids),
             Card.project_id.not_in(paused_project_ids),
         )
-        .order_by(_CLAIM_COLUMN_PRIORITY, Card.updated_at)
+        .order_by(_CLAIM_PRIORITY_ORDER, _CLAIM_COLUMN_PRIORITY, Card.updated_at)
         .limit(1)
     )
     if candidate_id is None:

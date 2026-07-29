@@ -20,6 +20,17 @@ COLUMN_ORDER: list[Column] = [
 ]
 
 
+class Priority(StrEnum):
+    """A human's manual bless/deprioritize signal on a card — orthogonal to column
+    and lifecycle_state. Sorts before both column-depth and recency when the
+    orchestrator picks the next card to claim (see orchestrator/worker.py's
+    _CLAIM_PRIORITY_ORDER)."""
+
+    HIGH = "high"
+    NORMAL = "normal"
+    LOW = "low"
+
+
 class LifecycleState(StrEnum):
     """Whether a card is currently claimable by the orchestrator."""
 

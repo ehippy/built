@@ -9,6 +9,7 @@
     {% if card.is_being_worked %}<span class="spinner" title="An agent is actively working on this card"></span>{% endif %}
   </div>
   <div class="meta">
+    {% if card.priority != "normal" %}<span class="badge priority-{{ card.priority }}">{{ card.priority }}</span>{% endif %}
     {{ badge(card.lifecycle_state) }}
     {% if card.deploying_commit_sha %}<span class="badge watching-ci" title="Pushed to the default branch — waiting on CI to confirm before this card closes out">watching CI</span>{% endif %}
     {% if card.archived_at %}<span class="badge paused">archived</span>{% endif %}

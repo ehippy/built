@@ -4,7 +4,7 @@ part of the orchestrator that doesn't need a live LLM or Docker to verify."""
 from datetime import UTC, datetime, timedelta
 
 from built.domain import transitions
-from built.domain.enums import Column, LifecycleState, VisitOutcome
+from built.domain.enums import Column, LifecycleState, Priority, VisitOutcome
 from built.orchestrator.worker import (
     claim_next_card,
     close_dangling_visits,
@@ -186,6 +186,50 @@ async def test_claims_cards_closer_to_done_first(db_session):
 
     assert claimed is not None
     assert claimed.id == deployer_card.id
+
+
+async def test_high_priority_card_is_claimed_before_a_card_closer_to_done(db_session):
+    """Priority is the first sort key, ahead of "stop starting, start finishing":
+    a human blessing a brand-new PM card as high priority should get it claimed
+    before an ordinary-priority card already sitting in Deployer, even though
+    column-depth would otherwise put the Deployer card first."""
+    pm_project = await _project(db_session, _n="17a")
+    deployer_project = await _project(db_session, _n="17b")
+    high_priority_pm_card = await card_service.create_card(
+        db_session, pm_project.id, title="urgent", raw_request="r", priority=Priority.HIGH
+    )
+    deployer_card = await card_service.create_card(
+        db_session, deployer_project.id, title="deployer", raw_request="r"
+    )
+    deployer_card.column = Column.DEPLOYER
+    await db_session.commit()
+
+    claimed = await claim_next_card(db_session, "worker-a")
+
+    assert claimed is not None
+    assert claimed.id == high_priority_pm_card.id
+
+
+async def test_low_priority_card_is_claimed_after_a_normal_priority_card_further_from_done(db_session):
+    """Same check from the other direction: a low-priority card fresh in PM must
+    lose to a normal-priority card, even though normal is itself further from
+    done than PM in this pairing would otherwise suggest — priority alone decides
+    it here since column-depth actually favors the low-priority card's column."""
+    low_project = await _project(db_session, _n="18a")
+    normal_project = await _project(db_session, _n="18b")
+    low_priority_card = await card_service.create_card(
+        db_session, low_project.id, title="low", raw_request="r", priority=Priority.LOW
+    )
+    low_priority_card.column = Column.DEPLOYER
+    normal_card = await card_service.create_card(
+        db_session, normal_project.id, title="normal", raw_request="r"
+    )
+    await db_session.commit()
+
+    claimed = await claim_next_card(db_session, "worker-a")
+
+    assert claimed is not None
+    assert claimed.id == normal_card.id
 
 
 async def test_does_not_claim_an_archived_card(db_session):

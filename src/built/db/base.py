@@ -19,6 +19,15 @@ ADDITIVE_COLUMNS = [
     ("run_attempts", "card_event_seq", "INTEGER"),
     ("cards", "deploying_commit_sha", "TEXT"),
     ("cards", "deploying_since", "DATETIME"),
+    # DEFAULT applies to existing rows too (unlike the ORM-side mapped_column
+    # default, which only fires on new inserts) — without it, every pre-existing
+    # card would read back as priority=NULL instead of Priority.NORMAL. Must be
+    # the enum MEMBER NAME ('NORMAL'), not its value ('normal') — SQLAlchemy's
+    # Enum type stores and looks up by .name by default (confirmed against every
+    # other enum column in this app: lifecycle_state holds 'ACTIVE'/'DONE'/etc,
+    # not 'active'/'done'), so a lowercase default here reads back as a
+    # LookupError instead of Priority.NORMAL.
+    ("cards", "priority", "TEXT DEFAULT 'NORMAL'"),
 ]
 
 

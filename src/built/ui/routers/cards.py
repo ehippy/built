@@ -2,6 +2,7 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
 
 from built.api.deps import SessionDep
+from built.domain.enums import Priority
 from built.services import card_service, project_service
 from built.ui.templates import templates
 
@@ -45,6 +46,12 @@ async def edit_card(
     card_id: str, session: SessionDep, title: str = Form(...), raw_request: str = Form(...)
 ) -> RedirectResponse:
     await card_service.update_card(session, card_id, title=title, raw_request=raw_request)
+    return RedirectResponse(f"/ui/cards/{card_id}", status_code=303)
+
+
+@router.post("/cards/{card_id}/priority")
+async def set_card_priority(card_id: str, session: SessionDep, priority: str = Form(...)) -> RedirectResponse:
+    await card_service.set_priority(session, card_id, Priority(priority))
     return RedirectResponse(f"/ui/cards/{card_id}", status_code=303)
 
 

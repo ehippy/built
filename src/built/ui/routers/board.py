@@ -5,7 +5,7 @@ from fastapi.responses import RedirectResponse
 
 from built.api.deps import SessionDep
 from built.db.models import CurationEvent
-from built.domain.enums import ActivityKind, EventType
+from built.domain.enums import ActivityKind, EventType, Priority
 from built.orchestrator.curator import is_curation_running, run_curation_activity
 from built.services import card_service, project_service
 from built.ui.templates import templates
@@ -100,8 +100,11 @@ async def create_card(
     session: SessionDep,
     title: str = Form(...),
     raw_request: str = Form(...),
+    priority: str = Form(Priority.NORMAL.value),
 ) -> RedirectResponse:
-    await card_service.create_card(session, project_id, title=title, raw_request=raw_request)
+    await card_service.create_card(
+        session, project_id, title=title, raw_request=raw_request, priority=Priority(priority)
+    )
     return RedirectResponse(f"/ui/projects/{project_id}/board", status_code=303)
 
 

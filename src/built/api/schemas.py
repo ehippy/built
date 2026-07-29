@@ -2,7 +2,15 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from built.domain.enums import Column, DeployKind, DeployMode, EventType, LifecycleState, VisitOutcome
+from built.domain.enums import (
+    Column,
+    DeployKind,
+    DeployMode,
+    EventType,
+    LifecycleState,
+    Priority,
+    VisitOutcome,
+)
 
 
 class ProjectCreate(BaseModel):
@@ -117,6 +125,7 @@ class EndpointConfigOut(BaseModel):
 class CardCreate(BaseModel):
     title: str
     raw_request: str
+    priority: Priority = Priority.NORMAL
 
 
 class CardRetryIn(BaseModel):
@@ -128,6 +137,10 @@ class CardEditIn(BaseModel):
     raw_request: str
 
 
+class CardPriorityIn(BaseModel):
+    priority: Priority
+
+
 class CardOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -137,6 +150,7 @@ class CardOut(BaseModel):
     raw_request: str
     column: Column
     lifecycle_state: LifecycleState
+    priority: Priority
     branch_name: str | None
     worktree_path: str | None
     spec: str | None

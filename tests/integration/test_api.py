@@ -123,27 +123,32 @@ async def test_project_and_card_lifecycle_via_api():
         assert unarchive_resp.json()["archived_at"] is None
 
 
-async def test_discover_tasks_endpoint_requires_auth_and_starts_in_background():
+async def test_curate_endpoint_requires_auth_and_starts_in_background():
     async with _client() as client:
         create_resp = await client.post(
             "/api/v1/projects",
             json={
-                "name": "Discovery API Project",
+                "name": "Curation API Project",
                 "overarching_goal": "goal",
-                "repo_remote_url": "https://example.invalid/discovery-project.git",
+                "repo_remote_url": "https://example.invalid/curation-project.git",
             },
             headers=AUTH,
         )
         project = create_resp.json()
 
-        no_auth_resp = await client.post(f"/api/v1/projects/{project['id']}/discover-tasks")
+        no_auth_resp = await client.post(f"/api/v1/projects/{project['id']}/curate/bug_sweep")
         assert no_auth_resp.status_code == 401
 
-        started_resp = await client.post(f"/api/v1/projects/{project['id']}/discover-tasks", headers=AUTH)
+        started_resp = await client.post(f"/api/v1/projects/{project['id']}/curate/bug_sweep", headers=AUTH)
         assert started_resp.status_code == 202
         assert started_resp.json() == {"status": "started"}
 
-        missing_resp = await client.post("/api/v1/projects/does-not-exist/discover-tasks", headers=AUTH)
+        invalid_kind_resp = await client.post(
+            f"/api/v1/projects/{project['id']}/curate/not-a-real-kind", headers=AUTH
+        )
+        assert invalid_kind_resp.status_code == 422
+
+        missing_resp = await client.post("/api/v1/projects/does-not-exist/curate/bug_sweep", headers=AUTH)
         assert missing_resp.status_code == 404
 
 

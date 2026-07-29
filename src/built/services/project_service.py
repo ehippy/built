@@ -6,8 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from built.config import settings
-from built.db.models import DeployConfig, Project
-from built.domain.enums import DeployKind, DeployMode
+from built.db.models import DeployConfig, Project, ProjectActivityRun
+from built.domain.enums import ActivityKind, DeployKind, DeployMode
 
 
 class NotFoundError(Exception):
@@ -115,6 +115,35 @@ async def resume_project(session: AsyncSession, project_id: str) -> Project:
     project.paused_at = None
     await session.flush()
     return project
+
+
+async def get_activity_last_run(
+    session: AsyncSession, project_id: str, kind: ActivityKind
+) -> datetime | None:
+    """When a curation activity (orchestrator/curator.py) last ran for this project
+    and kind — None if it's never run. Replaces the old single-purpose
+    Project.agents_doc_tended_at, generalized to every ActivityKind."""
+    stmt = select(ProjectActivityRun.last_run_at).where(
+        ProjectActivityRun.project_id == project_id, ProjectActivityRun.kind == kind
+    )
+    return await session.scalar(stmt)
+
+
+async def record_activity_run(
+    session: AsyncSession, project_id: str, kind: ActivityKind, *, summary: str | None = None
+) -> ProjectActivityRun:
+    stmt = select(ProjectActivityRun).where(
+        ProjectActivityRun.project_id == project_id, ProjectActivityRun.kind == kind
+    )
+    run = await session.scalar(stmt)
+    if run is None:
+        run = ProjectActivityRun(project_id=project_id, kind=kind, last_run_at=datetime.now(UTC))
+        session.add(run)
+    else:
+        run.last_run_at = datetime.now(UTC)
+    run.last_result_summary = summary
+    await session.flush()
+    return run
 
 
 async def set_deploy_config(

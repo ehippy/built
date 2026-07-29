@@ -10,7 +10,8 @@ from built.api.schemas import (
     ProjectOut,
     ProjectUpdate,
 )
-from built.orchestrator.worker import is_discovery_running, run_project_discovery
+from built.domain.enums import ActivityKind
+from built.orchestrator.curator import is_curation_running, run_curation_activity
 from built.services import project_service
 from built.services.project_service import NotFoundError
 
@@ -75,18 +76,18 @@ async def resume_project(project_id: str, session: SessionDep, _: RequireApiKey)
     return ProjectOut.model_validate(project)
 
 
-@router.post("/{project_id}/discover-tasks", status_code=status.HTTP_202_ACCEPTED)
-async def discover_tasks(project_id: str, session: SessionDep, _: RequireApiKey) -> dict:
-    """Kicks off one autonomous PM discovery pass in the background and returns
+@router.post("/{project_id}/curate/{kind}", status_code=status.HTTP_202_ACCEPTED)
+async def curate(project_id: str, kind: ActivityKind, session: SessionDep, _: RequireApiKey) -> dict:
+    """Kicks off one curation pass (agent/curation.py) in the background and returns
     immediately — a full pass is an LLM agentic loop and can take a while. New cards
     (if any) appear on the board as they're created; poll GET /projects/{id}/board."""
     try:
         await project_service.get_project(session, project_id)
     except NotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
-    if is_discovery_running(project_id):
-        raise HTTPException(status.HTTP_409_CONFLICT, "discovery is already running for this project")
-    asyncio.create_task(run_project_discovery(project_id))
+    if is_curation_running(project_id, kind):
+        raise HTTPException(status.HTTP_409_CONFLICT, f"{kind.value} is already running for this project")
+    asyncio.create_task(run_curation_activity(project_id, kind))
     return {"status": "started"}
 
 

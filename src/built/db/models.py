@@ -6,15 +6,16 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from built.db.base import Base
 from built.domain.enums import (
-    Column as ColumnEnum,
-)
-from built.domain.enums import (
+    ActivityKind,
     DeployKind,
     DeployMode,
     EventType,
     LifecycleState,
     RunAttemptStatus,
     VisitOutcome,
+)
+from built.domain.enums import (
+    Column as ColumnEnum,
 )
 
 
@@ -48,10 +49,6 @@ class Project(Base):
     # Context window size in tokens. Falls back to settings.default_max_tokens (128k)
     # if NULL — useful for smaller models that need a tighter budget.
     max_tokens: Mapped[int | None] = mapped_column(Integer, default=None)
-    # When the Tender (agent/tender.py) last reviewed this project's activity — used
-    # to skip a pass when nothing has closed since, rather than re-reviewing the same
-    # history on every wake.
-    agents_doc_tended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     # Python-side defaults (not server_default=func.now()): a server-computed default
     # is only known to SQLAlchemy after a post-flush refresh, which is itself a lazy
@@ -138,6 +135,22 @@ class EndpointConfig(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     project: Mapped["Project | None"] = relationship(back_populates="endpoint_configs", lazy="raise")
+
+
+class ProjectActivityRun(Base):
+    """One row per (project, curation activity kind) — when it last ran, so
+    orchestrator/curator.py can ask "is bug_sweep due for project X" uniformly
+    across every kind (agent/curation.py, orchestrator/curator.py). Replaces the old
+    single-purpose Project.agents_doc_tended_at, which only ever tracked one kind."""
+
+    __tablename__ = "project_activity_runs"
+    __table_args__ = (UniqueConstraint("project_id", "kind"),)
+
+    id: Mapped[str] = mapped_column(primary_key=True, default=_new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    kind: Mapped[ActivityKind]
+    last_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_result_summary: Mapped[str | None] = mapped_column(Text, default=None)
 
 
 class Card(Base):

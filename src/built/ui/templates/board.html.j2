@@ -14,12 +14,23 @@
   </div>
   <div class="page-header-actions">
     <details class="action-disclosure">
-      <summary class="btn secondary">Discover tasks</summary>
+      <summary class="btn secondary">Curation</summary>
       <div class="panel">
-        <p class="subtitle">Let PM explore the repository on its own and propose new cards — gaps, bugs, rough edges, or opportunities it finds, up to 5 at a time.</p>
-        <form method="post" action="/ui/projects/{{ project.id }}/discover-tasks">
-          <button class="btn secondary" type="submit">Discover tasks</button>
-        </form>
+        <p class="subtitle">Run a focused pass over the repo and propose cards for whatever it finds — nothing is ever edited directly, every kind only ever proposes new cards.</p>
+        <div class="curation-actions">
+          <form method="post" action="/ui/projects/{{ project.id }}/curate/bug_sweep">
+            <button class="btn secondary" type="submit">Bug sweep</button>
+          </form>
+          <form method="post" action="/ui/projects/{{ project.id }}/curate/opportunity_brainstorm">
+            <button class="btn secondary" type="submit">Opportunities</button>
+          </form>
+          <form method="post" action="/ui/projects/{{ project.id }}/curate/polish_review">
+            <button class="btn secondary" type="submit">Polish review</button>
+          </form>
+          <form method="post" action="/ui/projects/{{ project.id }}/curate/agents_md">
+            <button class="btn secondary" type="submit">Tend AGENTS.md</button>
+          </form>
+        </div>
       </div>
     </details>
     <details class="action-disclosure">

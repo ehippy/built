@@ -4,7 +4,6 @@ part of the orchestrator that doesn't need a live LLM or Docker to verify."""
 from datetime import UTC, datetime, timedelta
 
 from built.domain.enums import Column, LifecycleState
-from built.orchestrator import worker
 from built.orchestrator.worker import claim_next_card, release_claim, requeue_stale_claims
 from built.services import card_service, project_service
 
@@ -219,28 +218,3 @@ async def test_requeue_stale_claims_frees_expired_but_not_fresh_claims(db_sessio
     assert requeued_count == 1
     assert stale.claimed_by_worker_id is None
     assert fresh.claimed_by_worker_id == "worker-alive"
-
-
-async def test_discovery_skips_outright_if_already_marked_in_progress(db_session):
-    """Discovery doesn't go through claim_next_card, so it isn't covered by
-    per-project claim serialization — a separate in-memory guard prevents two runs
-    for the same project racing each other and proposing near-duplicate cards."""
-    project = await _project(db_session, _n="8")
-
-    worker._discovery_in_progress.add(project.id)
-    try:
-        assert worker.is_discovery_running(project.id) is True
-        await worker.run_project_discovery(project.id)  # should no-op immediately
-    finally:
-        worker._discovery_in_progress.discard(project.id)
-
-    all_cards = await card_service.list_cards(db_session, project.id)
-    assert all_cards == []
-
-
-async def test_discovery_releases_the_guard_even_on_setup_failure(db_session):
-    project = await _project(db_session, _n="9", repo_remote_url="/nonexistent/path/repo.git")
-
-    await worker.run_project_discovery(project.id)
-
-    assert worker.is_discovery_running(project.id) is False

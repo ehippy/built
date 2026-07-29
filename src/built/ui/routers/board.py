@@ -4,7 +4,8 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
 
 from built.api.deps import SessionDep
-from built.orchestrator.worker import is_discovery_running, run_project_discovery
+from built.domain.enums import ActivityKind
+from built.orchestrator.curator import is_curation_running, run_curation_activity
 from built.services import card_service, project_service
 from built.ui.templates import templates
 
@@ -42,12 +43,13 @@ async def create_card(
     return RedirectResponse(f"/ui/projects/{project_id}/board", status_code=303)
 
 
-@router.post("/projects/{project_id}/discover-tasks")
-async def discover_tasks(project_id: str, session: SessionDep) -> RedirectResponse:
-    """Kicks off one autonomous PM discovery pass in the background — a full pass is
-    an LLM agentic loop and can take a while, so this redirects immediately. Any new
-    cards appear on the board as they're created via the existing polling fragment."""
+@router.post("/projects/{project_id}/curate/{kind}")
+async def curate(project_id: str, kind: ActivityKind, session: SessionDep) -> RedirectResponse:
+    """Kicks off one curation pass (agent/curation.py) in the background — a full
+    pass is an LLM agentic loop and can take a while, so this redirects immediately.
+    Any new cards appear on the board as they're created via the existing polling
+    fragment."""
     await project_service.get_project(session, project_id)  # 404s early if missing
-    if not is_discovery_running(project_id):
-        asyncio.create_task(run_project_discovery(project_id))
+    if not is_curation_running(project_id, kind):
+        asyncio.create_task(run_curation_activity(project_id, kind))
     return RedirectResponse(f"/ui/projects/{project_id}/board", status_code=303)

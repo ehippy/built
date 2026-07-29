@@ -17,8 +17,8 @@ from built.api.routers import health
 from built.api.routers import projects as api_projects
 from built.config import settings
 from built.db.base import create_all
+from built.orchestrator.curator import run_curator_loop
 from built.orchestrator.reviver import run_reviver_loop
-from built.orchestrator.tender import run_tender_loop
 from built.orchestrator.worker import run_worker_pool
 from built.ui.routers import board as ui_board
 from built.ui.routers import cards as ui_cards
@@ -36,7 +36,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     worker_task: asyncio.Task | None = None
     reviver_task: asyncio.Task | None = None
-    tender_task: asyncio.Task | None = None
+    curator_task: asyncio.Task | None = None
     stop_event = asyncio.Event()
     if settings.orchestrator_enabled:
         worker_task = asyncio.create_task(
@@ -53,15 +53,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 poll_interval=settings.reviver_poll_interval_seconds,
             )
         )
-    if settings.tender_enabled:
-        tender_task = asyncio.create_task(
-            run_tender_loop(
+    if settings.curator_enabled:
+        curator_task = asyncio.create_task(
+            run_curator_loop(
                 stop_event=stop_event,
-                poll_interval=settings.tender_poll_interval_seconds,
+                poll_interval=settings.curator_poll_interval_seconds,
             )
         )
 
-    background_tasks = [t for t in (worker_task, reviver_task, tender_task) if t is not None]
+    background_tasks = [t for t in (worker_task, reviver_task, curator_task) if t is not None]
     try:
         yield
     finally:

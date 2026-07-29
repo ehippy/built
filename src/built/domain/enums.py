@@ -67,3 +67,16 @@ class DeployMode(StrEnum):
 
     AUTO_MAIN = "auto_main"
     PR_TO_OPERATOR = "pr_to_operator"
+
+
+class ActivityKind(StrEnum):
+    """A periodic curation pass over a project. Every kind does the same mechanical
+    thing — explore read-only, decide, call propose_tasks — differing only in system
+    prompt and (for AGENTS_MD) what context it's fed. None of them ever edit the
+    repo directly; the only thing any kind can do is create new cards, exactly like
+    a human PM filing a ticket. See agent/curation.py and orchestrator/curator.py."""
+
+    BUG_SWEEP = "bug_sweep"
+    OPPORTUNITY_BRAINSTORM = "opportunity_brainstorm"
+    POLISH_REVIEW = "polish_review"
+    AGENTS_MD = "agents_md"  # proposes an AGENTS.md-update card; replaces the old Tender

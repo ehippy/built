@@ -117,10 +117,10 @@ async def list_recent_visit_outcomes(
     session: AsyncSession, project_id: str, *, since=None, limit: int = 30
 ) -> list[dict]:
     """Closed visits (ended_at IS NOT NULL) for a project, newest first — the
-    Tender's (agent/tender.py) raw material for deciding whether anything from
-    recent activity is worth capturing as a durable practice. Optionally scoped to
-    only what closed since a given timestamp, so a pass with nothing new to look at
-    can be skipped entirely."""
+    agents_md curation kind's (orchestrator/curator.py) raw material for deciding
+    whether anything from recent activity is worth capturing as a durable practice.
+    Optionally scoped to only what closed since a given timestamp, so a pass with
+    nothing new to look at can be skipped entirely."""
     stmt = (
         select(CardColumnVisit, Card.title)
         .join(Card, Card.id == CardColumnVisit.card_id)

@@ -2,31 +2,73 @@
 not Jinja2 — these prompts are short, linear, and don't need a templating engine."""
 
 from built.db.models import Card, Project
-from built.domain.enums import DeployMode
+from built.domain.enums import ActivityKind, DeployMode
 from built.llm.tool_schemas import MAX_PROPOSED_TASKS
 
 
 def _with_agents_doc(system: str, agents_doc: str | None) -> str:
-    """Appends the project's AGENTS.md (maintained by agent/tender.py) to a system
-    prompt, if one exists — project-specific practices and conventions every column
-    should know about before doing its own work."""
+    """Appends the project's AGENTS.md (kept current by the agents_md curation kind
+    — agent/curation.py) to a system prompt, if one exists — project-specific
+    practices and conventions every column should know about before doing its own
+    work."""
     if not agents_doc:
         return system
     return f"{system}\n\nProject practices (from this repo's AGENTS.md):\n{agents_doc}"
 
 
-def build_discovery_prompt(
-    project: Project, existing_titles: list[str], *, agents_doc: str | None = None
+_CURATION_FOCUS: dict[ActivityKind, str] = {
+    ActivityKind.BUG_SWEEP: (
+        "working in bug-sweep mode: look specifically for defects — broken behavior, unhandled edge "
+        "cases, error states that aren't handled gracefully. Point at something concrete in the code, "
+        "not a vague hunch."
+    ),
+    ActivityKind.OPPORTUNITY_BRAINSTORM: (
+        "working in opportunity-brainstorm mode: look for valuable new features or capabilities that "
+        "would genuinely further the project's stated goal — not busywork or polish, real product "
+        "opportunities."
+    ),
+    ActivityKind.POLISH_REVIEW: (
+        "working in polish-review mode: look for rough edges — inconsistent UI/UX, confusing naming, "
+        "missing or unclear error messages, code-style inconsistencies. Small, concrete fixes, not a "
+        "rewrite."
+    ),
+}
+
+
+def build_curation_prompt(
+    project: Project,
+    kind: ActivityKind,
+    existing_titles: list[str],
+    *,
+    agents_doc: str | None = None,
+    extra_context: str | None = None,
 ) -> tuple[str, str]:
-    """Returns (system_prompt, initial_user_message). Not tied to any card — PM
-    exploring the repo on its own initiative and proposing new work, rather than
-    refining a request a human already wrote."""
+    """Returns (system_prompt, initial_user_message) for one curation pass. Never
+    tied to any card, and never able to edit the repo — the only thing any kind can
+    do is call propose_tasks, exactly like a human PM filing a ticket (see
+    agent/curation.py, orchestrator/curator.py). agents_md is shaped differently
+    from the other three: its context is a summary of recently closed work
+    (extra_context), not a live repo browse, and it proposes at most one card."""
+    if kind == ActivityKind.AGENTS_MD:
+        system = (
+            "You are the agent that keeps this project's AGENTS.md up to date. Below is a summary of "
+            "recently closed work. Decide whether anything in it is a real, recurring practice or "
+            "hard-won lesson worth documenting for future agents working on this repo — most closed "
+            "cards aren't. If something is, call propose_tasks with exactly one card describing the "
+            "specific update to make to AGENTS.md; the actual edit happens through the normal "
+            "pipeline, not by you. propose_tasks requires at least one task, so if nothing feels truly "
+            "worth flagging, propose the single most real (if marginal) observation rather than "
+            "forcing something contrived.\n\n"
+            f"Project goal: {project.overarching_goal}"
+        )
+        user = f"Recently closed work since the last pass:\n{extra_context or '(nothing new)'}"
+        return _with_agents_doc(system, agents_doc), user
+
+    focus = _CURATION_FOCUS[kind]
     system = (
-        "You are the Product Manager agent in an autonomous software factory, working in discovery "
-        "mode: instead of refining one assigned request, explore the repository yourself and look for "
-        "gaps in functionality, bugs, rough edges, or genuine opportunities that further the project's "
-        "goal. Use the read-only tools to actually look at the code before proposing anything — don't "
-        "propose work that's already done or already queued.\n\n"
+        f"You are the Product Manager agent in an autonomous software factory, {focus} Use the "
+        "read-only tools to actually look at the code before proposing anything — don't propose work "
+        "that's already done or already queued.\n\n"
         f"Project goal: {project.overarching_goal}\n\n"
         f"When ready, call propose_tasks with 1 to {MAX_PROPOSED_TASKS} concrete, well-scoped tasks. "
         "Each becomes a new card that flows through the same PM -> Developer -> Tester -> Deployer "
@@ -36,8 +78,7 @@ def build_discovery_prompt(
     )
     existing = "\n".join(f"- {t}" for t in existing_titles) or "(none yet)"
     user = f"Existing/recent card titles in this project — don't propose duplicates of these:\n{existing}"
-    system = _with_agents_doc(system, agents_doc)
-    return system, user
+    return _with_agents_doc(system, agents_doc), user
 
 
 def build_developer_prompt(

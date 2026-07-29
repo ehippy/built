@@ -12,7 +12,6 @@ from sqlalchemy import case, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from built.agent.context_window import ContextWindowConfig
-from built.agent.discovery import run_pm_discovery
 from built.agent.loop import (
     run_deployer_visit,
     run_developer_visit,
@@ -287,84 +286,6 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
         raise AssertionError(f"unimplemented column: {card.column}")
 
     await release_claim(session, card)
-
-
-# Project IDs with a discovery run currently in flight. In-memory only — this is a
-# single-process app, and an in-flight run doesn't need to survive a restart since
-# the asyncio task itself dies with the process too. is_discovery_running() and the
-# add() in run_project_discovery() below are both synchronous with no `await` between
-# a check and the corresponding add/discard, so two near-simultaneous triggers can't
-# both slip past the guard — asyncio only switches tasks at an await point.
-_discovery_in_progress: set[str] = set()
-
-
-def is_discovery_running(project_id: str) -> bool:
-    return project_id in _discovery_in_progress
-
-
-async def run_project_discovery(project_id: str) -> None:
-    """PM's autonomous discovery mode for one project: opens its own session and
-    runs to completion, then returns — meant to be fired as a detached background
-    task from an API/UI handler (see api/routers/projects.py), not awaited inline in
-    a request, since a full discovery pass is an LLM agentic loop and can take a
-    while. Never raises — run_pm_discovery already swallows its own failures.
-
-    Skips outright if a discovery run for this project is already in flight — two
-    runs racing each other see the same "existing card titles" snapshot and can
-    propose near-duplicate cards, since discovery doesn't go through claim_next_card
-    and isn't covered by its per-project claim serialization."""
-    if project_id in _discovery_in_progress:
-        logger.info("discovery already running for project %s — skipping", project_id)
-        return
-    _discovery_in_progress.add(project_id)
-    try:
-        async with async_session_factory() as session:
-            project = await session.get(Project, project_id)
-            if project is None:
-                logger.warning("discovery requested for missing project %s", project_id)
-                return
-            try:
-                chain = await endpoint_service.get_resolved_chain(
-                    session, project_id=project.id, role=Column.PM
-                )
-                llm_client = FallbackLLMClient(chain)
-                # Own dedicated worktree + branch, not Deployer's — git refuses to
-                # check out the same branch in two worktrees at once.
-                wt_path = await ensure_tool_worktree(project, tool="discovery")
-            except Exception:
-                logger.exception("discovery setup failed for project %s", project_id)
-                return
-
-            executor_kwargs = {"image": project.sandbox_image} if project.sandbox_image else {}
-            dispatcher = ToolDispatcher(
-                ctx=ToolContext(card_id=f"discovery-{project.id}", worktree_root=wt_path),
-                executor=DockerCommandExecutor(**executor_kwargs),
-            )
-
-            if project.max_tokens:
-                max_tokens = project.max_tokens
-            elif any(e.context_window for e in chain):
-                max_tokens = max(e.context_window for e in chain if e.context_window)
-            else:
-                max_tokens = builtin_settings.default_max_tokens
-
-            agents_doc = await read_default_branch_file(project, "AGENTS.md")
-
-            created = await run_pm_discovery(
-                session,
-                project,
-                llm_client=llm_client,
-                dispatcher=dispatcher,
-                max_iterations=project.max_iterations_per_run,
-                agents_doc=agents_doc,
-                context_window_config=ContextWindowConfig(
-                    max_tokens=max_tokens,
-                    keep_messages=builtin_settings.default_keep_messages,
-                ),
-            )
-            logger.info("discovery for project %s created %d card(s)", project_id, len(created))
-    finally:
-        _discovery_in_progress.discard(project_id)
 
 
 async def _worker_loop(worker_id: str, *, stop_event: asyncio.Event, poll_interval: float) -> None:

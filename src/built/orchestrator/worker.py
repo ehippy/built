@@ -20,7 +20,7 @@ from built.agent.loop import (
 )
 from built.config import settings as builtin_settings
 from built.db.base import async_session_factory
-from built.db.models import Card, Project
+from built.db.models import Card, CardColumnVisit, Project
 from built.domain import transitions
 from built.domain.enums import Column, DeployMode, LifecycleState
 from built.llm.client import FallbackLLMClient
@@ -131,18 +131,40 @@ async def release_claim(session: AsyncSession, card: Card) -> None:
 
 
 async def requeue_stale_claims(session: AsyncSession) -> int:
-    """Crash recovery: on boot, free anything still marked claimed with an expired
-    lease so a fresh worker can pick it up. An interrupted visit starts over from
-    scratch rather than resuming mid-tool-call — v1 simplification, see the plan."""
-    now = datetime.now(UTC)
+    """Crash recovery: on boot, free every card claim outright — regardless of
+    whether its lease has technically expired yet. This only ever runs once, at
+    process startup, before this process's own workers have claimed anything, so
+    *every* existing claim by definition belongs to a now-dead process; waiting out
+    the rest of a lease that still happens to be within its window (up to
+    DEFAULT_LEASE_SECONDS) would just leave the card idle for no reason. An
+    interrupted visit starts over from scratch rather than resuming mid-tool-call —
+    v1 simplification, see the plan."""
     result = await session.execute(
         update(Card)
-        .where(Card.claimed_by_worker_id.is_not(None), Card.lease_expires_at < now)
+        .where(Card.claimed_by_worker_id.is_not(None))
         .values(claimed_by_worker_id=None, claimed_at=None, lease_expires_at=None)
         .execution_options(synchronize_session="fetch")
     )
     await session.commit()
     return result.rowcount or 0
+
+
+async def close_dangling_visits(session: AsyncSession) -> int:
+    """Crash recovery: on boot, close out any CardColumnVisit a previous process
+    left open (no ended_at) — otherwise it sits there looking like an agent is
+    still actively working on it, forever. Marks it INTERRUPTED; the card itself
+    stays ACTIVE (freed by requeue_stale_claims above) so its next claim starts a
+    fresh attempt at the same column rather than trying to resume mid-tool-call."""
+    dangling = list(
+        (await session.scalars(select(CardColumnVisit).where(CardColumnVisit.ended_at.is_(None)))).all()
+    )
+    for visit in dangling:
+        card = await session.get(Card, visit.card_id)
+        if card is not None:
+            await transitions.mark_visit_interrupted(session, card, visit)
+    if dangling:
+        await session.commit()
+    return len(dangling)
 
 
 async def run_one_card(session: AsyncSession, card: Card) -> None:
@@ -325,6 +347,9 @@ async def run_worker_pool(
         requeued = await requeue_stale_claims(session)
         if requeued:
             logger.info("requeued %d card(s) with expired claims on startup", requeued)
+        interrupted = await close_dangling_visits(session)
+        if interrupted:
+            logger.info("closed %d visit(s) left open by a previous crash/restart", interrupted)
 
     workers = [
         asyncio.create_task(

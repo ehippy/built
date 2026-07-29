@@ -3,8 +3,14 @@ part of the orchestrator that doesn't need a live LLM or Docker to verify."""
 
 from datetime import UTC, datetime, timedelta
 
-from built.domain.enums import Column, LifecycleState
-from built.orchestrator.worker import claim_next_card, release_claim, requeue_stale_claims
+from built.domain import transitions
+from built.domain.enums import Column, LifecycleState, VisitOutcome
+from built.orchestrator.worker import (
+    claim_next_card,
+    close_dangling_visits,
+    release_claim,
+    requeue_stale_claims,
+)
 from built.services import card_service, project_service
 
 
@@ -202,19 +208,51 @@ async def test_unarchiving_a_card_makes_it_claimable_again(db_session):
     assert claimed.id == card.id
 
 
-async def test_requeue_stale_claims_frees_expired_but_not_fresh_claims(db_session):
+async def test_requeue_stale_claims_frees_every_claim_regardless_of_lease(db_session):
+    """This only ever runs once, at process startup, before this process's own
+    workers have claimed anything — so a claim whose lease hasn't technically
+    expired yet is still just as stale as one that has: no worker in *this*
+    process could have created it. Waiting out the rest of an unexpired lease
+    would just leave a perfectly good card idle for no reason."""
     project = await _project(db_session, _n="7")
-    stale = await card_service.create_card(db_session, project.id, title="stale", raw_request="r")
-    fresh = await card_service.create_card(db_session, project.id, title="fresh", raw_request="r")
+    expired = await card_service.create_card(db_session, project.id, title="expired", raw_request="r")
+    unexpired = await card_service.create_card(db_session, project.id, title="unexpired", raw_request="r")
 
-    stale.claimed_by_worker_id = "worker-dead"
-    stale.lease_expires_at = datetime.now(UTC) - timedelta(minutes=1)
-    fresh.claimed_by_worker_id = "worker-alive"
-    fresh.lease_expires_at = datetime.now(UTC) + timedelta(minutes=10)
+    expired.claimed_by_worker_id = "worker-dead-1"
+    expired.lease_expires_at = datetime.now(UTC) - timedelta(minutes=1)
+    unexpired.claimed_by_worker_id = "worker-dead-2"
+    unexpired.lease_expires_at = datetime.now(UTC) + timedelta(minutes=10)
     await db_session.commit()
 
     requeued_count = await requeue_stale_claims(db_session)
 
-    assert requeued_count == 1
-    assert stale.claimed_by_worker_id is None
-    assert fresh.claimed_by_worker_id == "worker-alive"
+    assert requeued_count == 2
+    assert expired.claimed_by_worker_id is None
+    assert unexpired.claimed_by_worker_id is None
+
+
+async def test_close_dangling_visits_marks_them_interrupted_not_resumed(db_session):
+    """A worker process died mid-visit last time around — the visit row was left
+    with no ended_at, which would otherwise show as "in progress" forever on the
+    card detail page even though nothing is actually working on it anymore."""
+    project = await _project(db_session, _n="10a")
+    dangling_card = await card_service.create_card(db_session, project.id, title="d", raw_request="r")
+    dangling_visit = await transitions.start_visit(db_session, dangling_card)
+    closed_card = await card_service.create_card(db_session, project.id, title="c", raw_request="r")
+    closed_visit = await transitions.start_visit(db_session, closed_card)
+    await transitions.complete_pm_visit(
+        db_session, closed_card, closed_visit, spec="s", acceptance_criteria=["x"], summary="s"
+    )
+    await db_session.commit()
+    assert dangling_visit.ended_at is None
+
+    closed_count = await close_dangling_visits(db_session)
+
+    assert closed_count == 1
+    assert dangling_visit.ended_at is not None
+    assert dangling_visit.outcome == VisitOutcome.INTERRUPTED
+    # The card itself stays ACTIVE — freed to be claimed again and start a fresh
+    # attempt, not resumed mid-tool-call.
+    assert dangling_card.lifecycle_state == LifecycleState.ACTIVE
+    # A visit that already closed normally is left completely alone.
+    assert closed_visit.outcome == VisitOutcome.SUBMITTED

@@ -153,6 +153,28 @@ class ProjectActivityRun(Base):
     last_result_summary: Mapped[str | None] = mapped_column(Text, default=None)
 
 
+class CurationEvent(Base):
+    """Append-only transcript for curation passes (agent/curation.py) — mirrors
+    CardEvent's shape, but scoped to (project, kind) rather than card_id: a
+    curation pass isn't tied to any card until (and unless) propose_tasks actually
+    creates one. seq is monotonic per (project_id, kind), across every pass, same as
+    CardEvent's per-card seq — what lets the board page's status panel show what a
+    kind is doing right now, and what its last pass actually did."""
+
+    __tablename__ = "curation_events"
+    __table_args__ = (
+        UniqueConstraint("project_id", "kind", "seq", name="uq_curation_events_project_kind_seq"),
+    )
+
+    id: Mapped[str] = mapped_column(primary_key=True, default=_new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    kind: Mapped[ActivityKind]
+    seq: Mapped[int] = mapped_column(Integer)
+    type: Mapped[EventType]
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class Card(Base):
     __tablename__ = "cards"
 

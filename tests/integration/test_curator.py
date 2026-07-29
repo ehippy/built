@@ -5,11 +5,17 @@ mechanics (using bug_sweep as the representative kind), the agents_md kind's
 different shape (context from recent visit outcomes, not a repo browse), and the
 orchestrator layer: cadence gating, pause-skipping, and the in-progress guard."""
 
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
+
 from built.agent.curation import run_curation_pass
+from built.db.models import CurationEvent
 from built.domain import transitions
-from built.domain.enums import ActivityKind, Column, LifecycleState
+from built.domain.enums import ActivityKind, Column, EventType, LifecycleState
+from built.domain.events import append_curation_event
 from built.llm.client import LLMResult, ToolCallRequest
 from built.llm.tool_schemas import MAX_PROPOSED_TASKS
+from built.main import app
 from built.orchestrator import curator
 from built.sandbox import worktree
 from built.sandbox.container import CommandResult
@@ -17,6 +23,10 @@ from built.services import card_service, project_service
 from built.tools.base import ToolContext
 from built.tools.dispatcher import ToolDispatcher
 from tests.unit.fakes import FakeCommandExecutor, ScriptedLLMClient
+
+
+def _client() -> AsyncClient:
+    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
 
 async def _make_project(db_session, toy_repo_remote, **overrides):
@@ -316,18 +326,63 @@ async def test_needs_run_agents_md_gated_by_new_visit_outcomes(db_session, toy_r
     assert extra_context is not None and "c" in extra_context
 
 
-async def test_needs_run_explore_kinds_gated_by_flat_cadence(db_session, toy_repo_remote):
+async def test_needs_run_explore_kinds_have_no_cooldown(db_session, toy_repo_remote):
+    """bug_sweep/opportunity_brainstorm/polish_review are always due — no flat
+    cadence gate, unlike agents_md. curator_poll_interval_seconds is the only
+    pacing, so the project keeps getting fed new proposals every scheduler wake."""
     project, _ = await _make_project(db_session, toy_repo_remote, _n="9")
 
-    # Never run before — due immediately.
     should_run, _ = await curator._needs_run(db_session, project, ActivityKind.BUG_SWEEP)
     assert should_run is True
 
     await project_service.record_activity_run(db_session, project.id, ActivityKind.BUG_SWEEP)
 
-    # Just ran — not due again yet.
+    # Still due immediately after running — no cooldown.
+    should_run, _ = await curator._needs_run(db_session, project, ActivityKind.BUG_SWEEP)
+    assert should_run is True
+
+
+async def test_needs_run_blocked_once_pm_backlog_hits_the_cap(db_session, toy_repo_remote, monkeypatch):
+    """The WIP limit: with no per-kind cooldown, curation would otherwise keep
+    piling cards into PM faster than a concurrency-capped orchestrator can work
+    through them. Applies to every kind, including agents_md."""
+    monkeypatch.setattr(curator.settings, "curator_max_pm_backlog", 2)
+    project, _ = await _make_project(db_session, toy_repo_remote, _n="9b")
+    for i in range(2):
+        await card_service.create_card(db_session, project.id, title=f"c{i}", raw_request="r")
+    await db_session.commit()
+
     should_run, _ = await curator._needs_run(db_session, project, ActivityKind.BUG_SWEEP)
     assert should_run is False
+    should_run, _ = await curator._needs_run(db_session, project, ActivityKind.AGENTS_MD)
+    assert should_run is False
+
+
+async def test_needs_run_allowed_below_the_pm_backlog_cap(db_session, toy_repo_remote, monkeypatch):
+    monkeypatch.setattr(curator.settings, "curator_max_pm_backlog", 2)
+    project, _ = await _make_project(db_session, toy_repo_remote, _n="9c")
+    await card_service.create_card(db_session, project.id, title="c0", raw_request="r")
+    await db_session.commit()
+
+    should_run, _ = await curator._needs_run(db_session, project, ActivityKind.BUG_SWEEP)
+    assert should_run is True
+
+
+async def test_count_column_backlog_ignores_other_columns_and_archived_cards(db_session, toy_repo_remote):
+    project, _ = await _make_project(db_session, toy_repo_remote, _n="9d")
+    pm_card = await card_service.create_card(db_session, project.id, title="pm", raw_request="r")
+    archived_pm_card = await card_service.create_card(
+        db_session, project.id, title="archived", raw_request="r"
+    )
+    await card_service.archive_card(db_session, archived_pm_card.id)
+    other_column_card = await card_service.create_card(db_session, project.id, title="dev", raw_request="r")
+    other_column_card.column = Column.DEVELOPER
+    await db_session.commit()
+
+    count = await card_service.count_column_backlog(db_session, project.id, Column.PM)
+
+    assert count == 1
+    assert pm_card.column == Column.PM
 
 
 async def test_run_curator_once_skips_a_paused_project(db_session, toy_repo_remote):
@@ -383,3 +438,143 @@ async def test_curation_releases_the_guard_even_on_setup_failure(db_session):
     await curator.run_curation_activity(project.id, ActivityKind.BUG_SWEEP)
 
     assert curator.is_curation_running(project.id, ActivityKind.BUG_SWEEP) is False
+
+
+# --- list_activity_runs: what the board page's status panel reads -----------------
+
+
+async def test_list_activity_runs_keyed_by_kind_missing_kinds_absent(db_session, toy_repo_remote):
+    project, _ = await _make_project(db_session, toy_repo_remote, _n="12")
+
+    assert await project_service.list_activity_runs(db_session, project.id) == {}
+
+    await project_service.record_activity_run(
+        db_session, project.id, ActivityKind.BUG_SWEEP, summary="created 1 card(s)"
+    )
+
+    runs = await project_service.list_activity_runs(db_session, project.id)
+    assert set(runs) == {ActivityKind.BUG_SWEEP}
+    assert runs[ActivityKind.BUG_SWEEP].last_result_summary == "created 1 card(s)"
+
+
+# --- Board page status panel --------------------------------------------------------
+
+
+async def test_board_page_shows_curation_status_panel(db_session, toy_repo_remote):
+    project, _ = await _make_project(db_session, toy_repo_remote, _n="13")
+    await db_session.commit()
+
+    async with _client() as client:
+        before = await client.get(f"/ui/projects/{project.id}/board")
+        assert "Bug sweep" in before.text
+        assert "never run yet" in before.text
+
+    await project_service.record_activity_run(
+        db_session, project.id, ActivityKind.BUG_SWEEP, summary="created 2 card(s)"
+    )
+    await db_session.commit()
+    curator._curation_in_progress.add((project.id, ActivityKind.OPPORTUNITY_BRAINSTORM))
+    try:
+        async with _client() as client:
+            after = await client.get(f"/ui/projects/{project.id}/board")
+        assert "created 2 card(s)" in after.text
+        assert 'title="Running now"' in after.text
+        # No CurationEvent logged yet for the running kind — falls back to "starting…".
+        assert "starting…" in after.text
+    finally:
+        curator._curation_in_progress.discard((project.id, ActivityKind.OPPORTUNITY_BRAINSTORM))
+
+
+async def test_board_page_shows_the_latest_curation_event_while_running(db_session, toy_repo_remote):
+    """The actual point of the status panel redesign: a running kind shows what it's
+    doing right now, not just a bare spinner."""
+    project, _ = await _make_project(db_session, toy_repo_remote, _n="14")
+    await append_curation_event(
+        db_session,
+        project_id=project.id,
+        kind=ActivityKind.BUG_SWEEP,
+        type=EventType.TOOL_CALL,
+        payload={"name": "read_file", "arguments": {"path": "app.py"}, "result": "...", "is_error": False},
+    )
+    await db_session.commit()
+
+    curator._curation_in_progress.add((project.id, ActivityKind.BUG_SWEEP))
+    try:
+        async with _client() as client:
+            page = await client.get(f"/ui/projects/{project.id}/board")
+        assert "read_file(app.py)" in page.text
+    finally:
+        curator._curation_in_progress.discard((project.id, ActivityKind.BUG_SWEEP))
+
+
+# --- Event logging: what a pass writes for the status panel to read ---------------
+
+
+async def test_curation_pass_logs_events_for_llm_responses_and_tool_calls(db_session, toy_repo_remote):
+    project, wt_path = await _make_project(db_session, toy_repo_remote, _n="15")
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[ToolCallRequest(id="call_1", name="read_file", arguments={"path": "app.py"})],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_2",
+                        name="propose_tasks",
+                        arguments={"tasks": [{"title": "t", "raw_request": "r"}]},
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+        ]
+    )
+
+    await run_curation_pass(
+        db_session,
+        project,
+        ActivityKind.BUG_SWEEP,
+        llm_client=llm,
+        dispatcher=_dispatcher(wt_path),
+        max_iterations=10,
+    )
+
+    events = (
+        await db_session.scalars(
+            select(CurationEvent)
+            .where(CurationEvent.project_id == project.id, CurationEvent.kind == ActivityKind.BUG_SWEEP)
+            .order_by(CurationEvent.seq)
+        )
+    ).all()
+
+    assert EventType.LLM_RESPONSE in [e.type for e in events]
+    tool_call_events = [e for e in events if e.payload.get("name") == "read_file"]
+    assert tool_call_events, events
+    terminal_events = [e for e in events if e.payload.get("name") == "propose_tasks"]
+    assert terminal_events and terminal_events[0].payload["result"] == "created 1 card(s)"
+
+
+async def test_curation_pass_logs_an_error_event_on_unhandled_failure(db_session, toy_repo_remote):
+    project, wt_path = await _make_project(db_session, toy_repo_remote, _n="16")
+
+    class _BoomLLM:
+        async def complete(self, *, messages, tools):
+            raise RuntimeError("endpoint unreachable")
+
+    created = await run_curation_pass(
+        db_session,
+        project,
+        ActivityKind.BUG_SWEEP,
+        llm_client=_BoomLLM(),
+        dispatcher=_dispatcher(wt_path),
+        max_iterations=10,
+    )
+
+    assert created == []
+    latest = await project_service.get_latest_curation_event(db_session, project.id, ActivityKind.BUG_SWEEP)
+    assert latest is not None
+    assert "endpoint unreachable" in latest.payload["error"]

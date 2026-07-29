@@ -1,0 +1,16 @@
+<div id="curation-status" class="curation-status-panel" hx-get="/ui/projects/{{ project.id }}/curation-status/fragment" hx-trigger="every 5s" hx-swap="outerHTML">
+  <div class="curation-status-heading">Curation</div>
+  {% for s in statuses %}
+  <div class="curation-status-row">
+    <span class="curation-status-name">{{ s.label }}</span>
+    {% if s.running %}
+    <span class="spinner" title="Running now"></span>
+    <span class="curation-status-detail">{{ s.current_activity or "starting…" }}</span>
+    {% elif s.last_run_at %}
+    <span class="curation-status-detail hint">{{ s.last_run_at|timeago }}{% if s.summary %} — {{ s.summary }}{% endif %}</span>
+    {% else %}
+    <span class="curation-status-detail hint">never run yet</span>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>

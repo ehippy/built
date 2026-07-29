@@ -19,7 +19,8 @@ from built.agent.context_window import (
 )
 from built.config import settings as builtin_settings
 from built.db.models import Card, Project
-from built.domain.enums import ActivityKind
+from built.domain.enums import ActivityKind, EventType
+from built.domain.events import append_curation_event
 from built.llm.client import LLMClient
 from built.llm.tool_schemas import CURATION_TERMINAL_TOOL, CURATION_TOOLS, MAX_PROPOSED_TASKS
 from built.services import card_service
@@ -57,7 +58,7 @@ async def run_curation_pass(
     )
 
     try:
-        for _ in range(max_iterations):
+        for iteration in range(1, max_iterations + 1):
             # Compact if the message list approaches the context window.
             token_count = estimate_tokens(messages)
             budget = config.max_tokens - config.keep_tokens
@@ -70,6 +71,18 @@ async def run_curation_pass(
                 )
 
             result = await llm_client.complete(messages=messages, tools=CURATION_TOOLS)
+            await append_curation_event(
+                session,
+                project_id=project.id,
+                kind=kind,
+                type=EventType.LLM_RESPONSE,
+                payload={
+                    "iteration": iteration,
+                    "content": result.content,
+                    "tool_calls": [tc.name for tc in result.tool_calls],
+                },
+            )
+            await session.commit()
 
             if not result.tool_calls:
                 messages.append({"role": "assistant", "content": result.content or ""})
@@ -102,6 +115,19 @@ async def run_curation_pass(
                     terminal_call = tool_call
                     continue
                 outcome = await dispatcher.dispatch(tool_call.name, tool_call.arguments)
+                await append_curation_event(
+                    session,
+                    project_id=project.id,
+                    kind=kind,
+                    type=EventType.TOOL_CALL,
+                    payload={
+                        "name": tool_call.name,
+                        "arguments": tool_call.arguments,
+                        "result": outcome.result.output,
+                        "is_error": outcome.result.is_error,
+                    },
+                )
+                await session.commit()
                 messages.append(
                     {"role": "tool", "tool_call_id": tool_call.id, "content": outcome.result.output}
                 )
@@ -111,6 +137,19 @@ async def run_curation_pass(
 
             tasks = terminal_call.arguments.get("tasks")
             created = await _create_proposed_cards(session, project, kind, tasks)
+            await append_curation_event(
+                session,
+                project_id=project.id,
+                kind=kind,
+                type=EventType.TOOL_CALL,
+                payload={
+                    "name": terminal_call.name,
+                    "arguments": terminal_call.arguments,
+                    "result": f"created {len(created)} card(s)" if created else "rejected: no valid tasks",
+                    "is_error": not created,
+                },
+            )
+            await session.commit()
             if created:
                 return created
             messages.append(
@@ -122,7 +161,13 @@ async def run_curation_pass(
             )
 
         return []
-    except Exception:  # noqa: BLE001 — deliberate: a bad curation run yields no cards, not a crash
+    except Exception as exc:  # noqa: BLE001 — deliberate: a bad curation run yields no cards, not a crash
+        # Still record what happened — otherwise a broken endpoint just looks like
+        # the pass never ran at all, with no clue why in the status panel.
+        await append_curation_event(
+            session, project_id=project.id, kind=kind, type=EventType.ERROR, payload={"error": repr(exc)}
+        )
+        await session.commit()
         return []
 
 

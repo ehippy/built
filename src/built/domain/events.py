@@ -3,8 +3,8 @@ import re
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from built.db.models import CardEvent
-from built.domain.enums import EventType
+from built.db.models import CardEvent, CurationEvent
+from built.domain.enums import ActivityKind, EventType
 
 MAX_PAYLOAD_CHARS = 20_000
 
@@ -39,6 +39,29 @@ async def append_event(
         tokens_out=tokens_out,
         latency_ms=latency_ms,
         cost_estimate=cost_estimate,
+    )
+    session.add(event)
+    await session.flush()
+    return event
+
+
+async def append_curation_event(
+    session: AsyncSession, *, project_id: str, kind: ActivityKind, type: EventType, payload: dict
+) -> CurationEvent:
+    """Same idea as append_event, scoped to (project_id, kind) instead of card_id —
+    see CurationEvent's docstring for why curation can't just reuse CardEvent
+    directly."""
+    current_max = await session.scalar(
+        select(func.max(CurationEvent.seq)).where(
+            CurationEvent.project_id == project_id, CurationEvent.kind == kind
+        )
+    )
+    event = CurationEvent(
+        project_id=project_id,
+        kind=kind,
+        seq=(current_max or 0) + 1,
+        type=type,
+        payload=_scrub_and_cap(payload),
     )
     session.add(event)
     await session.flush()

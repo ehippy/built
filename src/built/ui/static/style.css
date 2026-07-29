@@ -408,6 +408,51 @@ th {
   width: 100%;
 }
 
+/* A single slim status strip, deliberately not a row of boxes — the kanban below
+   already owns that visual language (four wide columns of stacked cards); this
+   needs to read as a status log, not a second, smaller kanban. */
+.curation-status-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 0.5rem 0.85rem;
+  margin-bottom: 1.25rem;
+}
+.curation-status-heading {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.3rem;
+}
+.curation-status-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.3rem 0;
+  border-top: 1px solid var(--border);
+  font-size: 0.82rem;
+}
+.curation-status-row:first-of-type {
+  border-top: none;
+}
+.curation-status-name {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+.curation-status-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+.curation-status-row .spinner {
+  flex: 0 0 auto;
+}
+
 .project-list .project-card {
   padding: 0.9rem 1rem;
   border: 1px solid var(--border);

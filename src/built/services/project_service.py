@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from built.config import settings
-from built.db.models import DeployConfig, Project, ProjectActivityRun
+from built.db.models import CurationEvent, DeployConfig, Project, ProjectActivityRun
 from built.domain.enums import ActivityKind, DeployKind, DeployMode
 
 
@@ -125,6 +125,32 @@ async def get_activity_last_run(
     Project.agents_doc_tended_at, generalized to every ActivityKind."""
     stmt = select(ProjectActivityRun.last_run_at).where(
         ProjectActivityRun.project_id == project_id, ProjectActivityRun.kind == kind
+    )
+    return await session.scalar(stmt)
+
+
+async def list_activity_runs(
+    session: AsyncSession, project_id: str
+) -> dict[ActivityKind, ProjectActivityRun]:
+    """Every curation kind's last-run row for this project, keyed by kind — what the
+    board page's curation status panel renders. A kind with no row yet just isn't a
+    key in the returned dict."""
+    stmt = select(ProjectActivityRun).where(ProjectActivityRun.project_id == project_id)
+    rows = (await session.scalars(stmt)).all()
+    return {row.kind: row for row in rows}
+
+
+async def get_latest_curation_event(
+    session: AsyncSession, project_id: str, kind: ActivityKind
+) -> CurationEvent | None:
+    """The single most recent transcript entry for one curation kind — what the
+    status panel shows as "what it's doing right now" while a pass is running (and
+    what it did last, once it's finished)."""
+    stmt = (
+        select(CurationEvent)
+        .where(CurationEvent.project_id == project_id, CurationEvent.kind == kind)
+        .order_by(CurationEvent.seq.desc())
+        .limit(1)
     )
     return await session.scalar(stmt)
 

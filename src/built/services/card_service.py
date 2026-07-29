@@ -61,6 +61,19 @@ async def list_cards(session: AsyncSession, project_id: str, *, include_archived
     return list((await session.scalars(stmt)).all())
 
 
+async def count_column_backlog(session: AsyncSession, project_id: str, column: Column) -> int:
+    """How many non-archived cards currently sit in this column for a project —
+    what the board's swimlane for that column visually shows. orchestrator/curator.py
+    uses this as a WIP-limit gate: no point proposing more PM-column work than the
+    (concurrency-capped) orchestrator can realistically work through."""
+    stmt = (
+        select(func.count())
+        .select_from(Card)
+        .where(Card.project_id == project_id, Card.column == column, Card.archived_at.is_(None))
+    )
+    return await session.scalar(stmt) or 0
+
+
 async def get_board(
     session: AsyncSession, project_id: str, *, include_archived: bool = False
 ) -> dict[Column, list[Card]]:

@@ -8,7 +8,6 @@ old Tender this replaces, its worktree needs no git identity, no commit, no push
 
 import asyncio
 import logging
-from datetime import UTC, datetime, timedelta
 
 from built.agent.context_window import ContextWindowConfig
 from built.agent.curation import run_curation_pass
@@ -44,26 +43,30 @@ def _format_recent_outcomes(outcomes: list[dict]) -> str:
 
 
 async def _needs_run(session, project: Project, kind: ActivityKind) -> tuple[bool, str | None]:
-    """Returns (should_run, extra_context). agents_md is gated by "has anything
-    closed since last run" (its extra_context is that closed work, formatted) — the
-    natural throttle for a sparse-signal activity. The other three are gated by a
-    flat per-project cadence, appropriate for exploratory passes."""
-    last_run = await project_service.get_activity_last_run(session, project.id, kind)
-    if kind == ActivityKind.AGENTS_MD:
-        outcomes = await card_service.list_recent_visit_outcomes(session, project.id, since=last_run)
-        if not outcomes:
-            return False, None
-        return True, _format_recent_outcomes(outcomes)
+    """Returns (should_run, extra_context). Every kind is WIP-limited by the PM
+    column's backlog first — with no per-kind cooldown, curation could otherwise
+    pile up cards far faster than a concurrency-capped orchestrator can ever work
+    through. This only gates the *automatic* scheduler loop below; a human
+    explicitly clicking "run now" (run_curation_activity called directly from the
+    UI) still always fires.
 
-    if last_run is None:
+    Past that: agents_md is gated by "has anything closed since last run" (its
+    extra_context is that closed work, formatted) — the natural throttle for a
+    sparse-signal activity. The other three have no cooldown at all: every
+    scheduler wake is another chance to find new work, so
+    curator_poll_interval_seconds is the only pacing — keep proposing as long as
+    there's room in the backlog."""
+    pm_backlog = await card_service.count_column_backlog(session, project.id, Column.PM)
+    if pm_backlog >= settings.curator_max_pm_backlog:
+        return False, None
+
+    if kind != ActivityKind.AGENTS_MD:
         return True, None
-    if last_run.tzinfo is None:
-        # SQLite doesn't reliably round-trip tzinfo — a value just read back from the
-        # DB can be naive even though it was written as UTC (see db/models.py's
-        # is_being_worked for the same fix).
-        last_run = last_run.replace(tzinfo=UTC)
-    due_at = last_run + timedelta(hours=settings.curator_activity_interval_hours)
-    return datetime.now(UTC) >= due_at, None
+    last_run = await project_service.get_activity_last_run(session, project.id, kind)
+    outcomes = await card_service.list_recent_visit_outcomes(session, project.id, since=last_run)
+    if not outcomes:
+        return False, None
+    return True, _format_recent_outcomes(outcomes)
 
 
 async def run_curation_activity(

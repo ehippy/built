@@ -45,5 +45,15 @@ def _render_markdown(text: str | None) -> Markup:
     return Markup(_markdown(text))
 
 
+def _clocktime(dt) -> str:
+    """Local wall-clock HH:MM:SS — unlike timeago, distinguishable at
+    sub-minute granularity, which a live-tailing log view needs (timeago would
+    show almost every line as "just now")."""
+    if dt is None:
+        return "—"
+    return dt.astimezone().strftime("%H:%M:%S")
+
+
 templates.env.filters["timeago"] = _timeago
 templates.env.filters["markdown"] = _render_markdown
+templates.env.filters["clocktime"] = _clocktime

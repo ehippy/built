@@ -6,6 +6,7 @@ from built.agent.reviver import run_reviver_pass
 from built.domain import transitions
 from built.domain.enums import LifecycleState
 from built.llm.client import LLMResult, ToolCallRequest
+from built.logging_config import get_logs
 from built.services import card_service, project_service
 from tests.unit.fakes import ScriptedLLMClient
 
@@ -117,12 +118,17 @@ async def test_reviver_revives_a_card_with_a_note(db_session):
         ]
     )
 
+    prior_logs = get_logs()
+    cutoff = prior_logs[-1].seq if prior_logs else 0
     counts = await run_reviver_pass(db_session, llm_client=llm, max_iterations=10)
 
     assert counts == {"revived": 1, "left_blocked": 0, "errors": 0}
     assert card.lifecycle_state == LifecycleState.ACTIVE
     assert card.retry_note == "transient timeout, just retry"
     assert card.auto_revive_count == 1
+
+    new_logs = get_logs(since_seq=cutoff)
+    assert any(card.id in e.message and "transient timeout, just retry" in e.message for e in new_logs)
 
 
 async def test_reviver_leaves_a_card_blocked_with_a_reason(db_session):
@@ -157,11 +163,16 @@ async def test_reviver_leaves_a_card_blocked_with_a_reason(db_session):
         ]
     )
 
+    prior_logs = get_logs()
+    cutoff = prior_logs[-1].seq if prior_logs else 0
     counts = await run_reviver_pass(db_session, llm_client=llm, max_iterations=10)
 
     assert counts == {"revived": 0, "left_blocked": 1, "errors": 0}
     assert card.lifecycle_state == LifecycleState.BLOCKED
     assert card.auto_revive_count == 0
+
+    new_logs = get_logs(since_seq=cutoff)
+    assert any(card.id in e.message and "needs a human to configure deploy" in e.message for e in new_logs)
 
     events = await card_service.list_events(db_session, card.id)
     assert any(e.payload.get("action") == "reviver_left_blocked" for e in events)

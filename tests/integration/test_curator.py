@@ -15,6 +15,7 @@ from built.domain.enums import ActivityKind, Column, EventType, LifecycleState
 from built.domain.events import append_curation_event
 from built.llm.client import LLMResult, ToolCallRequest
 from built.llm.tool_schemas import MAX_PROPOSED_TASKS
+from built.logging_config import get_logs
 from built.main import app
 from built.orchestrator import curator
 from built.sandbox import worktree
@@ -434,10 +435,24 @@ async def test_curation_releases_the_guard_even_on_setup_failure(db_session):
         overarching_goal="g",
         repo_remote_url="/nonexistent/path/repo.git",
     )
+    # run_curation_activity opens its own session (async_session_factory), separate
+    # from db_session — without committing, it can't see this project at all and
+    # exercises the "missing project" path instead of the setup failure this test
+    # is actually meant to cover.
+    await db_session.commit()
 
+    prior_logs = get_logs()
+    cutoff = prior_logs[-1].seq if prior_logs else 0
     await curator.run_curation_activity(project.id, ActivityKind.BUG_SWEEP)
 
     assert curator.is_curation_running(project.id, ActivityKind.BUG_SWEEP) is False
+
+    # The "starting" log fires before setup — this is task-lifecycle visibility,
+    # not conditional on the pass actually succeeding.
+    new_logs = get_logs(since_seq=cutoff)
+    assert any(
+        "bug_sweep" in e.message and "starting" in e.message and project.id in e.message for e in new_logs
+    )
 
 
 # --- list_activity_runs: what the board page's status panel reads -----------------

@@ -1,3 +1,4 @@
+import logging
 import re
 from datetime import UTC, datetime
 
@@ -10,6 +11,8 @@ from built.domain import transitions
 from built.domain.enums import Column, EventType, LifecycleState
 from built.domain.events import append_event
 from built.services.project_service import NotFoundError, get_project
+
+logger = logging.getLogger(__name__)
 
 
 def _branch_slug(card_id: str, title: str) -> str:
@@ -60,6 +63,7 @@ async def create_card(
         payload={"action": "created", "title": title, "source": source},
     )
     await session.flush()
+    logger.info("card %s (%r) created for project %s, source=%s", card.id, title, project_id, source)
     return card
 
 
@@ -301,6 +305,13 @@ async def retry_card(session: AsyncSession, card_id: str, *, note: str | None = 
     card = await get_card(session, card_id)
     await transitions.retry_card(session, card, note=note)
     await session.flush()
+    logger.info(
+        "card %s (%r) retried, back to column=%s%s",
+        card.id,
+        card.title,
+        card.column.value,
+        f" — note: {note}" if note else "",
+    )
     return card
 
 
@@ -308,6 +319,7 @@ async def cancel_card(session: AsyncSession, card_id: str) -> Card:
     card = await get_card(session, card_id)
     await transitions.cancel_card(session, card)
     await session.flush()
+    logger.info("card %s (%r) cancelled", card.id, card.title)
     return card
 
 

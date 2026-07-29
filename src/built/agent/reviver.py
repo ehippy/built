@@ -11,6 +11,7 @@ cards as it judges worth reviewing in one pass, until it calls done_for_now (or 
 iteration budget runs out)."""
 
 import json
+import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +21,8 @@ from built.domain.events import append_event
 from built.llm.client import LLMClient
 from built.llm.tool_schemas import REVIVER_TERMINAL_TOOL, REVIVER_TOOLS
 from built.services import card_service
+
+logger = logging.getLogger(__name__)
 
 REVIVER_SYSTEM_PROMPT = (
     "You are the Reviver agent in an autonomous software factory. Cards move through "
@@ -177,6 +180,14 @@ async def _revive_card(session: AsyncSession, card_id: str, note: object, counts
     )
     await session.commit()
     counts["revived"] += 1
+    logger.info(
+        "reviver: revived card %s (%r), attempt %d/%d%s",
+        card_id,
+        card.title,
+        card.auto_revive_count,
+        settings.reviver_max_auto_revives,
+        f" — {note_str}" if note_str else "",
+    )
     return f"revived card {card_id}."
 
 
@@ -194,4 +205,5 @@ async def _leave_blocked(session: AsyncSession, card_id: str, reason: str, count
     )
     await session.commit()
     counts["left_blocked"] += 1
+    logger.info("reviver: left card %s (%r) blocked — %s", card_id, card.title, reason)
     return f"left card {card_id} blocked: {reason}"

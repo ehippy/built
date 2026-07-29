@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     data_dir: Path = DEFAULT_DATA_DIR
     database_url: str = f"sqlite+aiosqlite:///{DEFAULT_DATA_DIR / 'built.db'}"
 
+    # Level for the unified "built" logger (see logging_config.py) — every
+    # built.* module logger is a child of it. "INFO" surfaces normal background-
+    # loop activity (worker claims, Reviver/Curator/archiver passes); "WARNING"
+    # quiets that down to just problems.
+    log_level: str = "INFO"
+
     # v1 security floor: a single shared API key required on mutating endpoints.
     api_key: str | None = None
 

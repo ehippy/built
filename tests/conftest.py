@@ -14,7 +14,20 @@ os.environ.setdefault("BUILT_API_KEY", "test-api-key")
 
 import pytest_asyncio  # noqa: E402
 
+# Imported for its side effect: registers all ORM models on Base.metadata before
+# create_all() runs below (mirrors built.main's own comment on this same import).
+# Previously this only happened incidentally, as a side effect of some other test
+# module importing something under built.db.models first during collection — a
+# test file that (like test_logging_config.py) never touches the DB at all could
+# run in isolation with an empty Base.metadata and fail create_all() outright.
+import built.db.models  # noqa: E402, F401
 from built.db.base import Base, async_session_factory, create_all  # noqa: E402
+from built.logging_config import configure_logging  # noqa: E402
+
+# Otherwise this only happens as a side effect of importing built.main, which not
+# every test module does — whether a given test's logger.info() calls actually
+# reach the ring buffer would silently depend on test collection/import order.
+configure_logging()
 
 
 @pytest_asyncio.fixture(autouse=True)

@@ -86,6 +86,7 @@ async def run_curation_activity(
             if project is None:
                 logger.warning("curation requested for missing project %s", project_id)
                 return
+            logger.info("curation %s starting for project %s (%r)", kind.value, project_id, project.name)
             try:
                 chain = await endpoint_service.get_resolved_chain(
                     session, project_id=project.id, role=Column.PM

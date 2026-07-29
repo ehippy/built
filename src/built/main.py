@@ -17,6 +17,7 @@ from built.api.routers import health
 from built.api.routers import projects as api_projects
 from built.config import settings
 from built.db.base import create_all
+from built.logging_config import configure_logging
 from built.orchestrator.archiver import run_archiver_loop
 from built.orchestrator.curator import run_curator_loop
 from built.orchestrator.reviver import run_reviver_loop
@@ -24,7 +25,13 @@ from built.orchestrator.worker import run_worker_pool
 from built.ui.routers import board as ui_board
 from built.ui.routers import cards as ui_cards
 from built.ui.routers import endpoint_configs as ui_endpoint_configs
+from built.ui.routers import logs as ui_logs
 from built.ui.routers import projects as ui_projects
+
+# Before anything else touches a built.* logger — the worker pool, Reviver,
+# Curator, and archiver can all start logging as soon as their background tasks
+# spin up in lifespan() below.
+configure_logging(settings.log_level)
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +104,7 @@ def create_app() -> FastAPI:
     app.include_router(ui_board.router)
     app.include_router(ui_cards.router)
     app.include_router(ui_endpoint_configs.router)
+    app.include_router(ui_logs.router)
 
     return app
 

@@ -225,6 +225,14 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
     )
     visit = await transitions.start_visit(session, card)
     await session.commit()
+    logger.info(
+        "worker %s: claimed card %s (%r) column=%s attempt=%d",
+        card.claimed_by_worker_id,
+        card.id,
+        card.title,
+        visit.column.value,
+        visit.attempt_number,
+    )
 
     # A retried or bounced-back visit isn't the first attempt at this column — hand it
     # a recap of what the previous attempt already did, so it doesn't start cold.
@@ -307,6 +315,16 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
     else:  # pragma: no cover — guarded by IMPLEMENTED_COLUMNS in claim_next_card
         raise AssertionError(f"unimplemented column: {card.column}")
 
+    logger.info(
+        "worker %s: finished card %s (%r) column=%s outcome=%s -> now column=%s lifecycle=%s",
+        card.claimed_by_worker_id,
+        card.id,
+        card.title,
+        visit.column.value,
+        visit.outcome.value if visit.outcome else None,
+        card.column.value,
+        card.lifecycle_state.value,
+    )
     await release_claim(session, card)
 
 

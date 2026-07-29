@@ -1,0 +1,12 @@
+<div id="logs" class="log-view" hx-get="/ui/logs/fragment" hx-trigger="every 2s" hx-swap="outerHTML">
+  {% for log in logs %}
+  <div class="log-line level-{{ log.level|lower }}" id="log-{{ log.seq }}">
+    <span class="log-time">{{ log.created_at|clocktime }}</span>
+    <span class="log-level">{{ log.level }}</span>
+    <span class="log-name">{{ log.logger_name }}</span>
+    <span class="log-message">{{ log.message }}</span>
+  </div>
+  {% else %}
+  <p class="subtitle">No log activity yet.</p>
+  {% endfor %}
+</div>

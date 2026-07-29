@@ -15,6 +15,11 @@ class PathEscapesWorktreeError(Exception):
 class ToolContext:
     card_id: str
     worktree_root: Path
+    # Off only for the Deployer's merge-conflict-resolution worktree: a partial fix
+    # (one of several conflicted files) must never auto-commit and silently complete
+    # a merge with leftover conflict markers still baked into an untouched file.
+    # deploy_runner completes that commit itself once every conflicted path is clear.
+    auto_commit: bool = True
 
     @property
     def root(self) -> Path:

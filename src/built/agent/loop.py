@@ -31,6 +31,7 @@ from built.domain.enums import DeployMode, EventType
 from built.domain.events import append_event
 from built.llm.client import LLMClient, ToolCallRequest
 from built.llm.tool_schemas import (
+    DEPLOYER_ABANDON_TERMINAL_TOOL,
     DEPLOYER_AUTO_MAIN_TERMINAL_TOOL,
     DEPLOYER_PR_TERMINAL_TOOL,
     DEVELOPER_TERMINAL_TOOL,
@@ -269,13 +270,12 @@ async def _tester_request_changes_handler(
     return TerminalHandlerResult(handled=True)
 
 
-async def _deployer_run_deploy_handler(
+async def _deployer_abandon_handler(
     session: AsyncSession, card: Card, visit: CardColumnVisit, tool_call: ToolCallRequest, endpoint_used: str
 ) -> TerminalHandlerResult:
-    project = await session.get(Project, card.project_id)
-    result = await deploy_runner.run_auto_main_deploy(project, card)
+    reason = str(tool_call.arguments.get("reason", "")) or "abandoned without a stated reason"
     await transitions.complete_deployer_visit(
-        session, card, visit, success=result.success, summary=result.message, endpoint_used=endpoint_used
+        session, card, visit, success=False, summary=f"abandoned: {reason}", endpoint_used=endpoint_used
     )
     return TerminalHandlerResult(handled=True)
 
@@ -446,7 +446,35 @@ async def run_deployer_visit(
         project, card, mode=mode, retry_recap=retry_recap, retry_note=retry_note, agents_doc=agents_doc
     )
     if mode == DeployMode.AUTO_MAIN:
-        terminal_handlers = {DEPLOYER_AUTO_MAIN_TERMINAL_TOOL: _deployer_run_deploy_handler}
+
+        async def _run_deploy_handler(
+            session: AsyncSession,
+            card: Card,
+            visit: CardColumnVisit,
+            tool_call: ToolCallRequest,
+            endpoint_used: str,
+        ) -> TerminalHandlerResult:
+            # Closure, not a free function: run_auto_main_deploy needs the exact
+            # worktree the dispatcher's file tools are scoped to, so a conflict fix
+            # made via write_file/edit_file in an earlier turn is the same worktree
+            # this looks at when the agent calls run_deploy() again.
+            result = await deploy_runner.run_auto_main_deploy(project, card, dispatcher.ctx.worktree_root)
+            if result.conflict:
+                return TerminalHandlerResult(handled=False, feedback=result.message)
+            await transitions.complete_deployer_visit(
+                session,
+                card,
+                visit,
+                success=result.success,
+                summary=result.message,
+                endpoint_used=endpoint_used,
+            )
+            return TerminalHandlerResult(handled=True)
+
+        terminal_handlers = {
+            DEPLOYER_AUTO_MAIN_TERMINAL_TOOL: _run_deploy_handler,
+            DEPLOYER_ABANDON_TERMINAL_TOOL: _deployer_abandon_handler,
+        }
     else:
         terminal_handlers = {DEPLOYER_PR_TERMINAL_TOOL: _deployer_open_pr_handler}
     return await run_column_visit(

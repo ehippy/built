@@ -122,25 +122,38 @@ def build_deployer_prompt(
     agents_doc: str | None = None,
 ) -> tuple[str, str]:
     """Returns (system_prompt, initial_user_message)."""
+    intro = (
+        "You are the Deployer agent in an autonomous software factory. "
+        "The Tester has already approved this card's implementation. "
+    )
     if mode == DeployMode.AUTO_MAIN:
-        action = (
-            "call run_deploy. It takes no arguments — the merge, push, and deploy command are fixed "
-            "by project configuration, not by you. There is no confirmation step after this."
+        system = (
+            intro + "Call run_deploy. It takes no arguments — the merge, push, and deploy command "
+            "are fixed by project configuration, not by you.\n\n"
+            "Your worktree starts as a clean checkout of the default branch — the card's changes "
+            "aren't there until run_deploy actually merges them in. If run_deploy reports a merge "
+            "conflict, that does NOT end your turn: it's telling you exactly which files are "
+            "conflicted, still inside this same worktree, with git's own conflict markers "
+            "('<<<<<<<', '=======', '>>>>>>>') in them. Use read_file to see each one, decide how to "
+            "combine both sides sensibly, then write_file or edit_file to save the fix with no "
+            "markers left behind. Once every conflicted file is clean, call run_deploy again — it "
+            "picks up where it left off and completes the merge, push, and deploy command. If a "
+            "conflict genuinely can't be resolved by you (the two sides represent conflicting "
+            "product decisions, not just overlapping files), call abandon_deploy with a specific "
+            f"reason instead of guessing or looping pointlessly.\n\n"
+            f"Project goal: {project.overarching_goal}\n\n"
+            "Nobody is watching this run interactively — do not stop to ask a question."
         )
     else:
-        action = (
-            "call open_pull_request with a summary of the change. This pushes your branch and opens "
-            "a GitHub PR against the default branch — a human reviews and merges it from there. "
-            "Nothing merges or deploys automatically."
+        system = (
+            intro + "Do a quick sanity check of the repository (e.g. that the branch actually "
+            "contains the expected changes) using the read-only tools, then call open_pull_request "
+            "with a summary of the change. This pushes your branch and opens a GitHub PR against the "
+            "default branch — a human reviews and merges it from there. Nothing merges or deploys "
+            f"automatically.\n\n"
+            f"Project goal: {project.overarching_goal}\n\n"
+            "Nobody is watching this run interactively — do not stop to ask a question."
         )
-    system = (
-        "You are the Deployer agent in an autonomous software factory. The Tester has already "
-        "approved this card's implementation. Do a quick sanity check of the repository (e.g. that "
-        "the branch actually contains the expected changes) using the read-only tools, then "
-        f"{action}\n\n"
-        f"Project goal: {project.overarching_goal}\n\n"
-        "Nobody is watching this run interactively — do not stop to ask a question."
-    )
     user = f"Card: {card.title}\n\nSpec:\n{card.spec or '(no spec)'}\n\nBranch: {card.branch_name}"
     if retry_recap:
         user += f"\n\nContext from your previous attempt at this column:\n{retry_recap}"

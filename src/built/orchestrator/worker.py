@@ -23,7 +23,7 @@ from built.config import settings as builtin_settings
 from built.db.base import async_session_factory
 from built.db.models import Card, Project
 from built.domain import transitions
-from built.domain.enums import Column, LifecycleState
+from built.domain.enums import Column, DeployMode, LifecycleState
 from built.llm.client import FallbackLLMClient
 from built.sandbox.container import DockerCommandExecutor
 from built.sandbox.worktree import (
@@ -154,6 +154,11 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
     project = await session.get(Project, card.project_id)
     assert project is not None, f"card {card.id} references missing project {card.project_id}"
 
+    is_deployer_auto_main = (
+        card.column == Column.DEPLOYER
+        and project.deploy_config is not None
+        and project.deploy_config.mode == DeployMode.AUTO_MAIN
+    )
     try:
         if card.column == Column.DEPLOYER and project.deploy_config is None:
             raise ValueError(
@@ -161,7 +166,13 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
             )
         chain = await endpoint_service.get_resolved_chain(session, project_id=project.id, role=card.column)
         llm_client = FallbackLLMClient(chain)
-        worktree_path = await create_card_worktree(project, card)
+        # auto_main deploys operate in the Deployer's own dedicated worktree, not the
+        # card's — that's where a merge (and any conflict) actually happens, so the
+        # agent's file tools need to be scoped there instead of the card's branch.
+        if is_deployer_auto_main:
+            worktree_path = await ensure_tool_worktree(project, tool="deployer")
+        else:
+            worktree_path = await create_card_worktree(project, card)
     except Exception as exc:  # noqa: BLE001 — deliberate: setup failures block the card, not the worker
         visit = await transitions.start_visit(session, card)
         await transitions.fail_visit_with_error(session, card, visit, message=f"setup failed: {exc!r}")
@@ -188,7 +199,7 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
 
     executor_kwargs = {"image": project.sandbox_image} if project.sandbox_image else {}
     dispatcher = ToolDispatcher(
-        ctx=ToolContext(card_id=card.id, worktree_root=worktree_path),
+        ctx=ToolContext(card_id=card.id, worktree_root=worktree_path, auto_commit=not is_deployer_auto_main),
         executor=DockerCommandExecutor(**executor_kwargs),
     )
     visit = await transitions.start_visit(session, card)

@@ -37,7 +37,7 @@ class ToolDispatcher:
             )
 
         commit_sha = None
-        if name in MUTATING_TOOLS and not result.is_error:
+        if name in MUTATING_TOOLS and self.ctx.auto_commit and not result.is_error:
             commit_sha = await git_tools.commit_all(
                 self.ctx.worktree_root, message=_commit_message(name, arguments)
             )

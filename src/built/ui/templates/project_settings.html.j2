@@ -173,9 +173,15 @@
       </select>
     </div>
     <div class="field">
-      <label for="github_token_ref">GitHub token env var (for PR to operator)</label>
+      <label for="github_token_ref">GitHub token env var</label>
       <input type="text" id="github_token_ref" name="github_token_ref" value="{{ deploy_config.github_token_ref if deploy_config else '' }}" placeholder="GITHUB_PR_TOKEN">
-      <div class="hint">Name of an environment variable on the server holding a repo-scoped, PR-write-only GitHub personal access token — never the raw token.</div>
+      <div class="hint">
+        Name of an environment variable on the server holding a repo-scoped GitHub personal access token — never
+        the raw token. Required for PR to operator (to open the PR). For auto-main, it's optional but enables CI
+        awareness: with it set, a card's deploy isn't marked done until GitHub Actions (or any other check reported
+        against the commit) actually comes back green — a red check bounces it back to Developer instead. Without
+        it, auto-main deploys are marked done as soon as the push succeeds, same as before.
+      </div>
     </div>
     <div class="field">
       <label for="kind">Deploy step (for auto-main)</label>

@@ -39,6 +39,9 @@ class DeployRunResult:
     # failure (push rejected, deploy command failed) is reported the same way but
     # left as an ordinary terminal failure, since no amount of file editing fixes those.
     conflict: bool = False
+    # The commit actually pushed to default_branch (auto_main only) — what
+    # orchestrator/ci_watcher.py polls GitHub's Checks API for afterward.
+    commit_sha: str | None = None
 
 
 async def run_auto_main_deploy(project: Project, card: Card, wt_path: Path) -> DeployRunResult:
@@ -123,9 +126,19 @@ async def run_auto_main_deploy(project: Project, card: Card, wt_path: Path) -> D
     except GitCommandError as exc:
         return DeployRunResult(success=False, message=f"push failed: {exc.stderr.strip()}")
 
+    # Best-effort: if this fails for some reason, the caller just won't have a
+    # commit to watch CI on — better to fall through to an ordinary immediate
+    # "done" than to fail an otherwise-successful deploy over it.
+    try:
+        commit_sha = (await run_git("rev-parse", "HEAD", cwd=wt_path)).strip()
+    except GitCommandError:
+        commit_sha = None
+
     deploy_config = project.deploy_config
     assert deploy_config is not None
-    return await _run_deploy_command(deploy_config, cwd=wt_path)
+    result = await _run_deploy_command(deploy_config, cwd=wt_path)
+    result.commit_sha = commit_sha if result.success else None
+    return result
 
 
 async def _run_deploy_command(deploy_config: DeployConfig, *, cwd) -> DeployRunResult:
@@ -189,7 +202,7 @@ _GITHUB_URL_PATTERNS = [
 ]
 
 
-def _parse_github_owner_repo(remote_url: str) -> tuple[str, str] | None:
+def parse_github_owner_repo(remote_url: str) -> tuple[str, str] | None:
     for pattern in _GITHUB_URL_PATTERNS:
         match = pattern.match(remote_url.strip())
         if match:
@@ -197,10 +210,74 @@ def _parse_github_owner_repo(remote_url: str) -> tuple[str, str] | None:
     return None
 
 
+@dataclass
+class CheckRun:
+    name: str
+    status: str  # "queued" | "in_progress" | "completed"
+    conclusion: str | None  # only set once status == "completed"
+    html_url: str | None = None
+
+
+FAILING_CONCLUSIONS = frozenset({"failure", "timed_out", "cancelled", "action_required", "stale"})
+
+
+class CIStatusUnavailableError(Exception):
+    """A transient failure fetching check-run status — network blip, GitHub rate
+    limit, or the commit not replicated to GitHub's API yet (briefly common right
+    after a push). Distinct from fetch_check_runs returning None, which means CI
+    status can *never* be determined for this project (no token, not a GitHub
+    remote) — a caller should retry later on this error, not treat it the same as
+    "confirmed, nothing to wait for"."""
+
+
+async def fetch_check_runs(project: Project, commit_sha: str) -> list[CheckRun] | None:
+    """GitHub's Checks API results for a commit — what GitHub Actions (and most
+    other GitHub-integrated CI) reports against. Returns None (not an empty list —
+    that's a real, meaningful "zero checks reported" result) when CI status can
+    never be determined for this project: not a github.com remote, or no token
+    configured. Raises CIStatusUnavailableError for anything that looks transient
+    instead, so a caller doesn't mistake "couldn't reach GitHub just now" for "this
+    repo has no CI"."""
+    owner_repo = parse_github_owner_repo(project.repo_remote_url)
+    if owner_repo is None:
+        return None
+    owner, repo = owner_repo
+
+    deploy_config = project.deploy_config
+    token_ref = deploy_config.github_token_ref if deploy_config else None
+    token = os.environ.get(token_ref or "") if token_ref else None
+    if not token:
+        return None
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        try:
+            response = await client.get(
+                f"{GITHUB_API_BASE}/repos/{owner}/{repo}/commits/{commit_sha}/check-runs",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise CIStatusUnavailableError(f"request failed: {exc}") from exc
+    if not response.is_success:
+        raise CIStatusUnavailableError(f"GitHub API returned {response.status_code}: {response.text[:500]}")
+
+    return [
+        CheckRun(
+            name=run["name"],
+            status=run["status"],
+            conclusion=run.get("conclusion"),
+            html_url=run.get("html_url"),
+        )
+        for run in response.json().get("check_runs", [])
+    ]
+
+
 async def open_pull_request(project: Project, card: Card, *, summary: str) -> DeployRunResult:
     """Push the card's branch as-is (no merge) and open a GitHub PR against
     default_branch. A human takes over from here — no deploy command runs."""
-    owner_repo = _parse_github_owner_repo(project.repo_remote_url)
+    owner_repo = parse_github_owner_repo(project.repo_remote_url)
     if owner_repo is None:
         return DeployRunResult(
             success=False,
@@ -250,4 +327,13 @@ async def open_pull_request(project: Project, card: Card, *, summary: str) -> De
     )
 
 
-__all__ = ["DeployRunResult", "run_auto_main_deploy", "open_pull_request"]
+__all__ = [
+    "CheckRun",
+    "CIStatusUnavailableError",
+    "DeployRunResult",
+    "FAILING_CONCLUSIONS",
+    "fetch_check_runs",
+    "open_pull_request",
+    "parse_github_owner_repo",
+    "run_auto_main_deploy",
+]

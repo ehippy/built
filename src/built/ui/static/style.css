@@ -320,6 +320,7 @@ th {
 .badge.blocked { background: var(--state-blocked); }
 .badge.done { background: var(--state-done); }
 .badge.failed { background: var(--state-failed); }
+.badge.watching-ci { background: var(--accent); }
 
 .board {
   display: grid;

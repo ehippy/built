@@ -214,6 +214,15 @@ class Card(Base):
     # (stays None) in auto_main mode.
     deploy_url: Mapped[str | None] = mapped_column(default=None)
 
+    # Set the moment an auto_main deploy pushes successfully; cleared once CI
+    # resolves (or there turns out to be none) — see orchestrator/ci_watcher.py.
+    # While set, the card stays ACTIVE but isn't reclaimed by the worker pool (the
+    # Deployer's own job — the git-level push — is genuinely done; the card's
+    # overall completion isn't, until CI actually confirms it). NULL for
+    # pr_to_operator deploys, which have a human in the loop before anything merges.
+    deploying_commit_sha: Mapped[str | None] = mapped_column(default=None)
+    deploying_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
     # Orchestrator claim/lease — see orchestrator/worker.py (Phase 4).
     claimed_by_worker_id: Mapped[str | None] = mapped_column(default=None)
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

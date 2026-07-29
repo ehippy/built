@@ -492,6 +492,7 @@ async def run_deployer_visit(
                 visit,
                 success=result.success,
                 summary=result.message,
+                pending_ci_commit_sha=result.commit_sha,
                 endpoint_used=endpoint_used,
             )
             return TerminalHandlerResult(handled=True)

@@ -95,6 +95,14 @@
   {% if card.deploy_url %}
   <p><a href="{{ card.deploy_url }}" target="_blank" rel="noopener">Deploy link &rarr;</a></p>
   {% endif %}
+  {% if card.deploying_commit_sha %}
+  <p>
+    <span class="badge watching-ci">watching CI</span>
+    Pushed as <code>{{ card.deploying_commit_sha[:8] }}</code> {{ card.deploying_since|timeago }} —
+    waiting on CI before this card closes out. Green advances it to done; red bounces it back to
+    Developer with the failure.
+  </p>
+  {% endif %}
 </div>
 
 <div class="panel">

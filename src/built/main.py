@@ -19,6 +19,7 @@ from built.config import settings
 from built.db.base import create_all
 from built.logging_config import configure_logging
 from built.orchestrator.archiver import run_archiver_loop
+from built.orchestrator.ci_watcher import run_ci_watcher_loop
 from built.orchestrator.curator import run_curator_loop
 from built.orchestrator.reviver import run_reviver_loop
 from built.orchestrator.worker import run_worker_pool
@@ -46,6 +47,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     reviver_task: asyncio.Task | None = None
     curator_task: asyncio.Task | None = None
     archiver_task: asyncio.Task | None = None
+    ci_watcher_task: asyncio.Task | None = None
     stop_event = asyncio.Event()
     if settings.orchestrator_enabled:
         worker_task = asyncio.create_task(
@@ -76,9 +78,18 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 poll_interval=settings.archiver_poll_interval_seconds,
             )
         )
+    if settings.ci_watcher_enabled:
+        ci_watcher_task = asyncio.create_task(
+            run_ci_watcher_loop(
+                stop_event=stop_event,
+                poll_interval=settings.ci_watcher_poll_interval_seconds,
+            )
+        )
 
     background_tasks = [
-        t for t in (worker_task, reviver_task, curator_task, archiver_task) if t is not None
+        t
+        for t in (worker_task, reviver_task, curator_task, archiver_task, ci_watcher_task)
+        if t is not None
     ]
     try:
         yield

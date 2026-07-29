@@ -141,15 +141,37 @@ async def complete_deployer_visit(
     success: bool,
     summary: str,
     deploy_url: str | None = None,
+    pending_ci_commit_sha: str | None = None,
     endpoint_used: str | None = None,
 ) -> Card:
-    """Deployer's run_deploy (auto_main) or open_pull_request (pr_to_operator):
-    success is terminal (done) either way. Failure retries up to the project's
-    max_deploy_attempts, then is terminal (failed) with no further action — there is
-    no human-approval gate to fall back to in this pipeline."""
+    """Deployer's run_deploy (auto_main) or open_pull_request (pr_to_operator).
+
+    Failure retries up to the project's max_deploy_attempts, then is terminal
+    (failed) with no further action — there is no human-approval gate to fall back
+    to in this pipeline.
+
+    Success is terminal (done) UNLESS pending_ci_commit_sha is given (auto_main
+    only — pr_to_operator has a human in the loop before anything merges, so
+    there's nothing this pipeline should gate on). The Deployer's own job — the
+    git-level push — is genuinely finished, but the card's overall completion
+    isn't: it stays ACTIVE with the commit tracked for
+    orchestrator/ci_watcher.py to poll, and only reaches DONE once CI actually
+    confirms it (see confirm_ci_passed / bounce_deployed_card_to_developer /
+    mark_ci_wait_timed_out below)."""
     if success:
         if deploy_url is not None:
             card.deploy_url = deploy_url
+        if pending_ci_commit_sha is not None:
+            card.deploying_commit_sha = pending_ci_commit_sha
+            card.deploying_since = datetime.now(UTC)
+            await _close_visit(
+                session,
+                visit,
+                outcome=VisitOutcome.DEPLOYED_PENDING_CI,
+                summary=summary,
+                endpoint_used=endpoint_used,
+            )
+            return card
         card.lifecycle_state = LifecycleState.DONE
         await _close_visit(
             session, visit, outcome=VisitOutcome.DONE, summary=summary, endpoint_used=endpoint_used
@@ -162,6 +184,59 @@ async def complete_deployer_visit(
         card.lifecycle_state = LifecycleState.FAILED
     await _close_visit(
         session, visit, outcome=VisitOutcome.FAILED, summary=summary, endpoint_used=endpoint_used
+    )
+    return card
+
+
+async def confirm_ci_passed(session: AsyncSession, card: Card, *, note: str) -> Card:
+    """orchestrator/ci_watcher.py: CI came back green, or the repo turned out to
+    have no CI at all for this commit — either way, the deploy this card produced
+    is now genuinely confirmed, so this is where DONE actually happens for an
+    auto_main card that had CI to wait on."""
+    card.lifecycle_state = LifecycleState.DONE
+    card.deploying_commit_sha = None
+    card.deploying_since = None
+    await append_event(
+        session, card_id=card.id, type=EventType.SYSTEM_NOTE, payload={"action": "ci_confirmed", "note": note}
+    )
+    return card
+
+
+async def bounce_deployed_card_to_developer(session: AsyncSession, card: Card, *, ci_summary: str) -> Card:
+    """orchestrator/ci_watcher.py: CI came back red on the commit this card's
+    auto_main deploy produced. Treated the same as Tester's request_changes — it's
+    almost always a real problem the code has that local tests/Tester didn't catch
+    (env-specific, flaky, a build/config issue) — same revision_count budget, since
+    both represent "another round of Developer work needed"."""
+    card.revision_count += 1
+    card.latest_feedback = ci_summary
+    card.column = Column.DEVELOPER
+    card.deploying_commit_sha = None
+    card.deploying_since = None
+    project = await session.get(Project, card.project_id)
+    if card.revision_count > project.max_revisions:
+        card.lifecycle_state = LifecycleState.BLOCKED
+    await append_event(
+        session,
+        card_id=card.id,
+        type=EventType.SYSTEM_NOTE,
+        payload={"action": "ci_failed", "summary": ci_summary},
+    )
+    return card
+
+
+async def mark_ci_wait_timed_out(session: AsyncSession, card: Card, *, note: str) -> Card:
+    """orchestrator/ci_watcher.py: CI never resolved within the configured window —
+    stuck runner, misconfigured workflow, whatever. Blocks for a human rather than
+    polling forever; the Reviver can also pick this up like any other blocked card."""
+    card.lifecycle_state = LifecycleState.BLOCKED
+    card.deploying_commit_sha = None
+    card.deploying_since = None
+    await append_event(
+        session,
+        card_id=card.id,
+        type=EventType.SYSTEM_NOTE,
+        payload={"action": "ci_wait_timed_out", "note": note},
     )
     return card
 

@@ -5,26 +5,26 @@ real toy git repo."""
 
 from built.db.models import Card, DeployConfig, Project
 from built.domain.enums import DeployKind, DeployMode
-from built.sandbox.deploy_runner import _parse_github_owner_repo, open_pull_request
+from built.sandbox.deploy_runner import open_pull_request, parse_github_owner_repo
 
 
 def test_parse_github_owner_repo_https():
-    assert _parse_github_owner_repo("https://github.com/octocat/hello-world.git") == (
+    assert parse_github_owner_repo("https://github.com/octocat/hello-world.git") == (
         "octocat",
         "hello-world",
     )
 
 
 def test_parse_github_owner_repo_https_no_dot_git():
-    assert _parse_github_owner_repo("https://github.com/octocat/hello-world") == ("octocat", "hello-world")
+    assert parse_github_owner_repo("https://github.com/octocat/hello-world") == ("octocat", "hello-world")
 
 
 def test_parse_github_owner_repo_ssh():
-    assert _parse_github_owner_repo("git@github.com:octocat/hello-world.git") == ("octocat", "hello-world")
+    assert parse_github_owner_repo("git@github.com:octocat/hello-world.git") == ("octocat", "hello-world")
 
 
 def test_parse_github_owner_repo_non_github_returns_none():
-    assert _parse_github_owner_repo("https://gitlab.com/octocat/hello-world.git") is None
+    assert parse_github_owner_repo("https://gitlab.com/octocat/hello-world.git") is None
 
 
 def _project(**overrides) -> Project:

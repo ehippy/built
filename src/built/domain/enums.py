@@ -28,7 +28,8 @@ class VisitOutcome(StrEnum):
     SUBMITTED = "submitted"  # PM's submit_spec, or Developer's submit_for_test
     APPROVED = "approved"  # Tester's approve
     CHANGES_REQUESTED = "changes_requested"  # Tester's request_changes
-    DONE = "done"  # Deployer's run_deploy succeeded
+    DONE = "done"  # Deployer's run_deploy succeeded (pr_to_operator, or auto_main with no CI to watch)
+    DEPLOYED_PENDING_CI = "deployed_pending_ci"  # auto_main run_deploy succeeded; CI still has to confirm
     FAILED = "failed"  # Deployer's run_deploy failed (this attempt, or terminally over cap)
     ERROR = "error"  # iteration cap / endpoint chain exhausted / unhandled exception
     INTERRUPTED = "interrupted"  # process crashed mid-visit; orchestrator restarts fresh

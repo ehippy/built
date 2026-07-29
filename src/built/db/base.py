@@ -17,6 +17,8 @@ async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 ADDITIVE_COLUMNS = [
     ("projects", "test_command", "TEXT"),
     ("run_attempts", "card_event_seq", "INTEGER"),
+    ("cards", "deploying_commit_sha", "TEXT"),
+    ("cards", "deploying_since", "DATETIME"),
 ]
 
 

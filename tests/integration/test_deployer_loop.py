@@ -9,6 +9,7 @@ from built.agent.loop import run_deployer_visit
 from built.domain import transitions
 from built.domain.enums import Column, DeployKind, DeployMode, LifecycleState, VisitOutcome
 from built.llm.client import LLMResult, ToolCallRequest
+from built.orchestrator.ci_watcher import run_ci_watcher_once
 from built.sandbox import deploy_runner, worktree
 from built.sandbox.container import CommandResult
 from built.services import card_service, project_service
@@ -153,12 +154,23 @@ async def test_deployer_loop_auto_main_happy_path_merges_and_deploys(db_session,
         mode=DeployMode.AUTO_MAIN,
     )
 
-    assert result.lifecycle_state == LifecycleState.DONE
-    assert visit.outcome == VisitOutcome.DONE
+    # The Deployer's own job — the git-level push — is done, but the card isn't
+    # DONE yet: repo_remote_url here is a local path, not github.com, so there's
+    # no CI to ever wait on, but that's still only resolved by the watcher's own
+    # pass, not synchronously inside run_deployer_visit.
+    assert result.lifecycle_state == LifecycleState.ACTIVE
+    assert result.deploying_commit_sha is not None
+    assert visit.outcome == VisitOutcome.DEPLOYED_PENDING_CI
     log = subprocess.run(
         ["git", "log", "--oneline", "main"], cwd=toy_repo_remote, check=True, capture_output=True, text=True
     ).stdout
     assert "Merge" in log
+
+    counts = await run_ci_watcher_once()
+    assert counts["confirmed"] == 1
+    await db_session.refresh(card)
+    assert card.lifecycle_state == LifecycleState.DONE
+    assert card.deploying_commit_sha is None
 
 
 async def test_deployer_loop_auto_main_resolves_conflict_via_file_tools(db_session, toy_repo_remote):
@@ -209,13 +221,20 @@ async def test_deployer_loop_auto_main_resolves_conflict_via_file_tools(db_sessi
         mode=DeployMode.AUTO_MAIN,
     )
 
-    assert result.lifecycle_state == LifecycleState.DONE
-    assert visit.outcome == VisitOutcome.DONE
+    assert result.lifecycle_state == LifecycleState.ACTIVE
+    assert result.deploying_commit_sha is not None
+    assert visit.outcome == VisitOutcome.DEPLOYED_PENDING_CI
     assert "hello from a and b" in (toy_repo_remote / "app.py").read_text()
     log = subprocess.run(
         ["git", "log", "--oneline", "main"], cwd=toy_repo_remote, check=True, capture_output=True, text=True
     ).stdout
     assert "Merge" in log
+
+    counts = await run_ci_watcher_once()
+    assert counts["confirmed"] == 1
+    await db_session.refresh(card_b)
+    assert card_b.lifecycle_state == LifecycleState.DONE
+    assert card_b.deploying_commit_sha is None
 
 
 async def test_deployer_loop_auto_main_abandon_deploy_on_unresolvable_conflict(db_session, toy_repo_remote):

@@ -10,6 +10,7 @@
   </div>
   <div class="meta">
     {{ badge(card.lifecycle_state) }}
+    {% if card.deploying_commit_sha %}<span class="badge watching-ci" title="Pushed to the default branch — waiting on CI to confirm before this card closes out">watching CI</span>{% endif %}
     {% if card.archived_at %}<span class="badge paused">archived</span>{% endif %}
     {% if card.revision_count %} · rev {{ card.revision_count }}{% endif %}
     {% if card.deploy_attempt_count %} · deploy attempt {{ card.deploy_attempt_count }}{% endif %}

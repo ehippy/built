@@ -74,7 +74,10 @@ async def claim_next_card(session: AsyncSession, worker_id: str) -> Card | None:
     asked to have this repo left alone, so no new claims start; a claim already in
     flight when pause was clicked still runs to completion. An archived card
     (Card.archived_at set) is excluded outright — a human decided this one isn't
-    worth doing."""
+    worth doing. A card with deploying_commit_sha set is excluded too — its
+    Deployer visit already finished (the git-level push succeeded); it's just
+    waiting on orchestrator/ci_watcher.py to confirm CI, not something the worker
+    pool has anything left to do with."""
     now = datetime.now(UTC)
     busy_project_ids = select(Card.project_id).where(
         Card.claimed_by_worker_id.is_not(None),
@@ -87,6 +90,7 @@ async def claim_next_card(session: AsyncSession, worker_id: str) -> Card | None:
             Card.lifecycle_state == LifecycleState.ACTIVE,
             Card.column.in_(IMPLEMENTED_COLUMNS),
             Card.archived_at.is_(None),
+            Card.deploying_commit_sha.is_(None),
             or_(Card.claimed_by_worker_id.is_(None), Card.lease_expires_at < now),
             Card.project_id.not_in(busy_project_ids),
             Card.project_id.not_in(paused_project_ids),
@@ -102,6 +106,7 @@ async def claim_next_card(session: AsyncSession, worker_id: str) -> Card | None:
         .where(
             Card.id == candidate_id,
             Card.archived_at.is_(None),
+            Card.deploying_commit_sha.is_(None),
             or_(Card.claimed_by_worker_id.is_(None), Card.lease_expires_at < now),
             Card.project_id.not_in(busy_project_ids),
             Card.project_id.not_in(paused_project_ids),

@@ -77,6 +77,22 @@ class Settings(BaseSettings):
     archiver_poll_interval_seconds: float = 3600
     auto_archive_done_after_days: int = 7
 
+    # CI watcher: a deterministic sweep (no LLM) that polls GitHub's Checks API for
+    # cards whose auto_main deploy pushed successfully but hasn't been confirmed by
+    # CI yet (Card.deploying_commit_sha) — see orchestrator/ci_watcher.py. Fast
+    # polling relative to the archiver: CI resolution timing is user-visible in a
+    # way "eventually archive an old done card" isn't.
+    ci_watcher_enabled: bool = True
+    ci_watcher_poll_interval_seconds: float = 60
+    # How long a commit with zero reported check-runs is treated as "CI hasn't
+    # registered the push yet" rather than "this repo genuinely has no CI" —
+    # GitHub Actions usually creates check-run objects within seconds, but not
+    # always instantly.
+    ci_watcher_grace_period_seconds: int = 180
+    # How long to keep polling a commit whose checks are still in progress before
+    # giving up and blocking the card for a human.
+    ci_watcher_timeout_seconds: int = 3600
+
 
 def get_settings() -> Settings:
     return Settings()

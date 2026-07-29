@@ -33,6 +33,7 @@ class VisitOutcome(StrEnum):
     FAILED = "failed"  # Deployer's run_deploy failed (this attempt, or terminally over cap)
     ERROR = "error"  # iteration cap / endpoint chain exhausted / unhandled exception
     INTERRUPTED = "interrupted"  # process crashed mid-visit; orchestrator restarts fresh
+    CANCELLED = "cancelled"  # a human cancelled the card while this visit was running
 
 
 class EventType(StrEnum):

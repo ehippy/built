@@ -261,6 +261,26 @@ async def mark_visit_interrupted(session: AsyncSession, card: Card, visit: CardC
     return card
 
 
+async def abandon_visit_for_lifecycle_change(
+    session: AsyncSession, card: Card, visit: CardColumnVisit
+) -> Card:
+    """agent/loop.py: the card's lifecycle_state no longer matches what it was when
+    this visit started (currently only ever a human cancelling it mid-run —
+    cancel_card sets FAILED without touching the running visit or its claim/lease at
+    all, since nothing else previously noticed). Closes out the visit without
+    touching lifecycle_state or column — whatever set it that way already did the
+    right thing, this is just making sure the agent loop stops burning iterations
+    (and, with orchestrator_concurrency's default of 1, blocking every other card)
+    on work nobody wants anymore."""
+    await _close_visit(
+        session,
+        visit,
+        outcome=VisitOutcome.CANCELLED,
+        summary=f"Card lifecycle_state changed to {card.lifecycle_state.value!r} mid-visit — stopped.",
+    )
+    return card
+
+
 async def retry_card(session: AsyncSession, card: Card, *, note: str | None = None) -> Card:
     """The one human touchpoint that exists *outside* the autonomous pipeline: un-stick
     a blocked or failed card with a clean safety-valve budget. An optional note is

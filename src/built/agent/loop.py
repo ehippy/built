@@ -27,7 +27,7 @@ from built.agent.context_window import (
 )
 from built.db.models import Card, CardColumnVisit, Project
 from built.domain import run_attempts, transitions
-from built.domain.enums import DeployMode, EventType
+from built.domain.enums import DeployMode, EventType, LifecycleState
 from built.domain.events import append_event
 from built.llm.client import LLMClient, ToolCallRequest
 from built.llm.tool_schemas import (
@@ -112,6 +112,22 @@ async def run_column_visit(
 
     try:
         for iteration in range(1, max_iterations + 1):
+            # A human can cancel a card at any moment via the UI/API, independent of
+            # whatever this loop is doing — cancel_card only flips lifecycle_state,
+            # it doesn't (can't, from a different request) reach into a running
+            # loop. Without this check the loop has no way to find out and just
+            # keeps going to its natural conclusion — with
+            # orchestrator_concurrency's default of 1, that means the single worker
+            # stays monopolized on now-unwanted work for as long as the run takes,
+            # unable to pick up anything else in the meantime (confirmed in
+            # production: a cancelled card kept running for 10+ minutes after
+            # cancellation before a restart finally stopped it).
+            await session.refresh(card)
+            if card.lifecycle_state != LifecycleState.ACTIVE:
+                await transitions.abandon_visit_for_lifecycle_change(session, card, visit)
+                await session.commit()
+                return card
+
             # Compact if the message list approaches the context window.
             messages = await _maybe_compact(messages, llm_client, config, iteration)
 

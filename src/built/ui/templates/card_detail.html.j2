@@ -11,7 +11,6 @@
   {{ m.badge(card.lifecycle_state) }}
   <span class="badge active" style="background:#6b6b76">{{ card.column }}</span>
   {% if card.branch_name %}· <code>{{ card.branch_name }}</code>{% endif %}
-  {% if card.is_being_worked %} · <span class="live" title="An agent is actively working on this card">● live</span>{% endif %}
 </p>
 <p class="hint">Last updated {{ card.updated_at|timeago }}</p>
 

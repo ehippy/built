@@ -505,17 +505,6 @@ th {
   font-size: 0.85rem;
 }
 
-.live {
-  color: var(--state-active);
-  font-size: 0.75rem;
-  animation: pulse 1.5s ease-in-out infinite;
-  flex-shrink: 0;
-}
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
-}
-
 .card-tile.active-card .timestamp,
 .card-tile.active-card {
   border-left: 4px solid var(--state-active);

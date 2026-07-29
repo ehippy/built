@@ -7,7 +7,6 @@
   <div class="title">
     {{ card.title }}
     {% if card.is_being_worked %}<span class="spinner" title="An agent is actively working on this card"></span>{% endif %}
-    {% if card.is_being_worked %}<span class="live" title="Live work">●</span>{% endif %}
   </div>
   <div class="meta">
     {{ badge(card.lifecycle_state) }}

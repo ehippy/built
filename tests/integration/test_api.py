@@ -98,6 +98,30 @@ async def test_project_and_card_lifecycle_via_api():
         assert noted_retry_resp.json()["retry_note"] == "rebase onto main first"
 
 
+async def test_discover_tasks_endpoint_requires_auth_and_starts_in_background():
+    async with _client() as client:
+        create_resp = await client.post(
+            "/api/v1/projects",
+            json={
+                "name": "Discovery API Project",
+                "overarching_goal": "goal",
+                "repo_remote_url": "https://example.invalid/discovery-project.git",
+            },
+            headers=AUTH,
+        )
+        project = create_resp.json()
+
+        no_auth_resp = await client.post(f"/api/v1/projects/{project['id']}/discover-tasks")
+        assert no_auth_resp.status_code == 401
+
+        started_resp = await client.post(f"/api/v1/projects/{project['id']}/discover-tasks", headers=AUTH)
+        assert started_resp.status_code == 202
+        assert started_resp.json() == {"status": "started"}
+
+        missing_resp = await client.post("/api/v1/projects/does-not-exist/discover-tasks", headers=AUTH)
+        assert missing_resp.status_code == 404
+
+
 async def test_endpoint_config_fallback_chain_resolution():
     async with _client() as client:
         project_resp = await client.post(

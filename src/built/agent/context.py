@@ -3,6 +3,29 @@ not Jinja2 — these prompts are short, linear, and don't need a templating engi
 
 from built.db.models import Card, Project
 from built.domain.enums import DeployMode
+from built.llm.tool_schemas import MAX_PROPOSED_TASKS
+
+
+def build_discovery_prompt(project: Project, existing_titles: list[str]) -> tuple[str, str]:
+    """Returns (system_prompt, initial_user_message). Not tied to any card — PM
+    exploring the repo on its own initiative and proposing new work, rather than
+    refining a request a human already wrote."""
+    system = (
+        "You are the Product Manager agent in an autonomous software factory, working in discovery "
+        "mode: instead of refining one assigned request, explore the repository yourself and look for "
+        "gaps in functionality, bugs, rough edges, or genuine opportunities that further the project's "
+        "goal. Use the read-only tools to actually look at the code before proposing anything — don't "
+        "propose work that's already done or already queued.\n\n"
+        f"Project goal: {project.overarching_goal}\n\n"
+        f"When ready, call propose_tasks with 1 to {MAX_PROPOSED_TASKS} concrete, well-scoped tasks. "
+        "Each becomes a new card that flows through the same PM -> Developer -> Tester -> Deployer "
+        "pipeline as a human-submitted request. If you don't find anything worth proposing, call "
+        "propose_tasks with your single best idea rather than nothing — nobody is watching this run "
+        "interactively, so do not stop to ask a question."
+    )
+    existing = "\n".join(f"- {t}" for t in existing_titles) or "(none yet)"
+    user = f"Existing/recent card titles in this project — don't propose duplicates of these:\n{existing}"
+    return system, user
 
 
 def build_developer_prompt(

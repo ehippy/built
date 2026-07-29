@@ -32,6 +32,29 @@ async def ensure_managed_clone(project: Project) -> Path:
     return bare_path
 
 
+def default_branch_worktree_path(project: Project) -> Path:
+    return settings.data_dir / "worktrees" / "_default" / project.id
+
+
+async def ensure_default_branch_worktree(project: Project) -> Path:
+    """A worktree checked out on the project's default branch and kept fresh via
+    fetch — not tied to any card. Used by Deployer's auto-main merges and PM's
+    autonomous task discovery, neither of which has a card of its own to work in."""
+    bare_path = await ensure_managed_clone(project)
+    wt_path = default_branch_worktree_path(project)
+    if not wt_path.exists():
+        wt_path.parent.mkdir(parents=True, exist_ok=True)
+        await run_git("worktree", "add", str(wt_path), project.default_branch, cwd=bare_path)
+    else:
+        # Bare-repo branches live under refs/heads/*, not refs/remotes/origin/* (see
+        # module docstring) — ensure_managed_clone's fetch above already updated
+        # refs/heads/<default_branch> directly, so reset targets the plain branch
+        # name, not origin/<branch>.
+        await run_git("checkout", project.default_branch, cwd=wt_path)
+        await run_git("reset", "--hard", project.default_branch, cwd=wt_path)
+    return wt_path
+
+
 async def create_card_worktree(project: Project, card: Card) -> Path:
     """Create (or reuse) the card's dedicated worktree + branch, off the project's
     default branch. A card's worktree persists across revision loops — Developer's

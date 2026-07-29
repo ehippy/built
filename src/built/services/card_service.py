@@ -16,7 +16,9 @@ def _branch_slug(card_id: str, title: str) -> str:
     return f"card/{card_id[:8]}-{slug}"
 
 
-async def create_card(session: AsyncSession, project_id: str, *, title: str, raw_request: str) -> Card:
+async def create_card(
+    session: AsyncSession, project_id: str, *, title: str, raw_request: str, source: str = "human"
+) -> Card:
     await get_project(session, project_id)  # 404s early if the project doesn't exist
     card = Card(project_id=project_id, title=title, raw_request=raw_request)
     session.add(card)
@@ -26,10 +28,19 @@ async def create_card(session: AsyncSession, project_id: str, *, title: str, raw
         session,
         card_id=card.id,
         type=EventType.SYSTEM_NOTE,
-        payload={"action": "created", "title": title},
+        payload={"action": "created", "title": title, "source": source},
     )
     await session.flush()
     return card
+
+
+async def list_recent_card_titles(session: AsyncSession, project_id: str, *, limit: int = 50) -> list[str]:
+    """Recent card titles for this project, newest first — context for PM discovery
+    so it doesn't propose work that's already queued or done."""
+    stmt = (
+        select(Card.title).where(Card.project_id == project_id).order_by(Card.created_at.desc()).limit(limit)
+    )
+    return list((await session.scalars(stmt)).all())
 
 
 async def get_card(session: AsyncSession, card_id: str, *, with_visits: bool = False) -> Card:

@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from built.agent.discovery import run_pm_discovery
 from built.agent.loop import run_deployer_visit, run_developer_visit, run_pm_visit, run_tester_visit
 from built.db.base import async_session_factory
 from built.db.models import Card, Project
@@ -18,7 +19,7 @@ from built.domain import transitions
 from built.domain.enums import Column, LifecycleState
 from built.llm.client import FallbackLLMClient
 from built.sandbox.container import DockerCommandExecutor
-from built.sandbox.worktree import create_card_worktree
+from built.sandbox.worktree import create_card_worktree, ensure_default_branch_worktree
 from built.services import card_service, endpoint_service
 from built.tools.base import ToolContext
 from built.tools.dispatcher import ToolDispatcher
@@ -213,6 +214,67 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
         raise AssertionError(f"unimplemented column: {card.column}")
 
     await release_claim(session, card)
+
+
+# Project IDs with a discovery run currently in flight. In-memory only — this is a
+# single-process app, and an in-flight run doesn't need to survive a restart since
+# the asyncio task itself dies with the process too. is_discovery_running() and the
+# add() in run_project_discovery() below are both synchronous with no `await` between
+# a check and the corresponding add/discard, so two near-simultaneous triggers can't
+# both slip past the guard — asyncio only switches tasks at an await point.
+_discovery_in_progress: set[str] = set()
+
+
+def is_discovery_running(project_id: str) -> bool:
+    return project_id in _discovery_in_progress
+
+
+async def run_project_discovery(project_id: str) -> None:
+    """PM's autonomous discovery mode for one project: opens its own session and
+    runs to completion, then returns — meant to be fired as a detached background
+    task from an API/UI handler (see api/routers/projects.py), not awaited inline in
+    a request, since a full discovery pass is an LLM agentic loop and can take a
+    while. Never raises — run_pm_discovery already swallows its own failures.
+
+    Skips outright if a discovery run for this project is already in flight — two
+    runs racing each other see the same "existing card titles" snapshot and can
+    propose near-duplicate cards, since discovery doesn't go through claim_next_card
+    and isn't covered by its per-project claim serialization."""
+    if project_id in _discovery_in_progress:
+        logger.info("discovery already running for project %s — skipping", project_id)
+        return
+    _discovery_in_progress.add(project_id)
+    try:
+        async with async_session_factory() as session:
+            project = await session.get(Project, project_id)
+            if project is None:
+                logger.warning("discovery requested for missing project %s", project_id)
+                return
+            try:
+                chain = await endpoint_service.get_resolved_chain(
+                    session, project_id=project.id, role=Column.PM
+                )
+                llm_client = FallbackLLMClient(chain)
+                wt_path = await ensure_default_branch_worktree(project)
+            except Exception:
+                logger.exception("discovery setup failed for project %s", project_id)
+                return
+
+            executor_kwargs = {"image": project.sandbox_image} if project.sandbox_image else {}
+            dispatcher = ToolDispatcher(
+                ctx=ToolContext(card_id=f"discovery-{project.id}", worktree_root=wt_path),
+                executor=DockerCommandExecutor(**executor_kwargs),
+            )
+            created = await run_pm_discovery(
+                session,
+                project,
+                llm_client=llm_client,
+                dispatcher=dispatcher,
+                max_iterations=project.max_iterations_per_run,
+            )
+            logger.info("discovery for project %s created %d card(s)", project_id, len(created))
+    finally:
+        _discovery_in_progress.discard(project_id)
 
 
 async def _worker_loop(worker_id: str, *, stop_event: asyncio.Event, poll_interval: float) -> None:

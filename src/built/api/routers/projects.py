@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, HTTPException, status
 
 from built.api.deps import RequireApiKey, SessionDep
@@ -8,6 +10,7 @@ from built.api.schemas import (
     ProjectOut,
     ProjectUpdate,
 )
+from built.orchestrator.worker import is_discovery_running, run_project_discovery
 from built.services import project_service
 from built.services.project_service import NotFoundError
 
@@ -52,6 +55,21 @@ async def archive_project(project_id: str, session: SessionDep, _: RequireApiKey
         await project_service.archive_project(session, project_id)
     except NotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+
+
+@router.post("/{project_id}/discover-tasks", status_code=status.HTTP_202_ACCEPTED)
+async def discover_tasks(project_id: str, session: SessionDep, _: RequireApiKey) -> dict:
+    """Kicks off one autonomous PM discovery pass in the background and returns
+    immediately — a full pass is an LLM agentic loop and can take a while. New cards
+    (if any) appear on the board as they're created; poll GET /projects/{id}/board."""
+    try:
+        await project_service.get_project(session, project_id)
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    if is_discovery_running(project_id):
+        raise HTTPException(status.HTTP_409_CONFLICT, "discovery is already running for this project")
+    asyncio.create_task(run_project_discovery(project_id))
+    return {"status": "started"}
 
 
 @router.put("/{project_id}/deploy-config", response_model=DeployConfigOut)

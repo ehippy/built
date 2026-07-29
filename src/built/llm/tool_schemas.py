@@ -206,6 +206,48 @@ SUBMIT_SPEC = {
 PM_TOOLS = [READ_FILE, LIST_FILES, GLOB_FILES, GREP_FILES, SUBMIT_SPEC]
 PM_TERMINAL_TOOL = "submit_spec"
 
+MAX_PROPOSED_TASKS = 5
+
+PROPOSE_TASKS = {
+    "type": "function",
+    "function": {
+        "name": "propose_tasks",
+        "description": (
+            "Propose new cards for the backlog based on gaps, bugs, rough edges, or genuine "
+            "opportunities you found in the repository. Each becomes a new card, worked exactly like "
+            "a human-submitted request — starting in the PM column. This ends your turn."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "tasks": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": MAX_PROPOSED_TASKS,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string", "description": "A short title for the card."},
+                            "raw_request": {
+                                "type": "string",
+                                "description": (
+                                    "The gap/bug/opportunity and what should be done about it, "
+                                    "written as if a human requested it."
+                                ),
+                            },
+                        },
+                        "required": ["title", "raw_request"],
+                    },
+                }
+            },
+            "required": ["tasks"],
+        },
+    },
+}
+
+DISCOVERY_TOOLS = [READ_FILE, LIST_FILES, GLOB_FILES, GREP_FILES, PROPOSE_TASKS]
+DISCOVERY_TERMINAL_TOOL = "propose_tasks"
+
 APPROVE = {
     "type": "function",
     "function": {

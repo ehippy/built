@@ -13,14 +13,12 @@ import asyncio
 import os
 import re
 from dataclasses import dataclass
-from pathlib import Path
 
 import httpx
 
-from built.config import settings
 from built.db.models import Card, DeployConfig, Project
 from built.domain.enums import DeployKind
-from built.sandbox.worktree import bare_repo_path
+from built.sandbox.worktree import bare_repo_path, ensure_default_branch_worktree
 from built.tools.git_tools import GitCommandError, run_git
 
 GITHUB_API_BASE = "https://api.github.com"
@@ -33,28 +31,11 @@ class DeployRunResult:
     url: str | None = None
 
 
-def _default_branch_worktree_path(project: Project) -> Path:
-    return settings.data_dir / "worktrees" / "_default" / project.id
-
-
 async def run_auto_main_deploy(project: Project, card: Card) -> DeployRunResult:
     """Merge the card's branch into default_branch, push, then run the configured
     deploy command. A merge conflict is a clean failure with git's own output as the
     message — no automated resolution."""
-    bare_path = bare_repo_path(project)
-    wt_path = _default_branch_worktree_path(project)
-
-    await run_git("fetch", "origin", cwd=bare_path)
-
-    if not wt_path.exists():
-        wt_path.parent.mkdir(parents=True, exist_ok=True)
-        await run_git("worktree", "add", str(wt_path), project.default_branch, cwd=bare_path)
-    else:
-        # Bare-repo branches live under refs/heads/*, not refs/remotes/origin/* (see
-        # sandbox/worktree.py) — fetch above already updated refs/heads/<default_branch>
-        # directly, so reset targets the plain branch name, not origin/<branch>.
-        await run_git("checkout", project.default_branch, cwd=wt_path)
-        await run_git("reset", "--hard", project.default_branch, cwd=wt_path)
+    wt_path = await ensure_default_branch_worktree(project)
 
     try:
         await run_git(

@@ -25,5 +25,13 @@
   </form>
 </div>
 
+<div class="panel">
+  <h2>Autonomous discovery</h2>
+  <p class="subtitle">Let PM explore the repository on its own and propose new cards — gaps, bugs, rough edges, or opportunities it finds, up to 5 at a time.</p>
+  <form method="post" action="/ui/projects/{{ project.id }}/discover-tasks">
+    <button class="btn secondary" type="submit">Discover tasks</button>
+  </form>
+</div>
+
 {% include "_board_fragment.html.j2" %}
 {% endblock %}

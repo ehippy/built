@@ -1,0 +1,104 @@
+"""The claim/lease mechanics that make concurrent multi-card execution safe — the
+part of the orchestrator that doesn't need a live LLM or Docker to verify."""
+
+from datetime import UTC, datetime, timedelta
+
+from built.domain.enums import Column, LifecycleState
+from built.orchestrator.worker import claim_next_card, release_claim, requeue_stale_claims
+from built.services import card_service, project_service
+
+
+async def _project(db_session, **overrides):
+    defaults = {
+        "name": f"claim-{overrides.pop('_n', 'x')}",
+        "overarching_goal": "goal",
+        "repo_remote_url": "https://example.invalid/repo.git",
+    }
+    defaults.update(overrides)
+    return await project_service.create_project(db_session, **defaults)
+
+
+async def test_claims_an_active_card_in_an_implemented_column(db_session):
+    project = await _project(db_session, _n="1")
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+
+    claimed = await claim_next_card(db_session, "worker-a")
+
+    assert claimed is not None
+    assert claimed.id == card.id
+    assert claimed.claimed_by_worker_id == "worker-a"
+    assert claimed.lease_expires_at is not None
+
+
+async def test_returns_none_when_nothing_is_claimable(db_session):
+    project = await _project(db_session, _n="2")
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    card.lifecycle_state = LifecycleState.BLOCKED
+    await db_session.commit()
+
+    assert await claim_next_card(db_session, "worker-a") is None
+
+
+async def test_does_not_claim_deployer_column_cards_yet(db_session):
+    project = await _project(db_session, _n="3")
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    card.column = Column.DEPLOYER
+    await db_session.commit()
+
+    assert await claim_next_card(db_session, "worker-a") is None
+
+
+async def test_does_not_claim_a_card_already_held_by_another_worker(db_session):
+    project = await _project(db_session, _n="4")
+    await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+
+    first = await claim_next_card(db_session, "worker-a")
+    assert first is not None
+
+    second = await claim_next_card(db_session, "worker-b")
+    assert second is None
+
+
+async def test_claims_a_card_with_an_expired_lease(db_session):
+    project = await _project(db_session, _n="5")
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    card.claimed_by_worker_id = "worker-dead"
+    card.claimed_at = datetime.now(UTC) - timedelta(hours=1)
+    card.lease_expires_at = datetime.now(UTC) - timedelta(minutes=1)
+    await db_session.commit()
+
+    claimed = await claim_next_card(db_session, "worker-b")
+
+    assert claimed is not None
+    assert claimed.claimed_by_worker_id == "worker-b"
+
+
+async def test_release_claim_clears_claim_fields(db_session):
+    project = await _project(db_session, _n="6")
+    await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    claimed = await claim_next_card(db_session, "worker-a")
+    assert claimed is not None
+
+    await release_claim(db_session, claimed)
+
+    assert claimed.claimed_by_worker_id is None
+    assert claimed.claimed_at is None
+    assert claimed.lease_expires_at is None
+
+
+async def test_requeue_stale_claims_frees_expired_but_not_fresh_claims(db_session):
+    project = await _project(db_session, _n="7")
+    stale = await card_service.create_card(db_session, project.id, title="stale", raw_request="r")
+    fresh = await card_service.create_card(db_session, project.id, title="fresh", raw_request="r")
+
+    stale.claimed_by_worker_id = "worker-dead"
+    stale.lease_expires_at = datetime.now(UTC) - timedelta(minutes=1)
+    fresh.claimed_by_worker_id = "worker-alive"
+    fresh.lease_expires_at = datetime.now(UTC) + timedelta(minutes=10)
+    await db_session.commit()
+
+    requeued_count = await requeue_stale_claims(db_session)
+
+    assert requeued_count == 1
+    assert stale.claimed_by_worker_id is None
+    assert fresh.claimed_by_worker_id == "worker-alive"

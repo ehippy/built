@@ -148,7 +148,10 @@ SUBMIT_FOR_TEST = {
         "description": (
             "Declare the implementation complete and ready for the Tester to verify against the "
             "acceptance criteria. This ends your turn — call it only once every acceptance criterion "
-            "is implemented and committed."
+            "is implemented and committed, AND you've run the project's test command via bash and "
+            "gotten exit code 0 yourself. This is checked server-side: it must be that exact "
+            "command, it must have just passed, and no file may have changed since — claiming "
+            "completion without a real passing run will be rejected."
         ),
         "parameters": {
             "type": "object",
@@ -257,9 +260,10 @@ APPROVE = {
     "function": {
         "name": "approve",
         "description": (
-            "Approve the implementation and advance the card to Deployer. You must have run the "
-            "test suite via bash and gotten exit code 0 first — this is checked server-side, so "
-            "claiming success without actually running it will be rejected."
+            "Approve the implementation and advance the card to Deployer. Your most recent bash "
+            "call must be exactly the project's configured test command, must have exited 0, and "
+            "no file may have changed since (write_file/edit_file/bash) — this is checked "
+            "server-side, so claiming success without a fresh, exact, passing run will be rejected."
         ),
         "parameters": {
             "type": "object",

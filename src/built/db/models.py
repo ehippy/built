@@ -41,6 +41,12 @@ class Project(Base):
     # e.g. "node:22-slim" for a JS/TS repo. NULL = sandbox.container.DEFAULT_IMAGE
     # (python:3.12-slim), which has no Node/Go/Rust/etc. toolchain.
     sandbox_image: Mapped[str | None] = mapped_column(default=None)
+    # The exact command that runs this project's whole test suite, e.g. "pytest -q" or
+    # "npm test". NULL blocks Developer's submit_for_test and Tester's approve outright
+    # (see domain/run_attempts.py) rather than falling back to a weaker check — without
+    # this, "some bash command exited 0" was the only gate, and it didn't verify the
+    # command run was actually the test suite.
+    test_command: Mapped[str | None] = mapped_column(Text, default=None)
 
     # Safety-valve caps — copied from service-level defaults at creation, overridable per project.
     max_revisions: Mapped[int] = mapped_column(Integer, default=3)
@@ -319,5 +325,9 @@ class RunAttempt(Base):
     stderr_ref: Mapped[str | None] = mapped_column(Text, default=None)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # The CardEvent.seq of this bash call's own tool_call event — lets
+    # has_passing_run_since_last_change() tell whether a file was touched (a later
+    # tool_call event with a commit_sha) after this run, without a timestamp join.
+    card_event_seq: Mapped[int | None] = mapped_column(Integer, default=None)
 
     column_visit: Mapped["CardColumnVisit"] = relationship(back_populates="run_attempts", lazy="raise")

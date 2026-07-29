@@ -16,13 +16,16 @@ from built.tools.dispatcher import ToolDispatcher
 from tests.unit.fakes import FakeCommandExecutor, RaisingLLMClient, ScriptedLLMClient
 
 
-async def _make_developer_card(db_session, toy_repo_remote, *, max_iterations_per_run: int = 25):
+async def _make_developer_card(
+    db_session, toy_repo_remote, *, max_iterations_per_run: int = 25, test_command: str | None = "pytest -q"
+):
     project = await project_service.create_project(
         db_session,
-        name=f"dev-loop-{max_iterations_per_run}",
+        name=f"dev-loop-{max_iterations_per_run}-{test_command}",
         overarching_goal="Add basic arithmetic helpers to app.py.",
         repo_remote_url=str(toy_repo_remote),
         max_iterations_per_run=max_iterations_per_run,
+        test_command=test_command,
     )
     card = await card_service.create_card(
         db_session, project.id, title="Add subtract()", raw_request="Add a subtract(a, b) function to app.py"
@@ -66,12 +69,11 @@ async def test_developer_loop_happy_path_reads_writes_runs_bash_and_submits(db_s
                 ],
                 endpoint_used="fake::model",
             ),
-            # Turn 4: sanity-checks it via bash.
+            # Turn 4: runs the project's test command — required before submit_for_test
+            # will be accepted.
             LLMResult(
                 content=None,
-                tool_calls=[
-                    ToolCallRequest(id="call_3", name="bash", arguments={"command": "python app.py"})
-                ],
+                tool_calls=[ToolCallRequest(id="call_3", name="bash", arguments={"command": "pytest -q"})],
                 endpoint_used="fake::model",
             ),
             # Turn 5: done.
@@ -111,13 +113,145 @@ async def test_developer_loop_happy_path_reads_writes_runs_bash_and_submits(db_s
     assert "write_file: app.py" in log
 
     # The bash call went through the (fake) executor.
-    assert executor.calls == ["python app.py"]
+    assert executor.calls == ["pytest -q"]
 
     events = await card_service.list_events(db_session, card.id)
     tool_call_events = [e for e in events if e.type.value == "tool_call"]
     assert [e.payload["name"] for e in tool_call_events] == ["read_file", "write_file", "bash"]
     assert tool_call_events[1].payload["commit_sha"] is not None  # write_file committed
     assert tool_call_events[2].payload["commit_sha"] is None  # bash changed nothing on disk
+
+
+async def test_developer_submit_for_test_is_rejected_without_a_passing_run_then_succeeds(
+    db_session, toy_repo_remote
+):
+    """Developer used to have no server-side gate at all — submit_for_test just
+    trusted the model's word. This is the regression test for that: claiming done
+    with no test run must be rejected, exactly like Tester's approve already was."""
+    project, card, wt_path = await _make_developer_card(db_session, toy_repo_remote)
+    visit = await transitions.start_visit(db_session, card)
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(id="call_1", name="submit_for_test", arguments={"summary": "done"})
+                ],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[ToolCallRequest(id="call_2", name="bash", arguments={"command": "pytest -q"})],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(id="call_3", name="submit_for_test", arguments={"summary": "done"})
+                ],
+                endpoint_used="fake::model",
+            ),
+        ]
+    )
+    executor = FakeCommandExecutor(CommandResult(exit_code=0, stdout="1 passed", stderr=""))
+    dispatcher = ToolDispatcher(ctx=ToolContext(card_id=card.id, worktree_root=wt_path), executor=executor)
+
+    result = await run_developer_visit(
+        db_session, project, card, visit, llm_client=llm, dispatcher=dispatcher, max_iterations=10
+    )
+
+    assert result.column == Column.TESTER
+    assert visit.outcome == VisitOutcome.SUBMITTED
+    assert llm.calls[2] is not None  # the loop kept going past the rejected first attempt
+
+
+async def test_developer_submit_for_test_is_rejected_when_the_run_doesnt_match_the_configured_command(
+    db_session, toy_repo_remote
+):
+    """A passing run of the WRONG command must not satisfy the gate — otherwise
+    "run something that happens to exit 0" is just as gameable as no check at all."""
+    project, card, wt_path = await _make_developer_card(db_session, toy_repo_remote)
+    visit = await transitions.start_visit(db_session, card)
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[ToolCallRequest(id="call_1", name="bash", arguments={"command": "echo ok"})],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(id="call_2", name="submit_for_test", arguments={"summary": "done"})
+                ],
+                endpoint_used="fake::model",
+            ),
+        ]
+    )
+    executor = FakeCommandExecutor(CommandResult(exit_code=0, stdout="ok", stderr=""))
+    dispatcher = ToolDispatcher(ctx=ToolContext(card_id=card.id, worktree_root=wt_path), executor=executor)
+
+    result = await run_developer_visit(
+        db_session, project, card, visit, llm_client=llm, dispatcher=dispatcher, max_iterations=2
+    )
+
+    assert result.column == Column.DEVELOPER  # never advanced
+    assert result.lifecycle_state == LifecycleState.BLOCKED
+
+
+async def test_developer_submit_for_test_is_rejected_after_an_edit_since_the_passing_run(
+    db_session, toy_repo_remote
+):
+    """A green run followed by an unverified edit must not still read as tested —
+    RunAttempt rows only exist for bash calls, so this has to be checked against the
+    full event stream (see has_passing_run_since_last_change), not just the latest
+    RunAttempt row."""
+    project, card, wt_path = await _make_developer_card(db_session, toy_repo_remote)
+    visit = await transitions.start_visit(db_session, card)
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[ToolCallRequest(id="call_1", name="bash", arguments={"command": "pytest -q"})],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_2",
+                        name="write_file",
+                        arguments={
+                            "path": "app.py",
+                            "content": (
+                                "def greet():\n    return 'hi'\n\n\ndef subtract(a, b):\n    return a - b\n"
+                            ),
+                        },
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(id="call_3", name="submit_for_test", arguments={"summary": "done"})
+                ],
+                endpoint_used="fake::model",
+            ),
+        ]
+    )
+    executor = FakeCommandExecutor(CommandResult(exit_code=0, stdout="1 passed", stderr=""))
+    dispatcher = ToolDispatcher(ctx=ToolContext(card_id=card.id, worktree_root=wt_path), executor=executor)
+
+    result = await run_developer_visit(
+        db_session, project, card, visit, llm_client=llm, dispatcher=dispatcher, max_iterations=3
+    )
+
+    assert result.column == Column.DEVELOPER  # never advanced
+    assert result.lifecycle_state == LifecycleState.BLOCKED
 
 
 async def test_developer_loop_exceeds_iteration_cap_blocks_the_card(db_session, toy_repo_remote):

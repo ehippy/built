@@ -79,7 +79,7 @@ TerminalHandler = Callable[
     [AsyncSession, Card, CardColumnVisit, ToolCallRequest, str], Awaitable[TerminalHandlerResult]
 ]
 OnToolResult = Callable[
-    [AsyncSession, Card, CardColumnVisit, ToolCallRequest, DispatchOutcome], Awaitable[None]
+    [AsyncSession, Card, CardColumnVisit, ToolCallRequest, DispatchOutcome, int], Awaitable[None]
 ]
 
 
@@ -165,7 +165,7 @@ async def run_column_visit(
                     terminal_call = tool_call
                     continue  # handled once all non-terminal calls in this turn ran
                 outcome = await dispatcher.dispatch(tool_call.name, tool_call.arguments)
-                await append_event(
+                event = await append_event(
                     session,
                     card_id=card.id,
                     column_visit_id=visit.id,
@@ -179,7 +179,7 @@ async def run_column_visit(
                     },
                 )
                 if on_tool_result is not None:
-                    await on_tool_result(session, card, visit, tool_call, outcome)
+                    await on_tool_result(session, card, visit, tool_call, outcome, event.seq)
                 await session.commit()
                 messages.append(
                     {"role": "tool", "tool_call_id": tool_call.id, "content": outcome.result.output}
@@ -235,9 +235,34 @@ async def _pm_submit_spec_handler(
     return TerminalHandlerResult(handled=True)
 
 
+async def _require_passing_test_run(
+    session: AsyncSession, card: Card, visit: CardColumnVisit, *, verb: str
+) -> str | None:
+    """Shared gate for Developer's submit_for_test and Tester's approve. Returns
+    feedback to send back to the model if the handoff isn't earned yet, or None if
+    it's clear to proceed."""
+    project = await session.get(Project, card.project_id)
+    if not project.test_command:
+        return (
+            "This project has no test command configured, so there's no way to verify work "
+            f"server-side — {verb} is blocked until an operator sets one in project settings."
+        )
+    if not await run_attempts.has_passing_run_since_last_change(session, visit.id, project.test_command):
+        return (
+            f"No passing run of the project's test command is recorded since your last change. "
+            f"Run exactly `{project.test_command}` via bash, confirm exit code 0, and don't touch "
+            f"any file afterward (write_file/edit_file/bash) before calling {verb} — this is "
+            "checked server-side against your most recent matching run."
+        )
+    return None
+
+
 async def _developer_submit_for_test_handler(
     session: AsyncSession, card: Card, visit: CardColumnVisit, tool_call: ToolCallRequest, endpoint_used: str
 ) -> TerminalHandlerResult:
+    feedback = await _require_passing_test_run(session, card, visit, verb="submit_for_test")
+    if feedback is not None:
+        return TerminalHandlerResult(handled=False, feedback=feedback)
     await transitions.complete_developer_visit(
         session, card, visit, summary=str(tool_call.arguments.get("summary", "")), endpoint_used=endpoint_used
     )
@@ -247,12 +272,9 @@ async def _developer_submit_for_test_handler(
 async def _tester_approve_handler(
     session: AsyncSession, card: Card, visit: CardColumnVisit, tool_call: ToolCallRequest, endpoint_used: str
 ) -> TerminalHandlerResult:
-    if not await run_attempts.latest_run_attempt_succeeded(session, visit.id):
-        return TerminalHandlerResult(
-            handled=False,
-            feedback="No successful bash run is recorded for this visit yet. Run the test suite "
-            "via bash and get exit code 0 before calling approve — this is checked server-side.",
-        )
+    feedback = await _require_passing_test_run(session, card, visit, verb="approve")
+    if feedback is not None:
+        return TerminalHandlerResult(handled=False, feedback=feedback)
     await transitions.complete_tester_visit_approved(
         session, card, visit, summary=str(tool_call.arguments.get("notes", "")), endpoint_used=endpoint_used
     )
@@ -305,6 +327,7 @@ async def _record_bash_run_attempt(
     visit: CardColumnVisit,
     tool_call: ToolCallRequest,
     outcome: DispatchOutcome,
+    event_seq: int,
 ) -> None:
     if tool_call.name == "bash" and outcome.command_result is not None:
         await run_attempts.record_run_attempt(
@@ -315,6 +338,7 @@ async def _record_bash_run_attempt(
             exit_code=outcome.command_result.exit_code,
             stdout=outcome.command_result.stdout,
             stderr=outcome.command_result.stderr,
+            card_event_seq=event_seq,
         )
 
 
@@ -382,6 +406,7 @@ async def run_developer_visit(
         tools=DEVELOPER_TOOLS,
         terminal_handlers={DEVELOPER_TERMINAL_TOOL: _developer_submit_for_test_handler},
         context_window_config=context_window_config,
+        on_tool_result=_record_bash_run_attempt,
     )
 
 

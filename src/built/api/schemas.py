@@ -11,6 +11,7 @@ class ProjectCreate(BaseModel):
     repo_remote_url: str
     default_branch: str = "main"
     sandbox_image: str | None = None
+    test_command: str | None = None
     max_revisions: int | None = None
     max_deploy_attempts: int | None = None
     max_iterations_per_run: int | None = None
@@ -22,6 +23,7 @@ class ProjectUpdate(BaseModel):
     overarching_goal: str | None = None
     default_branch: str | None = None
     sandbox_image: str | None = None
+    test_command: str | None = None
     max_revisions: int | None = None
     max_deploy_attempts: int | None = None
     max_iterations_per_run: int | None = None
@@ -55,6 +57,7 @@ class ProjectOut(BaseModel):
     repo_remote_url: str
     default_branch: str
     sandbox_image: str | None
+    test_command: str | None
     max_revisions: int
     max_deploy_attempts: int
     max_iterations_per_run: int

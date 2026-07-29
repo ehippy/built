@@ -90,12 +90,27 @@ def build_developer_prompt(
     agents_doc: str | None = None,
 ) -> tuple[str, str]:
     """Returns (system_prompt, initial_user_message)."""
+    if project.test_command:
+        test_gate = (
+            f"Before calling submit_for_test, run `{project.test_command}` yourself via bash and "
+            "confirm it exits 0 — don't hand off implementation you haven't actually verified. This "
+            "is checked server-side against your most recent bash run: it must be that exact "
+            "command, it must have passed, and you must not write_file/edit_file/bash anything "
+            "afterward without rerunning it, or submit_for_test will be rejected.\n\n"
+        )
+    else:
+        test_gate = (
+            "This project has no test command configured yet, so submit_for_test will be rejected "
+            "server-side no matter what you do — that's a configuration gap for a human to fix, not "
+            "something you can work around.\n\n"
+        )
     system = (
         "You are the Developer agent in an autonomous software factory. You implement "
         "a card's spec against a git worktree already checked out on the card's branch. "
         "Every path you pass to a tool must be relative to the repo root — paths that "
         "escape the repo are rejected.\n\n"
         f"Project goal: {project.overarching_goal}\n\n"
+        f"{test_gate}"
         "When every acceptance criterion is fully implemented and committed, call "
         "submit_for_test with a short summary. Until then, keep working — nobody is "
         "watching this run interactively, so do not stop to ask a question or wait "
@@ -217,17 +232,33 @@ def build_tester_prompt(
     agents_doc: str | None = None,
 ) -> tuple[str, str]:
     """Returns (system_prompt, initial_user_message)."""
+    if project.test_command:
+        test_gate = (
+            f"This project's test suite runs with exactly `{project.test_command}` — run it via "
+            "bash and read the real exit code, don't assume one. For every acceptance criterion "
+            "the suite doesn't already cover, add a real test for it to the project's standing "
+            "test suite (in whatever test directory/framework the repo already uses) — not a "
+            "one-off script you run once and throw away. A test that isn't wired into that command "
+            "won't protect this project on the next card, which defeats the point of adding it.\n\n"
+            "Call approve only once that exact command has just been run and passed. This is "
+            "checked server-side against your most recent bash run: it must be that specific "
+            "command, it must have exited 0, and you must not write_file/edit_file/bash anything "
+            "afterward without rerunning it — a green run followed by an unverified tweak doesn't "
+            "count as tested. If something is wrong, call request_changes with specific, "
+            "actionable feedback for the Developer.\n\n"
+        )
+    else:
+        test_gate = (
+            "This project has no test command configured yet, so approve will be rejected "
+            "server-side no matter what you do — that's a configuration gap for a human to fix. "
+            "Use request_changes if you find real problems in the meantime.\n\n"
+        )
     system = (
         "You are the Tester agent in an autonomous software factory. Verify the "
-        "Developer's implementation against the acceptance criteria by actually running "
-        "the test suite (or another appropriate check) via bash — you must see a real "
-        "exit code, not assume one. Add tests if the existing suite doesn't cover an "
-        "acceptance criterion.\n\n"
+        "Developer's implementation against the acceptance criteria.\n\n"
+        f"{test_gate}"
         f"Project goal: {project.overarching_goal}\n\n"
-        "If everything passes, call approve — this is checked server-side against your "
-        "most recent bash run and will be rejected if you haven't actually run and passed "
-        "the checks. If something is wrong, call request_changes with specific, actionable "
-        "feedback for the Developer. Nobody is watching this run interactively."
+        "Nobody is watching this run interactively."
     )
     criteria = "\n".join(f"- {c}" for c in card.acceptance_criteria) or "(none specified)"
     user = (

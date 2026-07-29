@@ -59,6 +59,15 @@
         Leave blank to use the default.
       </div>
     </div>
+    <div class="field">
+      <label for="test_command">Test command</label>
+      <input type="text" id="test_command" name="test_command" value="{{ project.test_command or '' }}" placeholder="pytest -q, npm test, ...">
+      <div class="hint">
+        The exact command that runs this project's whole test suite. Developer's submit_for_test and
+        Tester's approve are both blocked server-side until this is set, and until each has a real,
+        just-passed run of exactly this command with nothing changed since.
+      </div>
+    </div>
     <div class="field-row">
       <div class="field">
         <label for="max_revisions">Max revisions</label>

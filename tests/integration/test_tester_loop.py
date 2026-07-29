@@ -13,12 +13,13 @@ from built.tools.dispatcher import ToolDispatcher
 from tests.unit.fakes import FakeCommandExecutor, ScriptedLLMClient
 
 
-async def _make_tester_card(db_session, toy_repo_remote):
+async def _make_tester_card(db_session, toy_repo_remote, *, test_command: str | None = "pytest -q"):
     project = await project_service.create_project(
         db_session,
-        name="tester-loop",
+        name=f"tester-loop-{test_command}",
         overarching_goal="Add basic arithmetic helpers to app.py.",
         repo_remote_url=str(toy_repo_remote),
+        test_command=test_command,
     )
     card = await card_service.create_card(
         db_session, project.id, title="Add subtract()", raw_request="Add a subtract(a, b) function to app.py"
@@ -111,6 +112,116 @@ async def test_tester_approve_stays_rejected_if_the_run_failed(db_session, toy_r
     assert result.column == Column.TESTER
     assert result.lifecycle_state == LifecycleState.BLOCKED
     assert visit.outcome == VisitOutcome.ERROR
+
+
+async def test_tester_approve_is_rejected_when_the_run_doesnt_match_the_configured_command(
+    db_session, toy_repo_remote
+):
+    """The original loophole this whole gate exists to close: running the real
+    suite, seeing it fail (or never running it at all), then running something
+    trivial that exits 0, must not be enough to approve."""
+    project, card, wt_path = await _make_tester_card(db_session, toy_repo_remote)
+    visit = await transitions.start_visit(db_session, card)
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[ToolCallRequest(id="call_1", name="bash", arguments={"command": "echo ok"})],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[ToolCallRequest(id="call_2", name="approve", arguments={"notes": "ship it"})],
+                endpoint_used="fake::model",
+            ),
+        ]
+    )
+    executor = FakeCommandExecutor(CommandResult(exit_code=0, stdout="ok", stderr=""))
+    dispatcher = ToolDispatcher(ctx=ToolContext(card_id=card.id, worktree_root=wt_path), executor=executor)
+
+    result = await run_tester_visit(
+        db_session, project, card, visit, llm_client=llm, dispatcher=dispatcher, max_iterations=2
+    )
+
+    assert result.column == Column.TESTER  # never advanced
+    assert result.lifecycle_state == LifecycleState.BLOCKED
+
+
+async def test_tester_approve_is_rejected_after_an_edit_since_the_passing_run(db_session, toy_repo_remote):
+    """Tester's job now includes actively strengthening the test suite, which means
+    editing test files mid-visit — a green run followed by an unverified edit must
+    not still count as tested."""
+    project, card, wt_path = await _make_tester_card(db_session, toy_repo_remote)
+    visit = await transitions.start_visit(db_session, card)
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[ToolCallRequest(id="call_1", name="bash", arguments={"command": "pytest -q"})],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_2",
+                        name="write_file",
+                        arguments={"path": "tests/test_subtract.py", "content": "def test_x(): pass\n"},
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[ToolCallRequest(id="call_3", name="approve", arguments={"notes": "ship it"})],
+                endpoint_used="fake::model",
+            ),
+        ]
+    )
+    executor = FakeCommandExecutor(CommandResult(exit_code=0, stdout="1 passed", stderr=""))
+    dispatcher = ToolDispatcher(ctx=ToolContext(card_id=card.id, worktree_root=wt_path), executor=executor)
+
+    result = await run_tester_visit(
+        db_session, project, card, visit, llm_client=llm, dispatcher=dispatcher, max_iterations=3
+    )
+
+    assert result.column == Column.TESTER  # never advanced
+    assert result.lifecycle_state == LifecycleState.BLOCKED
+
+
+async def test_tester_approve_is_rejected_outright_when_no_test_command_is_configured(
+    db_session, toy_repo_remote
+):
+    """No silent weak fallback: an unconfigured project blocks approve entirely
+    rather than accepting "any command exited 0", which was the old, gameable gate."""
+    project, card, wt_path = await _make_tester_card(db_session, toy_repo_remote, test_command=None)
+    visit = await transitions.start_visit(db_session, card)
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[ToolCallRequest(id="call_1", name="bash", arguments={"command": "pytest -q"})],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[ToolCallRequest(id="call_2", name="approve", arguments={"notes": "ship it"})],
+                endpoint_used="fake::model",
+            ),
+        ]
+    )
+    executor = FakeCommandExecutor(CommandResult(exit_code=0, stdout="1 passed", stderr=""))
+    dispatcher = ToolDispatcher(ctx=ToolContext(card_id=card.id, worktree_root=wt_path), executor=executor)
+
+    result = await run_tester_visit(
+        db_session, project, card, visit, llm_client=llm, dispatcher=dispatcher, max_iterations=2
+    )
+
+    assert result.column == Column.TESTER  # never advanced
+    assert result.lifecycle_state == LifecycleState.BLOCKED
 
 
 async def test_tester_request_changes_bounces_back_to_developer(db_session, toy_repo_remote):

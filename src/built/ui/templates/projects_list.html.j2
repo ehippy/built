@@ -32,6 +32,14 @@
           <label for="sandbox_image">Sandbox image (optional)</label>
           <input type="text" id="sandbox_image" name="sandbox_image" placeholder="python:3.12-slim (default) — try node:22-slim for JS/TS">
         </div>
+        <div class="field">
+          <label for="test_command">Test command</label>
+          <input type="text" id="test_command" name="test_command" placeholder="pytest -q, npm test, ...">
+          <div class="hint">
+            Run by Developer and Tester before they can hand off work — without this, submit_for_test
+            and approve are blocked outright. Can also be set later from project settings.
+          </div>
+        </div>
         <div class="field-row">
           <div class="field">
             <label for="max_revisions">Max revisions</label>

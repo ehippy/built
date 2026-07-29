@@ -429,3 +429,46 @@ DONE_FOR_NOW = {
 REVIVER_TOOLS = [LIST_STUCK_CARDS, READ_CARD_HISTORY, REVIVE_CARD, LEAVE_BLOCKED, DONE_FOR_NOW]
 REVIVER_TERMINAL_TOOL = "done_for_now"
 REVIVER_ACTION_TOOLS = ("revive_card", "leave_blocked")
+
+LIST_RECENT_VISIT_OUTCOMES = {
+    "type": "function",
+    "function": {
+        "name": "list_recent_visit_outcomes",
+        "description": (
+            "List this project's recently closed column visits — card title, column, outcome, and "
+            "summary — since your last pass (or the last 30 if this is your first). Your raw material "
+            "for deciding whether a real, recurring pattern is worth documenting."
+        ),
+        "parameters": {"type": "object", "properties": {}},
+    },
+}
+
+TENDER_DONE_FOR_NOW = {
+    "type": "function",
+    "function": {
+        "name": "done_for_now",
+        "description": (
+            "Call this once you've decided what (if anything) to write, and made any edit. Ends your "
+            "turn — fine to call immediately if recent activity had nothing new worth recording."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {"summary": {"type": "string", "description": "Brief summary of what you did."}},
+            "required": ["summary"],
+        },
+    },
+}
+
+# Reuses the general-purpose file tools already built for Developer — AGENTS.md is
+# just a file in the repo, no bespoke read/write tools needed for it.
+TENDER_TOOLS = [
+    READ_FILE,
+    LIST_FILES,
+    GLOB_FILES,
+    GREP_FILES,
+    WRITE_FILE,
+    EDIT_FILE,
+    LIST_RECENT_VISIT_OUTCOMES,
+    TENDER_DONE_FOR_NOW,
+]
+TENDER_TERMINAL_TOOL = "done_for_now"

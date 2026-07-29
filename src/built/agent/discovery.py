@@ -30,13 +30,14 @@ async def run_pm_discovery(
     dispatcher: ToolDispatcher,
     max_iterations: int,
     context_window_config: ContextWindowConfig | None = None,
+    agents_doc: str | None = None,
 ) -> list[Card]:
     """Runs one discovery pass and returns whatever new cards it created — possibly
     none, if the model never called propose_tasks within the iteration budget or an
     endpoint/tool failure ended the run early. Never raises for ordinary failures,
     mirroring run_column_visit's never-crash-the-worker contract."""
     existing_titles = await card_service.list_recent_card_titles(session, project.id)
-    system, user = build_discovery_prompt(project, existing_titles)
+    system, user = build_discovery_prompt(project, existing_titles, agents_doc=agents_doc)
     messages: list[dict] = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},

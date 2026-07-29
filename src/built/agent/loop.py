@@ -333,8 +333,11 @@ async def run_pm_visit(
     context_window_config: ContextWindowConfig | None = None,
     retry_recap: str | None = None,
     retry_note: str | None = None,
+    agents_doc: str | None = None,
 ) -> Card:
-    system, user = build_pm_prompt(project, card, retry_recap=retry_recap, retry_note=retry_note)
+    system, user = build_pm_prompt(
+        project, card, retry_recap=retry_recap, retry_note=retry_note, agents_doc=agents_doc
+    )
     return await run_column_visit(
         session,
         card,
@@ -362,8 +365,11 @@ async def run_developer_visit(
     context_window_config: ContextWindowConfig | None = None,
     retry_recap: str | None = None,
     retry_note: str | None = None,
+    agents_doc: str | None = None,
 ) -> Card:
-    system, user = build_developer_prompt(project, card, retry_recap=retry_recap, retry_note=retry_note)
+    system, user = build_developer_prompt(
+        project, card, retry_recap=retry_recap, retry_note=retry_note, agents_doc=agents_doc
+    )
     return await run_column_visit(
         session,
         card,
@@ -392,6 +398,7 @@ async def run_tester_visit(
     developer_summary: str | None = None,
     retry_recap: str | None = None,
     retry_note: str | None = None,
+    agents_doc: str | None = None,
 ) -> Card:
     system, user = build_tester_prompt(
         project,
@@ -399,6 +406,7 @@ async def run_tester_visit(
         developer_summary=developer_summary,
         retry_recap=retry_recap,
         retry_note=retry_note,
+        agents_doc=agents_doc,
     )
     return await run_column_visit(
         session,
@@ -432,9 +440,10 @@ async def run_deployer_visit(
     mode: DeployMode,
     retry_recap: str | None = None,
     retry_note: str | None = None,
+    agents_doc: str | None = None,
 ) -> Card:
     system, user = build_deployer_prompt(
-        project, card, mode=mode, retry_recap=retry_recap, retry_note=retry_note
+        project, card, mode=mode, retry_recap=retry_recap, retry_note=retry_note, agents_doc=agents_doc
     )
     if mode == DeployMode.AUTO_MAIN:
         terminal_handlers = {DEPLOYER_AUTO_MAIN_TERMINAL_TOOL: _deployer_run_deploy_handler}

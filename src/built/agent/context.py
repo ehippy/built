@@ -6,7 +6,18 @@ from built.domain.enums import DeployMode
 from built.llm.tool_schemas import MAX_PROPOSED_TASKS
 
 
-def build_discovery_prompt(project: Project, existing_titles: list[str]) -> tuple[str, str]:
+def _with_agents_doc(system: str, agents_doc: str | None) -> str:
+    """Appends the project's AGENTS.md (maintained by agent/tender.py) to a system
+    prompt, if one exists — project-specific practices and conventions every column
+    should know about before doing its own work."""
+    if not agents_doc:
+        return system
+    return f"{system}\n\nProject practices (from this repo's AGENTS.md):\n{agents_doc}"
+
+
+def build_discovery_prompt(
+    project: Project, existing_titles: list[str], *, agents_doc: str | None = None
+) -> tuple[str, str]:
     """Returns (system_prompt, initial_user_message). Not tied to any card — PM
     exploring the repo on its own initiative and proposing new work, rather than
     refining a request a human already wrote."""
@@ -25,11 +36,17 @@ def build_discovery_prompt(project: Project, existing_titles: list[str]) -> tupl
     )
     existing = "\n".join(f"- {t}" for t in existing_titles) or "(none yet)"
     user = f"Existing/recent card titles in this project — don't propose duplicates of these:\n{existing}"
+    system = _with_agents_doc(system, agents_doc)
     return system, user
 
 
 def build_developer_prompt(
-    project: Project, card: Card, *, retry_recap: str | None = None, retry_note: str | None = None
+    project: Project,
+    card: Card,
+    *,
+    retry_recap: str | None = None,
+    retry_note: str | None = None,
+    agents_doc: str | None = None,
 ) -> tuple[str, str]:
     """Returns (system_prompt, initial_user_message)."""
     system = (
@@ -60,11 +77,17 @@ def build_developer_prompt(
         user += f"\n\nContext from your previous attempt at this column:\n{retry_recap}"
     if retry_note:
         user += f"\n\nA human left this instruction for this attempt:\n{retry_note}"
+    system = _with_agents_doc(system, agents_doc)
     return system, user
 
 
 def build_pm_prompt(
-    project: Project, card: Card, *, retry_recap: str | None = None, retry_note: str | None = None
+    project: Project,
+    card: Card,
+    *,
+    retry_recap: str | None = None,
+    retry_note: str | None = None,
+    agents_doc: str | None = None,
 ) -> tuple[str, str]:
     """Returns (system_prompt, initial_user_message). PM has read-only repo tools and
     is expected to use them to explore before writing a spec, rather than being handed
@@ -85,6 +108,7 @@ def build_pm_prompt(
         user += f"\n\nContext from your previous attempt at this column:\n{retry_recap}"
     if retry_note:
         user += f"\n\nA human left this instruction for this attempt:\n{retry_note}"
+    system = _with_agents_doc(system, agents_doc)
     return system, user
 
 
@@ -95,6 +119,7 @@ def build_deployer_prompt(
     mode: DeployMode,
     retry_recap: str | None = None,
     retry_note: str | None = None,
+    agents_doc: str | None = None,
 ) -> tuple[str, str]:
     """Returns (system_prompt, initial_user_message)."""
     if mode == DeployMode.AUTO_MAIN:
@@ -121,6 +146,7 @@ def build_deployer_prompt(
         user += f"\n\nContext from your previous attempt at this column:\n{retry_recap}"
     if retry_note:
         user += f"\n\nA human left this instruction for this attempt:\n{retry_note}"
+    system = _with_agents_doc(system, agents_doc)
     return system, user
 
 
@@ -131,6 +157,7 @@ def build_tester_prompt(
     developer_summary: str | None,
     retry_recap: str | None = None,
     retry_note: str | None = None,
+    agents_doc: str | None = None,
 ) -> tuple[str, str]:
     """Returns (system_prompt, initial_user_message)."""
     system = (
@@ -156,4 +183,5 @@ def build_tester_prompt(
         user += f"\n\nContext from your previous attempt at this column:\n{retry_recap}"
     if retry_note:
         user += f"\n\nA human left this instruction for this attempt:\n{retry_note}"
+    system = _with_agents_doc(system, agents_doc)
     return system, user

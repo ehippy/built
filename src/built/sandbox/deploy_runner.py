@@ -18,7 +18,7 @@ import httpx
 
 from built.db.models import Card, DeployConfig, Project
 from built.domain.enums import DeployKind
-from built.sandbox.worktree import bare_repo_path, ensure_default_branch_worktree
+from built.sandbox.worktree import bare_repo_path, ensure_tool_worktree
 from built.tools.git_tools import GitCommandError, run_git
 
 GITHUB_API_BASE = "https://api.github.com"
@@ -35,7 +35,7 @@ async def run_auto_main_deploy(project: Project, card: Card) -> DeployRunResult:
     """Merge the card's branch into default_branch, push, then run the configured
     deploy command. A merge conflict is a clean failure with git's own output as the
     message — no automated resolution."""
-    wt_path = await ensure_default_branch_worktree(project)
+    wt_path = await ensure_tool_worktree(project, tool="deployer")
 
     try:
         await run_git(

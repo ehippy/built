@@ -81,6 +81,36 @@ async def list_stuck_cards(session: AsyncSession, *, limit: int = 50) -> list[Ca
     return list((await session.scalars(stmt)).all())
 
 
+async def list_recent_visit_outcomes(
+    session: AsyncSession, project_id: str, *, since=None, limit: int = 30
+) -> list[dict]:
+    """Closed visits (ended_at IS NOT NULL) for a project, newest first — the
+    Tender's (agent/tender.py) raw material for deciding whether anything from
+    recent activity is worth capturing as a durable practice. Optionally scoped to
+    only what closed since a given timestamp, so a pass with nothing new to look at
+    can be skipped entirely."""
+    stmt = (
+        select(CardColumnVisit, Card.title)
+        .join(Card, Card.id == CardColumnVisit.card_id)
+        .where(Card.project_id == project_id, CardColumnVisit.ended_at.is_not(None))
+        .order_by(CardColumnVisit.ended_at.desc())
+        .limit(limit)
+    )
+    if since is not None:
+        stmt = stmt.where(CardColumnVisit.ended_at > since)
+    rows = (await session.execute(stmt)).all()
+    return [
+        {
+            "card_title": title,
+            "column": visit.column.value,
+            "outcome": visit.outcome.value if visit.outcome else "unknown",
+            "summary": visit.summary or "",
+            "ended_at": visit.ended_at,
+        }
+        for visit, title in rows
+    ]
+
+
 async def list_column_visits(session: AsyncSession, card_id: str) -> list[CardColumnVisit]:
     await get_card(session, card_id)
     stmt = (

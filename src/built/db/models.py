@@ -48,6 +48,10 @@ class Project(Base):
     # Context window size in tokens. Falls back to settings.default_max_tokens (128k)
     # if NULL — useful for smaller models that need a tighter budget.
     max_tokens: Mapped[int | None] = mapped_column(Integer, default=None)
+    # When the Tender (agent/tender.py) last reviewed this project's activity — used
+    # to skip a pass when nothing has closed since, rather than re-reviewing the same
+    # history on every wake.
+    agents_doc_tended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     # Python-side defaults (not server_default=func.now()): a server-computed default
     # is only known to SQLAlchemy after a post-flush refresh, which is itself a lazy

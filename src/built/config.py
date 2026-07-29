@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     reviver_max_auto_revives: int = 3
     reviver_max_iterations: int = 20
 
+    # The Tender (agent/tender.py): an autonomous background pass, one per project,
+    # that keeps AGENTS.md in that project's own repo useful — every other column
+    # reads it as part of its own context. Wakes on its own on a timer.
+    tender_enabled: bool = True
+    tender_poll_interval_seconds: float = 1800
+    tender_max_iterations: int = 15
+
 
 def get_settings() -> Settings:
     return Settings()

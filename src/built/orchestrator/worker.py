@@ -26,7 +26,11 @@ from built.domain import transitions
 from built.domain.enums import Column, LifecycleState
 from built.llm.client import FallbackLLMClient
 from built.sandbox.container import DockerCommandExecutor
-from built.sandbox.worktree import create_card_worktree, ensure_default_branch_worktree
+from built.sandbox.worktree import (
+    create_card_worktree,
+    ensure_tool_worktree,
+    read_default_branch_file,
+)
 from built.services import card_service, endpoint_service
 from built.tools.base import ToolContext
 from built.tools.dispatcher import ToolDispatcher
@@ -178,6 +182,12 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
         card.retry_note = None
         await session.commit()
 
+    # AGENTS.md (maintained by the Tender — agent/tender.py) is read straight from the
+    # tip of default_branch, not the card's own long-lived worktree — the card's
+    # branch diverged from default_branch at creation time and won't pick up later
+    # doc commits on its own.
+    agents_doc = await read_default_branch_file(project, "AGENTS.md")
+
     max_iterations = project.max_iterations_per_run
     if card.column == Column.PM:
         await run_pm_visit(
@@ -191,6 +201,7 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
             context_window_config=context_window_config,
             retry_recap=retry_recap,
             retry_note=retry_note,
+            agents_doc=agents_doc,
         )
     elif card.column == Column.DEVELOPER:
         await run_developer_visit(
@@ -204,6 +215,7 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
             context_window_config=context_window_config,
             retry_recap=retry_recap,
             retry_note=retry_note,
+            agents_doc=agents_doc,
         )
     elif card.column == Column.TESTER:
         developer_summary = await card_service.get_latest_visit_summary(session, card.id, Column.DEVELOPER)
@@ -219,6 +231,7 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
             developer_summary=developer_summary,
             retry_recap=retry_recap,
             retry_note=retry_note,
+            agents_doc=agents_doc,
         )
     elif card.column == Column.DEPLOYER:
         await run_deployer_visit(
@@ -233,6 +246,7 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
             mode=project.deploy_config.mode,
             retry_recap=retry_recap,
             retry_note=retry_note,
+            agents_doc=agents_doc,
         )
     else:  # pragma: no cover — guarded by IMPLEMENTED_COLUMNS in claim_next_card
         raise AssertionError(f"unimplemented column: {card.column}")
@@ -279,7 +293,9 @@ async def run_project_discovery(project_id: str) -> None:
                     session, project_id=project.id, role=Column.PM
                 )
                 llm_client = FallbackLLMClient(chain)
-                wt_path = await ensure_default_branch_worktree(project)
+                # Own dedicated worktree + branch, not Deployer's — git refuses to
+                # check out the same branch in two worktrees at once.
+                wt_path = await ensure_tool_worktree(project, tool="discovery")
             except Exception:
                 logger.exception("discovery setup failed for project %s", project_id)
                 return
@@ -297,12 +313,15 @@ async def run_project_discovery(project_id: str) -> None:
             else:
                 max_tokens = builtin_settings.default_max_tokens
 
+            agents_doc = await read_default_branch_file(project, "AGENTS.md")
+
             created = await run_pm_discovery(
                 session,
                 project,
                 llm_client=llm_client,
                 dispatcher=dispatcher,
                 max_iterations=project.max_iterations_per_run,
+                agents_doc=agents_doc,
                 context_window_config=ContextWindowConfig(
                     max_tokens=max_tokens,
                     keep_messages=builtin_settings.default_keep_messages,

@@ -21,7 +21,7 @@ async def _make_discovery_project(db_session, toy_repo_remote):
         overarching_goal="Add basic arithmetic helpers to app.py.",
         repo_remote_url=str(toy_repo_remote),
     )
-    wt_path = await worktree.ensure_default_branch_worktree(project)
+    wt_path = await worktree.ensure_tool_worktree(project, tool="discovery")
     return project, wt_path
 
 

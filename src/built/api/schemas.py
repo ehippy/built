@@ -62,6 +62,7 @@ class ProjectOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     archived_at: datetime | None
+    paused_at: datetime | None
     deploy_config: DeployConfigOut | None = None
 
 

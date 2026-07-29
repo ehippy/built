@@ -8,7 +8,7 @@ import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import case, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from built.agent.context_window import ContextWindowConfig
@@ -43,6 +43,19 @@ DEFAULT_LEASE_SECONDS = 600
 DEFAULT_POLL_INTERVAL_SECONDS = 1.5
 DEFAULT_CONCURRENCY = 4
 
+# "Stop starting, start finishing": claim cards closer to done first (Deployer, then
+# Tester, then Developer, then PM), so limited concurrency drains work-in-progress
+# toward completion instead of spreading thin by starting new cards while older ones
+# sit half-finished. updated_at only breaks ties within the same column.
+#
+# Explicit (Card.column == X, priority) comparisons, not case()'s dict/value= form —
+# the dict form binds each key as a bare literal without the column's enum type
+# decorator applied, so every WHEN silently fails to match and the whole expression
+# evaluates to NULL for every row (confirmed empirically).
+_CLAIM_COLUMN_PRIORITY = case(
+    *((Card.column == column, idx) for idx, column in enumerate(reversed(IMPLEMENTED_COLUMNS)))
+)
+
 
 async def claim_next_card(session: AsyncSession, worker_id: str) -> Card | None:
     """Atomic conditional UPDATE, checked by rowcount — works against SQLite from a
@@ -56,12 +69,17 @@ async def claim_next_card(session: AsyncSession, worker_id: str) -> Card | None:
     check is repeated in the UPDATE's WHERE clause (not just the candidate SELECT) so
     it's re-evaluated against committed state at claim time, closing the race where
     two workers both pick a different card from the same idle project in the same
-    poll cycle."""
+    poll cycle.
+
+    A paused project (Project.paused_at set) is excluded the same way — a human
+    asked to have this repo left alone, so no new claims start; a claim already in
+    flight when pause was clicked still runs to completion."""
     now = datetime.now(UTC)
     busy_project_ids = select(Card.project_id).where(
         Card.claimed_by_worker_id.is_not(None),
         Card.lease_expires_at >= now,
     )
+    paused_project_ids = select(Project.id).where(Project.paused_at.is_not(None))
     candidate_id = await session.scalar(
         select(Card.id)
         .where(
@@ -69,8 +87,9 @@ async def claim_next_card(session: AsyncSession, worker_id: str) -> Card | None:
             Card.column.in_(IMPLEMENTED_COLUMNS),
             or_(Card.claimed_by_worker_id.is_(None), Card.lease_expires_at < now),
             Card.project_id.not_in(busy_project_ids),
+            Card.project_id.not_in(paused_project_ids),
         )
-        .order_by(Card.updated_at)
+        .order_by(_CLAIM_COLUMN_PRIORITY, Card.updated_at)
         .limit(1)
     )
     if candidate_id is None:
@@ -82,6 +101,7 @@ async def claim_next_card(session: AsyncSession, worker_id: str) -> Card | None:
             Card.id == candidate_id,
             or_(Card.claimed_by_worker_id.is_(None), Card.lease_expires_at < now),
             Card.project_id.not_in(busy_project_ids),
+            Card.project_id.not_in(paused_project_ids),
         )
         .values(
             claimed_by_worker_id=worker_id,

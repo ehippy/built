@@ -70,6 +70,8 @@ async def run_tender_once() -> None:
     async with async_session_factory() as session:
         projects = await project_service.list_projects(session)
         for project in projects:
+            if project.paused_at is not None:
+                continue
             if await _needs_tending(session, project):
                 await _tend_one_project(session, project)
 

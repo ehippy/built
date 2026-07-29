@@ -381,22 +381,38 @@ th {
   max-width: 90vw;
 }
 
-.project-list a.project-card {
-  display: block;
+.project-list .project-card {
   padding: 0.9rem 1rem;
   border: 1px solid var(--border);
   border-left: 4px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
   margin-bottom: 0.75rem;
+}
+.project-list .project-card:hover {
+  border-color: var(--accent);
+}
+.project-list .project-card.active-card {
+  border-left-color: var(--state-active);
+}
+.project-list .project-card.paused-card {
+  border-left-color: var(--text-muted);
+  opacity: 0.75;
+}
+.project-list .project-card-link {
+  display: block;
   color: var(--text);
 }
-.project-list a.project-card:hover {
-  border-color: var(--accent);
+.project-list .project-card-link:hover {
   text-decoration: none;
 }
-.project-list a.project-card.active-card {
-  border-left-color: var(--state-active);
+.project-card-actions {
+  margin-top: 0.6rem;
+  display: flex;
+  justify-content: flex-end;
+}
+.badge.paused {
+  background: var(--text-muted);
 }
 .project-list .goal {
   color: var(--text-muted);

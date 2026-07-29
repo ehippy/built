@@ -129,6 +129,60 @@ async def test_frees_up_the_project_once_the_held_card_is_released(db_session):
     assert second is not None
 
 
+async def test_does_not_claim_cards_from_a_paused_project(db_session):
+    project = await _project(db_session, _n="11")
+    await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    await project_service.pause_project(db_session, project.id)
+
+    assert await claim_next_card(db_session, "worker-a") is None
+
+
+async def test_resuming_a_project_makes_its_cards_claimable_again(db_session):
+    project = await _project(db_session, _n="12")
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    await project_service.pause_project(db_session, project.id)
+    await project_service.resume_project(db_session, project.id)
+
+    claimed = await claim_next_card(db_session, "worker-a")
+
+    assert claimed is not None
+    assert claimed.id == card.id
+
+
+async def test_pausing_one_project_does_not_block_claims_in_another(db_session):
+    paused_project = await _project(db_session, _n="13a")
+    active_project = await _project(db_session, _n="13b")
+    await card_service.create_card(db_session, paused_project.id, title="p", raw_request="r")
+    active_card = await card_service.create_card(db_session, active_project.id, title="a", raw_request="r")
+    await project_service.pause_project(db_session, paused_project.id)
+
+    claimed = await claim_next_card(db_session, "worker-a")
+
+    assert claimed is not None
+    assert claimed.id == active_card.id
+
+
+async def test_claims_cards_closer_to_done_first(db_session):
+    """'Stop starting, start finishing': with several projects each ready to claim,
+    a card sitting in Deployer should be picked before a brand-new PM card, even
+    though the PM card is older — draining in-flight work takes priority over
+    starting fresh work."""
+    pm_project = await _project(db_session, _n="14a")
+    deployer_project = await _project(db_session, _n="14b")
+    pm_card = await card_service.create_card(db_session, pm_project.id, title="pm", raw_request="r")
+    deployer_card = await card_service.create_card(
+        db_session, deployer_project.id, title="deployer", raw_request="r"
+    )
+    deployer_card.column = Column.DEPLOYER
+    await db_session.commit()
+    assert pm_card.updated_at <= deployer_card.updated_at  # pm card is not younger
+
+    claimed = await claim_next_card(db_session, "worker-a")
+
+    assert claimed is not None
+    assert claimed.id == deployer_card.id
+
+
 async def test_requeue_stale_claims_frees_expired_but_not_fresh_claims(db_session):
     project = await _project(db_session, _n="7")
     stale = await card_service.create_card(db_session, project.id, title="stale", raw_request="r")

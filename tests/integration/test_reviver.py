@@ -28,6 +28,36 @@ async def _make_blocked_card(session, project, title="stuck card", *, message="b
     return card
 
 
+async def test_reviver_ignores_stuck_cards_in_a_paused_project(db_session):
+    project = await _make_project(db_session, _n="paused")
+    await _make_blocked_card(db_session, project, title="stuck but paused")
+    await project_service.pause_project(db_session, project.id)
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(id="call_1", name="list_stuck_cards", arguments={}),
+                ],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(id="call_2", name="done_for_now", arguments={"summary": "nothing to do"})
+                ],
+                endpoint_used="fake::model",
+            ),
+        ]
+    )
+
+    counts = await run_reviver_pass(db_session, llm_client=llm, max_iterations=10)
+
+    assert counts == {"revived": 0, "left_blocked": 0, "errors": 0}
+    assert "No stuck cards" in llm.calls[1]["messages"][3]["content"]
+
+
 async def test_reviver_does_nothing_when_no_cards_are_stuck(db_session):
     llm = ScriptedLLMClient(
         [

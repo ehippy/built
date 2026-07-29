@@ -7,11 +7,26 @@
   <a href="/ui/projects">&larr; All projects</a>
 </div>
 
-<h1>{{ project.name }}</h1>
+<h1>{{ project.name }} {% if project.paused_at %}<span class="badge paused">paused</span>{% endif %}</h1>
 <p class="subtitle">{{ project.slug }}</p>
 <p class="hint">Created {{ project.created_at|timeago }} · Last modified {{ project.updated_at|timeago }}</p>
 
 {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+
+<div class="panel">
+  <h2>Orchestrator status</h2>
+  {% if project.paused_at %}
+  <p class="subtitle">Paused since {{ project.paused_at|timeago }} — the orchestrator, Reviver, and Tender all leave this project alone. Any card claimed before pause still runs to completion.</p>
+  <form method="post" action="/ui/projects/{{ project.id }}/resume">
+    <button class="btn" type="submit">Resume project</button>
+  </form>
+  {% else %}
+  <p class="subtitle">Pause to stop the orchestrator from claiming new cards for this project — useful while you're reviewing work or don't want the repo touched for a while.</p>
+  <form method="post" action="/ui/projects/{{ project.id }}/pause">
+    <button class="btn secondary" type="submit">Pause project</button>
+  </form>
+  {% endif %}
+</div>
 
 <div class="panel">
   <h2>Project details</h2>

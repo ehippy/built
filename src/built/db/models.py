@@ -60,6 +60,11 @@ class Project(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # Distinct from archived_at: a paused project stays visible everywhere (list, board,
+    # settings) but the orchestrator/reviver/tender all skip it — a human wants the repo
+    # left alone for a while without hiding or losing its cards. An in-flight visit still
+    # finishes; pause only blocks new claims.
+    paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     # selectin: async SQLAlchemy has no implicit lazy-load, and this relationship is
     # read unconditionally by ProjectOut serialization — selectin issues its own

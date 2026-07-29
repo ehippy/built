@@ -57,6 +57,24 @@ async def archive_project(project_id: str, session: SessionDep, _: RequireApiKey
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
 
 
+@router.post("/{project_id}/pause", response_model=ProjectOut)
+async def pause_project(project_id: str, session: SessionDep, _: RequireApiKey) -> ProjectOut:
+    try:
+        project = await project_service.pause_project(session, project_id)
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return ProjectOut.model_validate(project)
+
+
+@router.post("/{project_id}/resume", response_model=ProjectOut)
+async def resume_project(project_id: str, session: SessionDep, _: RequireApiKey) -> ProjectOut:
+    try:
+        project = await project_service.resume_project(session, project_id)
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return ProjectOut.model_validate(project)
+
+
 @router.post("/{project_id}/discover-tasks", status_code=status.HTTP_202_ACCEPTED)
 async def discover_tasks(project_id: str, session: SessionDep, _: RequireApiKey) -> dict:
     """Kicks off one autonomous PM discovery pass in the background and returns

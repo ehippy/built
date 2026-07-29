@@ -2,10 +2,12 @@
 creating AGENTS.md, amending it, and doing nothing when there's nothing new."""
 
 from built.agent.tender import run_tender_pass
+from built.domain import transitions
 from built.llm.client import LLMResult, ToolCallRequest
+from built.orchestrator.tender import run_tender_once
 from built.sandbox import worktree
 from built.sandbox.container import CommandResult
-from built.services import project_service
+from built.services import card_service, project_service
 from built.tools.base import ToolContext
 from built.tools.dispatcher import ToolDispatcher
 from tests.unit.fakes import FakeCommandExecutor, ScriptedLLMClient
@@ -144,3 +146,24 @@ async def test_tender_amends_an_existing_doc_with_edit_file(db_session, toy_repo
 
     assert result["edited"] is True
     assert "HOME=/tmp for npm" in (wt_path / "AGENTS.md").read_text()
+
+
+async def test_run_tender_once_skips_a_paused_project(db_session, toy_repo_remote):
+    """A paused project has visits worth tending (_needs_tending would say yes), but
+    run_tender_once's per-project loop should never even get that far — proven here
+    by the fact that agents_doc_tended_at stays untouched, which only happens on the
+    early-continue path since _tend_one_project always sets it."""
+    project = await _make_project(db_session, toy_repo_remote, _n="4")
+    card = await card_service.create_card(db_session, project.id, title="c", raw_request="r")
+    visit = await transitions.start_visit(db_session, card)
+    await transitions.complete_pm_visit(
+        db_session, card, visit, spec="s", acceptance_criteria=["x"], summary="s"
+    )
+    await project_service.pause_project(db_session, project.id)
+    await db_session.commit()
+
+    await run_tender_once()
+
+    await db_session.refresh(project)
+    assert project.paused_at is not None
+    assert project.agents_doc_tended_at is None

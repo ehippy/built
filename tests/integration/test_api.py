@@ -122,6 +122,38 @@ async def test_discover_tasks_endpoint_requires_auth_and_starts_in_background():
         assert missing_resp.status_code == 404
 
 
+async def test_pause_and_resume_project_via_api():
+    async with _client() as client:
+        create_resp = await client.post(
+            "/api/v1/projects",
+            json={
+                "name": "Pause API Project",
+                "overarching_goal": "goal",
+                "repo_remote_url": "https://example.invalid/pause-project.git",
+            },
+            headers=AUTH,
+        )
+        project = create_resp.json()
+        assert project["paused_at"] is None
+
+        no_auth_resp = await client.post(f"/api/v1/projects/{project['id']}/pause")
+        assert no_auth_resp.status_code == 401
+
+        pause_resp = await client.post(f"/api/v1/projects/{project['id']}/pause", headers=AUTH)
+        assert pause_resp.status_code == 200
+        assert pause_resp.json()["paused_at"] is not None
+
+        reread_resp = await client.get(f"/api/v1/projects/{project['id']}")
+        assert reread_resp.json()["paused_at"] is not None
+
+        resume_resp = await client.post(f"/api/v1/projects/{project['id']}/resume", headers=AUTH)
+        assert resume_resp.status_code == 200
+        assert resume_resp.json()["paused_at"] is None
+
+        missing_resp = await client.post("/api/v1/projects/does-not-exist/pause", headers=AUTH)
+        assert missing_resp.status_code == 404
+
+
 async def test_endpoint_config_fallback_chain_resolution():
     async with _client() as client:
         project_resp = await client.post(

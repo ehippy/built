@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from built.db.models import Card, CardColumnVisit, CardEvent
+from built.db.models import Card, CardColumnVisit, CardEvent, Project
 from built.domain import transitions
 from built.domain.enums import Column, EventType, LifecycleState
 from built.domain.events import append_event
@@ -92,10 +92,15 @@ async def get_project_activity_summary(session: AsyncSession, project_id: str) -
 async def list_stuck_cards(session: AsyncSession, *, limit: int = 50) -> list[Card]:
     """BLOCKED or FAILED cards, longest-stuck first — the Reviver's (agent/reviver.py)
     candidate pool. Ordered by updated_at so cards that have been waiting longest get
-    priority attention within a bounded pass."""
+    priority attention within a bounded pass. Excludes paused projects — a human asked
+    to have that repo left alone, so the Reviver shouldn't retry/revive its cards."""
     stmt = (
         select(Card)
-        .where(Card.lifecycle_state.in_((LifecycleState.BLOCKED, LifecycleState.FAILED)))
+        .join(Project, Project.id == Card.project_id)
+        .where(
+            Card.lifecycle_state.in_((LifecycleState.BLOCKED, LifecycleState.FAILED)),
+            Project.paused_at.is_(None),
+        )
         .order_by(Card.updated_at)
         .limit(limit)
     )

@@ -103,6 +103,20 @@ async def archive_project(session: AsyncSession, project_id: str) -> Project:
     return project
 
 
+async def pause_project(session: AsyncSession, project_id: str) -> Project:
+    project = await get_project(session, project_id)
+    project.paused_at = datetime.now(UTC)
+    await session.flush()
+    return project
+
+
+async def resume_project(session: AsyncSession, project_id: str) -> Project:
+    project = await get_project(session, project_id)
+    project.paused_at = None
+    await session.flush()
+    return project
+
+
 async def set_deploy_config(
     session: AsyncSession,
     project_id: str,

@@ -113,6 +113,18 @@ async def archive_project(project_id: str, session: SessionDep) -> RedirectRespo
     return RedirectResponse("/ui/projects", status_code=303)
 
 
+@router.post("/projects/{project_id}/pause")
+async def pause_project(project_id: str, session: SessionDep, request: Request) -> RedirectResponse:
+    await project_service.pause_project(session, project_id)
+    return RedirectResponse(request.headers.get("referer") or "/ui/projects", status_code=303)
+
+
+@router.post("/projects/{project_id}/resume")
+async def resume_project(project_id: str, session: SessionDep, request: Request) -> RedirectResponse:
+    await project_service.resume_project(session, project_id)
+    return RedirectResponse(request.headers.get("referer") or "/ui/projects", status_code=303)
+
+
 @router.post("/projects/{project_id}/endpoint-configs")
 async def add_project_endpoint_config(
     project_id: str,

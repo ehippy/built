@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from built.config import settings
 from built.db.models import Card, CardColumnVisit, CardDependency, CardEvent, EpicLink, Project
 from built.domain import transitions
 from built.domain.enums import Column, EventType, LifecycleState, Priority
@@ -146,6 +147,7 @@ async def get_board(
     await _attach_last_activity(session, cards)
     await _attach_dependency_status(session, cards)
     await _attach_epic_parent_title(session, cards)
+    await _attach_progress(session, cards, project_id)
     # Two stable sorts: recency first, then priority — the second pass reorders by
     # priority rank while preserving each rank's existing (already recency-sorted)
     # relative order, without needing a combined sort key.
@@ -360,6 +362,89 @@ async def _attach_epic_parent_title(session: AsyncSession, cards: list[Card]) ->
     titles = dict((await session.execute(stmt)).all())
     for card in cards:
         card.epic_parent_title = titles.get(card.id)
+
+
+def _describe_llm_response(payload: dict) -> str:
+    """One line describing an `llm_response` CardEvent for the board tile's live
+    preview — the model's own text if it said anything, else what it's about to do
+    with a tool, else a bare "thinking…". Same shape as
+    ui/routers/board.py's _describe_curation_event, but that one reads a
+    CurationEvent's payload; this reads an llm_response CardEvent's payload
+    directly (agent/loop.py's shape: {"iteration", "content", "tool_calls": [name,
+    ...]} — just names, no arguments, since arguments live on the separate
+    tool_call events emitted afterward)."""
+    content = (payload.get("content") or "").strip()
+    if content:
+        return content
+    tool_calls = payload.get("tool_calls") or []
+    if tool_calls:
+        return f"calling {', '.join(tool_calls)}…"
+    return "thinking…"
+
+
+async def _attach_progress(session: AsyncSession, cards: list[Card], project_id: str) -> None:
+    """Sets card.current_iteration/max_iterations/typical_iterations/activity_preview
+    on every card currently being worked — the board tile's progress bar plus a
+    truncated peek at what the agent is actually saying/doing right now. Scoped to
+    each card's currently-open CardColumnVisit specifically (not every llm_response
+    event the card has ever produced): a card that's been through, say, three
+    Developer revisions has three closed visits plus at most one open one, and
+    only the open one's iteration count means anything.
+
+    typical_iterations (not max_iterations) is what the bar is actually drawn
+    against: max_iterations_per_run is a rarely-hit safety ceiling (often set an
+    order of magnitude above what a normal run takes), so a bar denominated
+    against it sits permanently near-empty and tells you nothing at a glance.
+    "How many turns does this column *usually* take, for this project" is the
+    useful number — the average LLM_RESPONSE count over this project's own closed
+    visits in the same column. Falls back to max_iterations when there's no
+    history yet (a column this project has never finished a visit in)."""
+    in_flight = [c for c in cards if c.is_being_worked]
+    if not in_flight:
+        return
+    project = await session.get(Project, project_id)
+    max_iterations = project.max_iterations_per_run if project else settings.default_max_iterations_per_run
+
+    per_visit_counts = (
+        select(CardEvent.column_visit_id.label("visit_id"), func.count().label("cnt"))
+        .where(CardEvent.type == EventType.LLM_RESPONSE)
+        .group_by(CardEvent.column_visit_id)
+        .subquery()
+    )
+    typical_stmt = (
+        select(CardColumnVisit.column, func.avg(func.coalesce(per_visit_counts.c.cnt, 0)))
+        .join(Card, Card.id == CardColumnVisit.card_id)
+        .outerjoin(per_visit_counts, per_visit_counts.c.visit_id == CardColumnVisit.id)
+        .where(Card.project_id == project_id, CardColumnVisit.ended_at.is_not(None))
+        .group_by(CardColumnVisit.column)
+    )
+    typical_by_column = dict((await session.execute(typical_stmt)).all())
+
+    visit_stmt = select(CardColumnVisit.card_id, CardColumnVisit.id).where(
+        CardColumnVisit.card_id.in_([c.id for c in in_flight]),
+        CardColumnVisit.ended_at.is_(None),
+    )
+    visit_id_by_card = dict((await session.execute(visit_stmt)).all())
+    if not visit_id_by_card:
+        return
+    events_stmt = (
+        select(CardEvent.column_visit_id, CardEvent.payload)
+        .where(
+            CardEvent.column_visit_id.in_(visit_id_by_card.values()),
+            CardEvent.type == EventType.LLM_RESPONSE,
+        )
+        .order_by(CardEvent.seq)
+    )
+    responses_by_visit: dict[str, list[dict]] = {}
+    for visit_id, payload in (await session.execute(events_stmt)).all():
+        responses_by_visit.setdefault(visit_id, []).append(payload)
+    for card in in_flight:
+        responses = responses_by_visit.get(visit_id_by_card.get(card.id), [])
+        card.current_iteration = len(responses)
+        card.max_iterations = max_iterations
+        typical = typical_by_column.get(card.column)
+        card.typical_iterations = round(typical) if typical else max_iterations
+        card.activity_preview = _describe_llm_response(responses[-1]) if responses else None
 
 
 async def get_project_activity_summary(session: AsyncSession, project_id: str) -> dict:

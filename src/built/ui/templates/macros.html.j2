@@ -25,6 +25,16 @@
       {% if card.epic_parent_title %}<span>· epic: {{ card.epic_parent_title }}</span>{% endif %}
       {% if card.unmet_dependency_count %}{{ badge("waiting", "waiting on " ~ card.unmet_dependency_count) }}{% endif %}
     </div>
+    {% if card.is_being_worked and card.typical_iterations %}
+    {% set pct = ([(100 * card.current_iteration / card.typical_iterations)|round(0, 'floor')|int, 100]|min) %}
+    {% set bar_color = "bg-danger" if pct >= 100 else ("bg-warning" if pct >= 50 else "") %}
+    <div class="progress mt-1" style="height: 4px;" title="Turn {{ card.current_iteration }} — this column usually takes ~{{ card.typical_iterations }} (hard cap {{ card.max_iterations }})">
+      <div class="progress-bar {{ bar_color }}" style="width: {{ pct }}%;"></div>
+    </div>
+    {% if card.activity_preview %}
+    <div class="text-body-secondary small fst-italic text-truncate mt-1" title="{{ card.activity_preview }}">{{ card.activity_preview }}</div>
+    {% endif %}
+    {% endif %}
     <div class="text-body-secondary small mt-1">{{ card.last_activity_at|timeago }}</div>
   </div>
 </a>

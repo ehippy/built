@@ -233,6 +233,15 @@ BASH = {
     },
 }
 
+BUILD_SANDBOX = {
+    "type": "function",
+    "function": {
+        "name": "build_sandbox",
+        "description": "Build and select Dockerfile.built-sandbox from the repository root for later bash calls.",
+        "parameters": {"type": "object", "properties": {}},
+    },
+}
+
 GIT_STATUS = {
     "type": "function",
     "function": {
@@ -331,6 +340,7 @@ DEVELOPER_TOOLS = [
     WRITE_FILE,
     EDIT_FILE,
     BASH,
+    BUILD_SANDBOX,
     GIT_STATUS,
     GIT_DIFF,
     UPDATE_PLAN,
@@ -709,7 +719,7 @@ REQUEST_CHANGES = {
     },
 }
 
-TESTER_TOOLS = [READ_FILE, GREP_FILES, FETCH_DOCS, BASH, WRITE_FILE, EDIT_FILE, APPROVE, REQUEST_CHANGES]
+TESTER_TOOLS = [READ_FILE, GREP_FILES, FETCH_DOCS, BASH, BUILD_SANDBOX, WRITE_FILE, EDIT_FILE, APPROVE, REQUEST_CHANGES]
 TESTER_TERMINAL_TOOLS = ("approve", "request_changes")
 
 REVIEW_DIFF = {

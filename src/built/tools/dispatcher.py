@@ -77,6 +77,12 @@ class ToolDispatcher:
                 timeout_seconds=arguments.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS),
             )
             return format_bash_result(command_result), command_result
+        if name == "build_sandbox":
+            try:
+                image = await self.executor.build_sandbox(worktree=self.ctx.worktree_root)
+            except (AttributeError, ValueError, RuntimeError) as exc:
+                return ToolResult.error(f"sandbox build failed: {exc}"), None
+            return ToolResult.ok(f"Sandbox image built for this visit: {image}"), None
         if name == "git_status":
             return ToolResult.ok(await git_tools.status(self.ctx.worktree_root)), None
         if name == "git_diff":

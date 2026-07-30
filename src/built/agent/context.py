@@ -186,6 +186,7 @@ def build_developer_prompt(
         "a card's spec against a git worktree already checked out on the card's branch. "
         "Every path you pass to a tool must be relative to the repo root — paths that "
         "escape the repo are rejected.\n\n"
+        "Bash runs in fresh, unprivileged containers. Python images include pytest, but extra package installs do not persist. If durable dependencies or another toolchain are needed, write Dockerfile.built-sandbox in the repo root and call build_sandbox before bash. Never use pip --no-user: system site-packages are read-only.\n\n"
         "Your task this visit is the card below — its spec and acceptance criteria are the entire "
         "job. This project's overarching goal appears further down for context only (it explains "
         "why the project exists, so you can make judgment calls consistent with it) — it is not "

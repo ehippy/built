@@ -13,6 +13,7 @@ an all-or-nothing switch — leave it False (egress allowed, for pip/npm install
 unless a project needs full network isolation instead."""
 
 import asyncio
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -40,6 +41,8 @@ class CommandResult:
 class CommandExecutor(Protocol):
     async def run(self, *, worktree: Path, command: str, timeout_seconds: int) -> CommandResult: ...
 
+    async def build_sandbox(self, *, worktree: Path) -> str: ...
+
 
 class DockerCommandExecutor:
     """Runs `command` inside a fresh container per call: worktree bind-mounted
@@ -62,6 +65,26 @@ class DockerCommandExecutor:
         # docker-py's client is synchronous/blocking; run it off the event loop
         # thread so one slow container doesn't stall every other card's asyncio tasks.
         return await asyncio.to_thread(self._run_sync, worktree, command, timeout_seconds)
+
+    async def build_sandbox(self, *, worktree: Path) -> str:
+        return await asyncio.to_thread(self._build_sandbox_sync, worktree)
+
+    def _build_sandbox_sync(self, worktree: Path) -> str:
+        dockerfile = worktree / "Dockerfile.built-sandbox"
+        if not dockerfile.is_file():
+            raise ValueError("Dockerfile.built-sandbox does not exist in the repository root")
+        import docker
+        tag = f"built-sandbox:{hashlib.sha256(str(worktree.resolve()).encode()).hexdigest()[:16]}"
+        try:
+            client = docker.from_env()
+            try:
+                client.images.build(path=str(worktree), dockerfile=dockerfile.name, tag=tag, rm=True, forcerm=True)
+            finally:
+                client.close()
+        except docker.errors.DockerException as exc:
+            raise DockerDaemonAccessError(f"Unable to build Dockerfile.built-sandbox: {exc}") from exc
+        self.image = tag
+        return tag
 
     def _run_sync(self, worktree: Path, command: str, timeout_seconds: int) -> CommandResult:
         import docker

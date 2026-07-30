@@ -158,7 +158,9 @@ async def _run_deploy_command(deploy_config: DeployConfig, *, cwd) -> DeployRunR
     if not command:
         return DeployRunResult(success=False, message=f"no {deploy_config.kind.value} configured")
 
-    env = os.environ.copy()
+    # Keep ordinary command lookup working without exposing every secret held by
+    # the orchestrator process. Deploy credentials are opt-in via env_var_refs.
+    env = {"PATH": os.environ.get("PATH", os.defpath)}
     for ref in deploy_config.env_var_refs:
         if ref in os.environ:
             env[ref] = os.environ[ref]

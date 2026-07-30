@@ -10,10 +10,24 @@
 #   git config core.hooksPath .githooks
 set -euo pipefail
 
+# git runs hooks with a minimal environment, not your interactive shell — an
+# activated .venv doesn't carry over, so `ruff`/`pytest` bare would silently
+# resolve to whatever's on the hook's PATH (often nothing). Prefer the repo's
+# own .venv if one exists, matching README's `pip install -e ".[dev]"` setup,
+# and fall back to PATH for anyone managing their environment another way.
+repo_root="$(git rev-parse --show-toplevel)"
+if [ -x "$repo_root/.venv/bin/ruff" ]; then
+  RUFF="$repo_root/.venv/bin/ruff"
+  PYTEST="$repo_root/.venv/bin/pytest"
+else
+  RUFF="ruff"
+  PYTEST="pytest"
+fi
+
 echo "pre-push: ruff check ..."
-ruff check .
+"$RUFF" check "$repo_root"
 
 echo "pre-push: pytest ..."
-pytest -q
+( cd "$repo_root" && "$PYTEST" -q )
 
 echo "pre-push: OK"

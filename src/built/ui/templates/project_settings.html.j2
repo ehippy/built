@@ -5,7 +5,6 @@
 <ul class="nav nav-tabs mb-4">
   <li class="nav-item"><a class="nav-link" href="/ui/projects/{{ project.id }}/board">Board</a></li>
   <li class="nav-item"><a class="nav-link active" href="/ui/projects/{{ project.id }}/settings">Settings</a></li>
-  <li class="nav-item"><a class="nav-link" href="/ui/projects">&larr; All projects</a></li>
 </ul>
 
 <h1>{{ project.name }} {% if project.paused_at %}<span class="fs-6">{{ m.badge("paused") }}</span>{% endif %}</h1>
@@ -14,211 +13,251 @@
 
 {% if flash %}<div class="alert alert-success">{{ flash }}</div>{% endif %}
 
-<div class="card card-body mb-4">
-  <h2 class="h5">Project details</h2>
-  <form method="post" action="/ui/projects/{{ project.id }}/settings">
-    <div class="row g-2 mb-3">
-      <div class="col">
-        <label class="form-label" for="name">Name</label>
-        <input class="form-control" type="text" id="name" name="name" value="{{ project.name }}" required>
-      </div>
-      <div class="col">
-        <label class="form-label" for="default_branch">Default branch</label>
-        <input class="form-control" type="text" id="default_branch" name="default_branch" value="{{ project.default_branch }}">
-      </div>
+<div class="row">
+  <div class="col-md-3 col-lg-2 mb-4">
+    <div class="nav flex-column nav-pills" id="settings-tabs" role="tablist" aria-orientation="vertical">
+      <button class="nav-link active text-start" id="details-tab" data-bs-toggle="pill" data-bs-target="#details-pane" type="button" role="tab" aria-controls="details-pane" aria-selected="true">Project details</button>
+      <button class="nav-link text-start" id="endpoints-tab" data-bs-toggle="pill" data-bs-target="#endpoints-pane" type="button" role="tab" aria-controls="endpoints-pane" aria-selected="false">LLM endpoints</button>
+      <button class="nav-link text-start" id="deploy-tab" data-bs-toggle="pill" data-bs-target="#deploy-pane" type="button" role="tab" aria-controls="deploy-pane" aria-selected="false">Deploy configuration</button>
+      <button class="nav-link text-start text-danger" id="danger-tab" data-bs-toggle="pill" data-bs-target="#danger-pane" type="button" role="tab" aria-controls="danger-pane" aria-selected="false">Danger zone</button>
     </div>
-    <div class="mb-3">
-      <label class="form-label">Git repo</label>
-      <input class="form-control" type="text" value="{{ project.repo_remote_url }}" disabled>
-      <div class="form-text">Not editable after creation — create a new project to point at a different repo.</div>
-    </div>
-    <div class="mb-3">
-      <label class="form-label" for="overarching_goal">Overarching goal</label>
-      <textarea class="form-control" id="overarching_goal" name="overarching_goal" required>{{ project.overarching_goal }}</textarea>
-    </div>
-    <div class="mb-3">
-      <label class="form-label" for="sandbox_image">Sandbox image (for the bash tool)</label>
-      <input class="form-control" type="text" id="sandbox_image" name="sandbox_image" value="{{ project.sandbox_image or '' }}" placeholder="python:3.12-slim (default)">
-      <div class="form-text">
-        The Docker image Developer/Tester run builds and tests in. Defaults to a Python-only image — set this to
-        <code>node:22-slim</code>, <code>golang:1.23-slim</code>, etc. to match your project's language.
-        Leave blank to use the default.
-      </div>
-    </div>
-    <div class="mb-3">
-      <label class="form-label" for="test_command">Test command</label>
-      <input class="form-control" type="text" id="test_command" name="test_command" value="{{ project.test_command or '' }}" placeholder="pytest -q, npm test, ...">
-      <div class="form-text">
-        The exact command that runs this project's whole test suite. Developer's submit_for_test and
-        Tester's approve are both blocked server-side until this is set, and until each has a real,
-        just-passed run of exactly this command with nothing changed since.
-      </div>
-    </div>
-    <div class="row g-2 mb-3">
-      <div class="col">
-        <label class="form-label" for="max_revisions">Max revisions</label>
-        <input class="form-control" type="number" id="max_revisions" name="max_revisions" min="0" value="{{ project.max_revisions }}">
-      </div>
-      <div class="col">
-        <label class="form-label" for="max_deploy_attempts">Max deploy attempts</label>
-        <input class="form-control" type="number" id="max_deploy_attempts" name="max_deploy_attempts" min="0" value="{{ project.max_deploy_attempts }}">
-      </div>
-      <div class="col">
-        <label class="form-label" for="max_iterations_per_run">Max iterations / run</label>
-        <input class="form-control" type="number" id="max_iterations_per_run" name="max_iterations_per_run" min="1" value="{{ project.max_iterations_per_run }}">
-      </div>
-    </div>
-    <button class="btn btn-primary" type="submit">Save changes</button>
-  </form>
-</div>
-
-<div class="card card-body mb-4">
-  <h2 class="h5">LLM endpoints</h2>
-  <p class="text-body-secondary">
-    The fallback chain for this project. Entries scoped to a specific role win over "All roles" entries here;
-    if nothing is configured for a role at all, it falls back to the
-    <a href="/ui/endpoint-configs">global defaults</a>. Lower priority number = tried first.
-  </p>
-  {% if endpoint_configs %}
-  <div class="table-responsive">
-  <table class="table table-striped align-middle">
-    <thead><tr><th>Role</th><th>Base URL</th><th>Model</th><th>Priority</th><th>Max concurrency</th><th>Context window</th><th>Enabled</th><th></th></tr></thead>
-    <tbody>
-    {% for ep in endpoint_configs %}
-      <tr>
-        <td>{{ ep.role or "All roles" }}</td>
-        <td>{{ ep.base_url }}</td>
-        <td>{{ ep.model }}</td>
-        <td>{{ ep.priority }}</td>
-        <td>{{ ep.max_concurrency }}</td>
-        <td>
-          <form class="d-flex gap-1" method="post" action="/ui/endpoint-configs/{{ ep.id }}/context-window?next=/ui/projects/{{ project.id }}/settings">
-            <input class="form-control form-control-sm" type="number" name="context_window" min="1" value="{{ ep.context_window or default_max_tokens }}" style="width: 8rem;">
-            <button class="btn btn-secondary btn-sm" type="submit">Save</button>
-          </form>
-          {% if not ep.context_window %}<div class="form-text">unset — using app default</div>{% endif %}
-        </td>
-        <td>{{ "yes" if ep.enabled else "no" }}</td>
-        <td>
-          <form class="d-inline" method="post" action="/ui/endpoint-configs/{{ ep.id }}/toggle?next=/ui/projects/{{ project.id }}/settings">
-            <button class="btn btn-secondary btn-sm" type="submit">{{ "Disable" if ep.enabled else "Enable" }}</button>
-          </form>
-          <form class="d-inline" method="post" action="/ui/endpoint-configs/{{ ep.id }}/delete?next=/ui/projects/{{ project.id }}/settings">
-            <button class="btn btn-danger btn-sm" type="submit">Delete</button>
-          </form>
-        </td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
   </div>
-  {% else %}
-  <p class="text-body-secondary">No project-specific endpoints configured — this project uses the global defaults for every role.</p>
-  {% endif %}
 
-  <h2 class="h5">Add endpoint</h2>
-  <form method="post" action="/ui/projects/{{ project.id }}/endpoint-configs">
-    <div class="row g-2 mb-3">
-      <div class="col">
-        <label class="form-label" for="role">Role</label>
-        <select class="form-select" id="role" name="role">
-          <option value="">All roles</option>
-          <option value="pm">Product Manager</option>
-          <option value="developer">Developer</option>
-          <option value="tester">Tester</option>
-          <option value="reviewer">Reviewer</option>
-          <option value="deployer">Deployer</option>
-        </select>
+  <div class="col-md-9 col-lg-10">
+    <div class="tab-content" id="settings-tab-content">
+
+      <div class="tab-pane fade show active" id="details-pane" role="tabpanel" aria-labelledby="details-tab" tabindex="0">
+        <div class="card card-body">
+          <h2 class="h5">Project details</h2>
+          <form method="post" action="/ui/projects/{{ project.id }}/settings">
+            <div class="row g-2 mb-3">
+              <div class="col">
+                <label class="form-label" for="name">Name</label>
+                <input class="form-control" type="text" id="name" name="name" value="{{ project.name }}" required>
+              </div>
+              <div class="col">
+                <label class="form-label" for="default_branch">Default branch</label>
+                <input class="form-control" type="text" id="default_branch" name="default_branch" value="{{ project.default_branch }}">
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Git repo</label>
+              <input class="form-control" type="text" value="{{ project.repo_remote_url }}" disabled>
+              <div class="form-text">Not editable after creation — create a new project to point at a different repo.</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="overarching_goal">Overarching goal</label>
+              <textarea class="form-control" id="overarching_goal" name="overarching_goal" required>{{ project.overarching_goal }}</textarea>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="sandbox_image">Sandbox image (for the bash tool)</label>
+              <input class="form-control" type="text" id="sandbox_image" name="sandbox_image" value="{{ project.sandbox_image or '' }}" placeholder="python:3.12-slim (default)">
+              <div class="form-text">
+                The Docker image Developer/Tester run builds and tests in. Defaults to a Python-only image — set this to
+                <code>node:22-slim</code>, <code>golang:1.23-slim</code>, etc. to match your project's language.
+                Leave blank to use the default.
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="test_command">Test command</label>
+              <input class="form-control" type="text" id="test_command" name="test_command" value="{{ project.test_command or '' }}" placeholder="pytest -q, npm test, ...">
+              <div class="form-text">
+                The exact command that runs this project's whole test suite. Developer's submit_for_test and
+                Tester's approve are both blocked server-side until this is set, and until each has a real,
+                just-passed run of exactly this command with nothing changed since.
+              </div>
+            </div>
+            <div class="row g-2 mb-3">
+              <div class="col">
+                <label class="form-label" for="max_revisions">Max revisions</label>
+                <input class="form-control" type="number" id="max_revisions" name="max_revisions" min="0" value="{{ project.max_revisions }}">
+              </div>
+              <div class="col">
+                <label class="form-label" for="max_deploy_attempts">Max deploy attempts</label>
+                <input class="form-control" type="number" id="max_deploy_attempts" name="max_deploy_attempts" min="0" value="{{ project.max_deploy_attempts }}">
+              </div>
+              <div class="col">
+                <label class="form-label" for="max_iterations_per_run">Max iterations / run</label>
+                <input class="form-control" type="number" id="max_iterations_per_run" name="max_iterations_per_run" min="1" value="{{ project.max_iterations_per_run }}">
+              </div>
+            </div>
+            <button class="btn btn-primary" type="submit">Save changes</button>
+          </form>
+        </div>
       </div>
-      <div class="col">
-        <label class="form-label" for="priority">Priority</label>
-        <input class="form-control" type="number" id="priority" name="priority" value="0">
+
+      <div class="tab-pane fade" id="endpoints-pane" role="tabpanel" aria-labelledby="endpoints-tab" tabindex="0">
+        <div class="card card-body">
+          <h2 class="h5">LLM endpoints</h2>
+          <p class="text-body-secondary">
+            The fallback chain for this project. Entries scoped to a specific role win over "All roles" entries here;
+            if nothing is configured for a role at all, it falls back to the
+            <a href="/ui/endpoint-configs">global defaults</a>. Lower priority number = tried first.
+          </p>
+          {% if endpoint_configs %}
+          <div class="table-responsive">
+          <table class="table table-striped align-middle">
+            <thead><tr><th>Role</th><th>Base URL</th><th>Model</th><th>Priority</th><th>Max concurrency</th><th>Context window</th><th>Enabled</th><th></th></tr></thead>
+            <tbody>
+            {% for ep in endpoint_configs %}
+              <tr>
+                <td>{{ ep.role or "All roles" }}</td>
+                <td>{{ ep.base_url }}</td>
+                <td>{{ ep.model }}</td>
+                <td>{{ ep.priority }}</td>
+                <td>{{ ep.max_concurrency }}</td>
+                <td>
+                  <form class="d-flex gap-1" method="post" action="/ui/endpoint-configs/{{ ep.id }}/context-window?next=/ui/projects/{{ project.id }}/settings%23endpoints-pane">
+                    <input class="form-control form-control-sm" type="number" name="context_window" min="1" value="{{ ep.context_window or default_max_tokens }}" style="width: 8rem;">
+                    <button class="btn btn-secondary btn-sm" type="submit">Save</button>
+                  </form>
+                  {% if not ep.context_window %}<div class="form-text">unset — using app default</div>{% endif %}
+                </td>
+                <td>{{ "yes" if ep.enabled else "no" }}</td>
+                <td>
+                  <form class="d-inline" method="post" action="/ui/endpoint-configs/{{ ep.id }}/toggle?next=/ui/projects/{{ project.id }}/settings%23endpoints-pane">
+                    <button class="btn btn-secondary btn-sm" type="submit">{{ "Disable" if ep.enabled else "Enable" }}</button>
+                  </form>
+                  <form class="d-inline" method="post" action="/ui/endpoint-configs/{{ ep.id }}/delete?next=/ui/projects/{{ project.id }}/settings%23endpoints-pane">
+                    <button class="btn btn-danger btn-sm" type="submit">Delete</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+          </div>
+          {% else %}
+          <p class="text-body-secondary">No project-specific endpoints configured — this project uses the global defaults for every role.</p>
+          {% endif %}
+
+          <h2 class="h5">Add endpoint</h2>
+          <form method="post" action="/ui/projects/{{ project.id }}/endpoint-configs">
+            <div class="row g-2 mb-3">
+              <div class="col">
+                <label class="form-label" for="role">Role</label>
+                <select class="form-select" id="role" name="role">
+                  <option value="">All roles</option>
+                  <option value="pm">Product Manager</option>
+                  <option value="developer">Developer</option>
+                  <option value="tester">Tester</option>
+                  <option value="reviewer">Reviewer</option>
+                  <option value="deployer">Deployer</option>
+                </select>
+              </div>
+              <div class="col">
+                <label class="form-label" for="priority">Priority</label>
+                <input class="form-control" type="number" id="priority" name="priority" value="0">
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="base_url">Base URL</label>
+              <input class="form-control" type="text" id="base_url" name="base_url" required placeholder="http://localhost:11434/v1">
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="model">Model</label>
+              <input class="form-control" type="text" id="model" name="model" required placeholder="Qwen3.6-35B-A3B-GGUF">
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="api_key_ref">API key env var (optional)</label>
+              <input class="form-control" type="text" id="api_key_ref" name="api_key_ref" placeholder="OPENAI_API_KEY">
+              <div class="form-text">Name of an environment variable on the server — never the raw key.</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="max_concurrency">Max concurrency</label>
+              <input class="form-control" type="number" id="max_concurrency" name="max_concurrency" min="1" value="1">
+              <div class="form-text">Max simultaneous requests this backend should ever receive, shared across every project/role that resolves to it (matched on base URL + model) — not just this project. A single local model instance can rarely usefully handle more than 1 at once.</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="context_window">Context window (optional)</label>
+              <input class="form-control" type="number" id="context_window" name="context_window" min="1" placeholder="app default: {{ default_max_tokens }}">
+              <div class="form-text">Total tokens this model actually supports. Left blank, this endpoint caps at the app default ({{ default_max_tokens }}) regardless of the model's real capacity.</div>
+            </div>
+            <button class="btn btn-primary" type="submit">Add endpoint</button>
+          </form>
+        </div>
       </div>
+
+      <div class="tab-pane fade" id="deploy-pane" role="tabpanel" aria-labelledby="deploy-tab" tabindex="0">
+        <div class="card card-body">
+          <h2 class="h5">Deploy configuration</h2>
+          <p class="text-body-secondary">Used by the Deployer column once a card is approved.</p>
+          <form method="post" action="/ui/projects/{{ project.id }}/deploy-config">
+            <div class="mb-3">
+              <label class="form-label" for="mode">Mode</label>
+              <select class="form-select" id="mode" name="mode">
+                <option value="pr_to_operator" {{ "selected" if not deploy_config or deploy_config.mode == "pr_to_operator" }}>PR to operator — push the branch and open a GitHub PR for you to review and merge. Nothing deploys automatically.</option>
+                <option value="auto_main" {{ "selected" if deploy_config and deploy_config.mode == "auto_main" }}>Auto-main — merge to the default branch, push, and run the deploy command below. Zero human gate.</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="github_token_ref">GitHub token env var</label>
+              <input class="form-control" type="text" id="github_token_ref" name="github_token_ref" value="{{ deploy_config.github_token_ref if deploy_config else '' }}" placeholder="GITHUB_PR_TOKEN">
+              <div class="form-text">
+                Name of an environment variable on the server holding a repo-scoped GitHub personal access token — never
+                the raw token. Required for PR to operator (to open the PR). For auto-main, it's optional but enables CI
+                awareness: with it set, a card's deploy isn't marked done until GitHub Actions (or any other check reported
+                against the commit) actually comes back green — a red check bounces it back to Developer instead. Without
+                it, auto-main deploys are marked done as soon as the push succeeds, same as before.
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="kind">Deploy step (for auto-main)</label>
+              <select class="form-select" id="kind" name="kind">
+                <option value="none" {{ "selected" if not deploy_config or deploy_config.kind == "none" }}>None — merging to the default branch and pushing is the whole job</option>
+                <option value="command" {{ "selected" if deploy_config and deploy_config.kind == "command" }}>Command</option>
+                <option value="script" {{ "selected" if deploy_config and deploy_config.kind == "script" }}>Script path</option>
+                <option value="webhook" {{ "selected" if deploy_config and deploy_config.kind == "webhook" }}>Webhook</option>
+              </select>
+              <div class="form-text">Merge + push always happens in auto-main mode. Pick a deploy step only if something needs to run after that — a build, an upload, a webhook. "None" is a normal, common choice, not a misconfiguration.</div>
+            </div>
+            <p class="text-body-secondary">Zero LLM-supplied arguments for auto-main — the deploy step below (if any) runs exactly as configured.</p>
+            <div class="mb-3">
+              <label class="form-label" for="command">Command</label>
+              <input class="form-control" type="text" id="command" name="command" value="{{ deploy_config.command if deploy_config else '' }}" placeholder="docker build -t app . && docker push app">
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="script_path">Script path</label>
+              <input class="form-control" type="text" id="script_path" name="script_path" value="{{ deploy_config.script_path if deploy_config else '' }}" placeholder="./deploy.sh">
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="webhook_url">Webhook URL</label>
+              <input class="form-control" type="url" id="webhook_url" name="webhook_url" value="{{ deploy_config.webhook_url if deploy_config else '' }}">
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="timeout_seconds">Timeout (seconds)</label>
+              <input class="form-control" type="number" id="timeout_seconds" name="timeout_seconds" value="{{ deploy_config.timeout_seconds if deploy_config else 600 }}">
+            </div>
+            <button class="btn btn-primary" type="submit">Save deploy config</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="tab-pane fade" id="danger-pane" role="tabpanel" aria-labelledby="danger-tab" tabindex="0">
+        <div class="card card-body">
+          <h2 class="h5">Danger zone</h2>
+          <form method="post" action="/ui/projects/{{ project.id }}/archive" onsubmit="return confirm('Archive this project? It will be hidden from the project list.');">
+            <button class="btn btn-danger" type="submit">Archive project</button>
+          </form>
+        </div>
+      </div>
+
     </div>
-    <div class="mb-3">
-      <label class="form-label" for="base_url">Base URL</label>
-      <input class="form-control" type="text" id="base_url" name="base_url" required placeholder="http://localhost:11434/v1">
-    </div>
-    <div class="mb-3">
-      <label class="form-label" for="model">Model</label>
-      <input class="form-control" type="text" id="model" name="model" required placeholder="Qwen3.6-35B-A3B-GGUF">
-    </div>
-    <div class="mb-3">
-      <label class="form-label" for="api_key_ref">API key env var (optional)</label>
-      <input class="form-control" type="text" id="api_key_ref" name="api_key_ref" placeholder="OPENAI_API_KEY">
-      <div class="form-text">Name of an environment variable on the server — never the raw key.</div>
-    </div>
-    <div class="mb-3">
-      <label class="form-label" for="max_concurrency">Max concurrency</label>
-      <input class="form-control" type="number" id="max_concurrency" name="max_concurrency" min="1" value="1">
-      <div class="form-text">Max simultaneous requests this backend should ever receive, shared across every project/role that resolves to it (matched on base URL + model) — not just this project. A single local model instance can rarely usefully handle more than 1 at once.</div>
-    </div>
-    <div class="mb-3">
-      <label class="form-label" for="context_window">Context window (optional)</label>
-      <input class="form-control" type="number" id="context_window" name="context_window" min="1" placeholder="app default: {{ default_max_tokens }}">
-      <div class="form-text">Total tokens this model actually supports. Left blank, this endpoint caps at the app default ({{ default_max_tokens }}) regardless of the model's real capacity.</div>
-    </div>
-    <button class="btn btn-primary" type="submit">Add endpoint</button>
-  </form>
+  </div>
 </div>
 
-<div class="card card-body mb-4">
-  <h2 class="h5">Deploy configuration</h2>
-  <p class="text-body-secondary">Used by the Deployer column once a card is approved.</p>
-  <form method="post" action="/ui/projects/{{ project.id }}/deploy-config">
-    <div class="mb-3">
-      <label class="form-label" for="mode">Mode</label>
-      <select class="form-select" id="mode" name="mode">
-        <option value="pr_to_operator" {{ "selected" if not deploy_config or deploy_config.mode == "pr_to_operator" }}>PR to operator — push the branch and open a GitHub PR for you to review and merge. Nothing deploys automatically.</option>
-        <option value="auto_main" {{ "selected" if deploy_config and deploy_config.mode == "auto_main" }}>Auto-main — merge to the default branch, push, and run the deploy command below. Zero human gate.</option>
-      </select>
-    </div>
-    <div class="mb-3">
-      <label class="form-label" for="github_token_ref">GitHub token env var</label>
-      <input class="form-control" type="text" id="github_token_ref" name="github_token_ref" value="{{ deploy_config.github_token_ref if deploy_config else '' }}" placeholder="GITHUB_PR_TOKEN">
-      <div class="form-text">
-        Name of an environment variable on the server holding a repo-scoped GitHub personal access token — never
-        the raw token. Required for PR to operator (to open the PR). For auto-main, it's optional but enables CI
-        awareness: with it set, a card's deploy isn't marked done until GitHub Actions (or any other check reported
-        against the commit) actually comes back green — a red check bounces it back to Developer instead. Without
-        it, auto-main deploys are marked done as soon as the push succeeds, same as before.
-      </div>
-    </div>
-    <div class="mb-3">
-      <label class="form-label" for="kind">Deploy step (for auto-main)</label>
-      <select class="form-select" id="kind" name="kind">
-        <option value="none" {{ "selected" if not deploy_config or deploy_config.kind == "none" }}>None — merging to the default branch and pushing is the whole job</option>
-        <option value="command" {{ "selected" if deploy_config and deploy_config.kind == "command" }}>Command</option>
-        <option value="script" {{ "selected" if deploy_config and deploy_config.kind == "script" }}>Script path</option>
-        <option value="webhook" {{ "selected" if deploy_config and deploy_config.kind == "webhook" }}>Webhook</option>
-      </select>
-      <div class="form-text">Merge + push always happens in auto-main mode. Pick a deploy step only if something needs to run after that — a build, an upload, a webhook. "None" is a normal, common choice, not a misconfiguration.</div>
-    </div>
-    <p class="text-body-secondary">Zero LLM-supplied arguments for auto-main — the deploy step below (if any) runs exactly as configured.</p>
-    <div class="mb-3">
-      <label class="form-label" for="command">Command</label>
-      <input class="form-control" type="text" id="command" name="command" value="{{ deploy_config.command if deploy_config else '' }}" placeholder="docker build -t app . && docker push app">
-    </div>
-    <div class="mb-3">
-      <label class="form-label" for="script_path">Script path</label>
-      <input class="form-control" type="text" id="script_path" name="script_path" value="{{ deploy_config.script_path if deploy_config else '' }}" placeholder="./deploy.sh">
-    </div>
-    <div class="mb-3">
-      <label class="form-label" for="webhook_url">Webhook URL</label>
-      <input class="form-control" type="url" id="webhook_url" name="webhook_url" value="{{ deploy_config.webhook_url if deploy_config else '' }}">
-    </div>
-    <div class="mb-3">
-      <label class="form-label" for="timeout_seconds">Timeout (seconds)</label>
-      <input class="form-control" type="number" id="timeout_seconds" name="timeout_seconds" value="{{ deploy_config.timeout_seconds if deploy_config else 600 }}">
-    </div>
-    <button class="btn btn-primary" type="submit">Save deploy config</button>
-  </form>
-</div>
-
-<div class="card card-body mb-4">
-  <h2 class="h5">Danger zone</h2>
-  <form method="post" action="/ui/projects/{{ project.id }}/archive" onsubmit="return confirm('Archive this project? It will be hidden from the project list.');">
-    <button class="btn btn-danger" type="submit">Archive project</button>
-  </form>
-</div>
+<script>
+  // Forms in these tabs redirect back to this same page with #<pane-id> in the URL
+  // (see projects.py's redirects and the endpoint-config forms' next= params above) so
+  // that saving something in, say, "Deploy configuration" lands back on that tab
+  // instead of silently resetting to "Project details" every time.
+  document.addEventListener("DOMContentLoaded", function () {
+    var hash = window.location.hash;
+    if (!hash) return;
+    var trigger = document.querySelector('#settings-tabs [data-bs-target="' + hash + '"]');
+    if (trigger) {
+      bootstrap.Tab.getOrCreateInstance(trigger).show();
+    }
+  });
+</script>
 {% endblock %}

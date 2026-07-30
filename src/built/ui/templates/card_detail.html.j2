@@ -1,9 +1,11 @@
 {% extends "base.html.j2" %}
 {% import "macros.html.j2" as m %}
 {% block title %}{{ card.title }}{% endblock %}
+{% block breadcrumb %}
+<span class="navbar-text text-white-50 px-1">/</span>
+<a class="navbar-brand py-0 fs-6" href="/ui/projects/{{ project.id }}/board">{{ project.name }}</a>
+{% endblock %}
 {% block content %}
-<p class="mb-4"><a href="/ui/projects/{{ project.id }}/board">&larr; {{ project.name }} board</a></p>
-
 <div class="mb-3">
   <h1>{{ card.title }}</h1>
   <p class="d-flex flex-wrap align-items-center gap-1">

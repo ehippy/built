@@ -114,7 +114,7 @@ async def update_project_settings(
         max_deploy_attempts=max_deploy_attempts,
         max_iterations_per_run=max_iterations_per_run,
     )
-    return RedirectResponse(f"/ui/projects/{project_id}/settings", status_code=303)
+    return RedirectResponse(f"/ui/projects/{project_id}/settings#details-pane", status_code=303)
 
 
 @router.post("/projects/{project_id}/archive")
@@ -158,7 +158,7 @@ async def add_project_endpoint_config(
         max_concurrency=max_concurrency,
         context_window=int(context_window) if context_window.strip() else None,
     )
-    return RedirectResponse(f"/ui/projects/{project_id}/settings", status_code=303)
+    return RedirectResponse(f"/ui/projects/{project_id}/settings#endpoints-pane", status_code=303)
 
 
 @router.post("/projects/{project_id}/deploy-config")
@@ -184,4 +184,4 @@ async def set_project_deploy_config(
         timeout_seconds=timeout_seconds,
         github_token_ref=github_token_ref or None,
     )
-    return RedirectResponse(f"/ui/projects/{project_id}/settings", status_code=303)
+    return RedirectResponse(f"/ui/projects/{project_id}/settings#deploy-pane", status_code=303)

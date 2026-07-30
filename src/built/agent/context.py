@@ -32,6 +32,13 @@ _CURATION_FOCUS: dict[ActivityKind, str] = {
         "missing or unclear error messages, code-style inconsistencies. Small, concrete fixes, not a "
         "rewrite."
     ),
+    ActivityKind.STAY_DRY: (
+        "working in stay-DRY mode: look for duplicated or near-duplicated code — repeated logic, "
+        "copy-pasted blocks, parallel implementations of the same idea living in different files or "
+        "functions. For each one, propose a concrete refactor that extracts or consolidates the shared "
+        "code, naming the specific files/functions involved. Skip incidental similarity that isn't "
+        "actually the same concept — not every repeated line is worth deduplicating."
+    ),
 }
 
 

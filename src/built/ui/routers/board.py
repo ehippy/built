@@ -16,6 +16,7 @@ _CURATION_LABELS: dict[ActivityKind, str] = {
     ActivityKind.BUG_SWEEP: "Bug sweep",
     ActivityKind.OPPORTUNITY_BRAINSTORM: "Opportunities",
     ActivityKind.POLISH_REVIEW: "Polish review",
+    ActivityKind.STAY_DRY: "Stay DRY",
     ActivityKind.AGENTS_MD: "Tend AGENTS.md",
 }
 

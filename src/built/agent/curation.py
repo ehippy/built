@@ -4,7 +4,7 @@ filing a ticket. Structurally similar to agent/loop.py's run_column_visit, but
 without CardColumnVisit/CardEvent bookkeeping — there's no card to attach a
 transcript to until propose_tasks actually creates one.
 
-Four kinds (ActivityKind), one mechanism: explore with read-only tools, decide,
+Several kinds (ActivityKind), one mechanism: explore with read-only tools, decide,
 call propose_tasks. See orchestrator/curator.py for scheduling and cadence."""
 
 import json

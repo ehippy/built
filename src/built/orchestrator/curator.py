@@ -1,5 +1,5 @@
 """Curation (agent/curation.py) on a schedule: wakes on its own, and for every
-non-paused project checks which of the four ActivityKinds are due. Also exposes
+non-paused project checks which of the ActivityKinds are due. Also exposes
 run_curation_activity for on-demand manual triggers (the board page's per-kind
 "run now" buttons) — same underlying pass, just invoked once outside the timer.
 

@@ -81,11 +81,11 @@ class Settings(BaseSettings):
 
     # The curator (agent/curation.py, orchestrator/curator.py): autonomous
     # background passes, one project at a time, that propose cards — never edit the
-    # repo directly. Four kinds (ActivityKind): bug_sweep/opportunity_brainstorm/
-    # polish_review have no cooldown — every wake is another chance to propose new
-    # work, so curator_poll_interval_seconds is the only pacing. agents_md reviews
-    # recently closed work and proposes AGENTS.md updates, gated by "anything closed
-    # since last run" instead. Each kind is also manually triggerable per project.
+    # repo directly. Most kinds (ActivityKind) — bug_sweep/opportunity_brainstorm/
+    # polish_review/stay_dry — have no cooldown — every wake is another chance to
+    # propose new work, so curator_poll_interval_seconds is the only pacing. agents_md
+    # reviews recently closed work and proposes AGENTS.md updates, gated by "anything
+    # closed since last run" instead. Each kind is also manually triggerable per project.
     curator_enabled: bool = True
     curator_poll_interval_seconds: float = 1800
     curator_max_iterations: int = 15

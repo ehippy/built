@@ -101,4 +101,5 @@ class ActivityKind(StrEnum):
     BUG_SWEEP = "bug_sweep"
     OPPORTUNITY_BRAINSTORM = "opportunity_brainstorm"
     POLISH_REVIEW = "polish_review"
+    STAY_DRY = "stay_dry"  # looks for duplicated code and proposes shared-code refactors
     AGENTS_MD = "agents_md"  # proposes an AGENTS.md-update card; replaces the old Tender

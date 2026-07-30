@@ -285,3 +285,39 @@ class TestCompactToolResultTrimming:
         assert event is not None
         assert event.summary == "summary"
         assert len(result) < len(msgs)
+
+    @pytest.mark.asyncio
+    async def test_trims_an_oversized_tool_result_on_the_very_first_tool_call(self):
+        """Regression: confirmed in production against an 8.4M-token rejection from
+        Reviewer's first call to review_diff. The whole conversation at that point was
+        just [system, user, assistant(tool_call), tool(huge diff)] — `rest` (everything
+        after the pinned system+user prefix) has only 2 messages, which is <=
+        keep_messages under any realistic config. The trim pass used to run only after a
+        "does rest even exceed keep_messages" guard, so this exact shape bailed out and
+        returned the oversized message completely untouched no matter how far over
+        budget it pushed things — there was no "middle" segment to summarize, so nothing
+        else would have caught it either."""
+        config = ContextWindowConfig(
+            max_tokens=64_000,
+            keep_messages=10,
+            max_tool_result_chars=100,
+        )
+        big_result = "x" * 250_000  # ~62.5k estimated tokens on its own
+        msgs = [
+            _system("system"),
+            _user("user"),
+            _assistant("thinking...", tool_calls=[_tool_call("review_diff", "{}")]),
+            _tool(big_result, tool_call_id="tc1"),
+        ]
+
+        client = StubLLMClient()
+        result, event = await compact(msgs, client, config, "test-model")
+
+        assert client.calls == []
+        assert event is not None
+        assert event.summary is None
+        trimmed_tool_msg = next(m for m in result if m.get("role") == "tool")
+        assert len(trimmed_tool_msg["content"]) < len(big_result)
+        assert "truncated from 250000 chars" in trimmed_tool_msg["content"]
+        assert result[0] == msgs[0]
+        assert result[1] == msgs[1]

@@ -224,7 +224,10 @@ GIT_DIFF = {
     "type": "function",
     "function": {
         "name": "git_diff",
-        "description": "Show the diff of uncommitted changes.",
+        "description": (
+            "Show the diff of uncommitted changes. Very large diffs are truncated — if that "
+            "happens, use bash to diff a specific path instead of the whole tree."
+        ),
         "parameters": {"type": "object", "properties": {}},
     },
 }
@@ -575,9 +578,10 @@ REVIEW_DIFF = {
     "function": {
         "name": "review_diff",
         "description": (
-            "Show the full diff of everything this card's branch has changed relative to the "
+            "Show the diff of everything this card's branch has changed relative to the "
             "project's default branch — the actual change under review. Unlike git_diff, this is not "
-            "limited to uncommitted changes."
+            "limited to uncommitted changes. Very large diffs are truncated — if that happens, use "
+            "bash to diff a specific path (e.g. `git diff <ref>...HEAD -- path/to/file`) instead."
         ),
         "parameters": {"type": "object", "properties": {}},
     },

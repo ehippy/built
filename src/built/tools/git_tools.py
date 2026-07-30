@@ -8,6 +8,24 @@ from pathlib import Path
 _COMMIT_AUTHOR_NAME = "built-agent"
 _COMMIT_AUTHOR_EMAIL = "agent@built.local"
 
+# Unlike every other tool (bash's MAX_OUTPUT_CHARS, read_file's MAX_FILE_BYTES/pagination,
+# grep/glob's MAX_MATCHES), diff output had no cap at all — a branch that touches a
+# generated/vendored file or a lockfile can produce a multi-megabyte diff in one tool call,
+# which blows straight through the model's context window in a single message before
+# agent/context_window.py's compaction ever gets a chance to run. Same order of magnitude as
+# bash's cap, for consistency.
+MAX_DIFF_CHARS = 20_000
+
+
+def _truncate_diff(diff_text: str) -> str:
+    if len(diff_text) <= MAX_DIFF_CHARS:
+        return diff_text
+    return (
+        diff_text[:MAX_DIFF_CHARS] + f"\n... [diff truncated, {len(diff_text)} chars total — this "
+        "change is too large to review in one shot; use bash to diff individual files or "
+        "directories instead, e.g. `git diff <ref>...HEAD -- path/to/file`]"
+    )
+
 
 class GitCommandError(Exception):
     # git writes some of its most useful failure detail to stdout, not stderr — e.g.
@@ -47,7 +65,7 @@ async def status(worktree: Path) -> str:
 
 async def diff(worktree: Path, *, staged: bool = False) -> str:
     args = ["diff", "--staged"] if staged else ["diff"]
-    return await run_git(*args, cwd=worktree)
+    return _truncate_diff(await run_git(*args, cwd=worktree))
 
 
 async def diff_against_ref(worktree: Path, ref: str) -> str:
@@ -56,7 +74,7 @@ async def diff_against_ref(worktree: Path, ref: str) -> str:
     commits `ref` picked up on its own side since the branch point). What Reviewer
     actually needs: an ordinary `git diff` only shows uncommitted changes, and this
     pipeline auto-commits after every tool call, so there's normally nothing there."""
-    return await run_git("diff", f"{ref}...HEAD", cwd=worktree)
+    return _truncate_diff(await run_git("diff", f"{ref}...HEAD", cwd=worktree))
 
 
 _CONFLICT_STATUS_CODES = {"UU", "AA", "DD", "AU", "UA", "DU", "UD"}

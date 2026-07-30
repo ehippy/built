@@ -199,13 +199,6 @@ async def compact(
     pinned = messages[:2] if len(messages) > 1 else messages[:1]
     rest = messages[len(pinned) :]
 
-    if len(rest) <= config.keep_messages:
-        # Nothing old enough to summarize beyond the pinned prefix + recent tail.
-        return messages, None
-
-    tail = rest[-config.keep_messages :] if config.keep_messages else []
-    middle = rest[: len(rest) - len(tail)]
-
     def _event(result: list[dict], *, summary: str | None) -> CompactionEvent:
         return CompactionEvent(
             messages_before=len(messages),
@@ -215,16 +208,25 @@ async def compact(
             summary=summary,
         )
 
-    # If any tool RESULT in the middle segment is very large, try trimming it
-    # first — cheaper than a full LLM summarization pass below, and often
-    # enough on its own. Targets role == "tool" messages' `content`, which is
-    # where actual tool output lives (a read_file/bash/review_diff result) —
-    # confirmed this previously targeted assistant tool_calls' *arguments*
-    # instead (what a model sent as *input* to a tool, e.g. review_diff's
-    # `{}` — essentially never large), making this trim step a no-op for the
+    # If any tool RESULT since the pinned prefix is very large, try trimming it first —
+    # cheaper than a full LLM summarization pass below, and often enough on its own.
+    # Targets role == "tool" messages' `content`, which is where actual tool output lives
+    # (a read_file/bash/review_diff result) — confirmed this previously targeted assistant
+    # tool_calls' *arguments* instead (what a model sent as *input* to a tool, e.g.
+    # review_diff's `{}` — essentially never large), making this trim step a no-op for the
     # actual common case of a large tool result.
+    #
+    # Deliberately runs over the whole of `rest`, and before the "nothing old enough to
+    # summarize" bailout below rather than after it: an oversized result can blow the
+    # budget on the very first tool call of a run — e.g. Reviewer's first call being
+    # review_diff — when `rest` is still shorter than `keep_messages` and there's no
+    # "middle" segment to summarize at all. The old ordering treated "too few messages to
+    # summarize" as "nothing to do" and returned the oversized message completely
+    # untouched no matter how far over budget it pushed things; confirmed in production
+    # against an 8.4M-token rejection where the whole conversation was just
+    # [system, user, assistant(tool_call), tool(huge diff)].
     trimmed = False
-    for msg in middle:
+    for msg in rest:
         if msg["role"] == "tool":
             content = msg.get("content") or ""
             if len(content) > config.max_tool_result_chars:
@@ -233,10 +235,23 @@ async def compact(
                 )
                 trimmed = True
     if trimmed:
-        trimmed_token_count = estimate_tokens(pinned + middle + tail)
+        trimmed_token_count = estimate_tokens(pinned + rest)
         if trimmed_token_count <= budget * 0.85 + 1000:
-            result = pinned + middle + tail
+            result = pinned + rest
             return result, _event(result, summary=None)
+
+    if len(rest) <= config.keep_messages:
+        # Nothing old enough to summarize beyond the pinned prefix + recent tail. If the
+        # trim pass above already changed something but wasn't enough on its own to clear
+        # budget, that's still the best this function can do without dropping the pinned
+        # prefix or recent turns — report it; otherwise truly nothing changed.
+        if not trimmed:
+            return messages, None
+        result = pinned + rest
+        return result, _event(result, summary=None)
+
+    tail = rest[-config.keep_messages :] if config.keep_messages else []
+    middle = rest[: len(rest) - len(tail)]
 
     # Build conversation text and summarize just the middle segment.
     conv_text = _build_conversation_text(middle, 0)

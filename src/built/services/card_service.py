@@ -304,6 +304,12 @@ async def get_latest_attempt_recap(session: AsyncSession, card: Card) -> str | N
 async def list_events(
     session: AsyncSession, card_id: str, *, since_seq: int = 0, limit: int = 200
 ) -> list[CardEvent]:
+    """Pages forward from a cursor — for an API consumer accumulating a card's full
+    history incrementally (poll with since_seq=<last seq you saw> to get only the
+    next batch). NOT what the dashboard wants: since_seq defaults to 0 and nothing
+    calls this with an advancing cursor there, calling this with the default on
+    every poll would return the same oldest-`limit` window forever on any card
+    past `limit` events — see list_recent_events for what the UI actually uses."""
     await get_card(session, card_id)
     stmt = (
         select(CardEvent)
@@ -312,6 +318,21 @@ async def list_events(
         .limit(limit)
     )
     return list((await session.scalars(stmt)).all())
+
+
+async def list_recent_events(session: AsyncSession, card_id: str, *, limit: int = 200) -> list[CardEvent]:
+    """The most recent `limit` events, chronological order for display — what the
+    card detail page and its live-polling transcript fragment actually render.
+    Confirmed in production: a card past 200 total events showed the same ~18-
+    minutes-stale window on every 2-second poll forever, because list_events(
+    since_seq=0) always returns the *oldest* `limit` events, not the newest."""
+    await get_card(session, card_id)
+    stmt = (
+        select(CardEvent).where(CardEvent.card_id == card_id).order_by(CardEvent.seq.desc()).limit(limit)
+    )
+    events = list((await session.scalars(stmt)).all())
+    events.reverse()
+    return events
 
 
 async def retry_card(session: AsyncSession, card_id: str, *, note: str | None = None) -> Card:

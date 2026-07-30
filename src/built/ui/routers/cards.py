@@ -14,7 +14,7 @@ async def card_detail(card_id: str, request: Request, session: SessionDep):
     card = await card_service.get_card(session, card_id, with_last_activity=True)
     project = await project_service.get_project(session, card.project_id)
     visits = await card_service.list_column_visits(session, card_id)
-    events = await card_service.list_events(session, card_id, limit=200)
+    events = await card_service.list_recent_events(session, card_id, limit=200)
     return templates.TemplateResponse(
         request,
         "card_detail.html.j2",
@@ -25,7 +25,7 @@ async def card_detail(card_id: str, request: Request, session: SessionDep):
 @router.get("/cards/{card_id}/events/fragment")
 async def card_events_fragment(card_id: str, request: Request, session: SessionDep):
     card = await card_service.get_card(session, card_id)
-    events = await card_service.list_events(session, card_id, limit=200)
+    events = await card_service.list_recent_events(session, card_id, limit=200)
     return templates.TemplateResponse(request, "_events_fragment.html.j2", {"card": card, "events": events})
 
 

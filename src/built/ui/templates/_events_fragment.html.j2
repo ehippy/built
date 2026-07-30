@@ -8,6 +8,13 @@
     {% if event.type == "llm_response" %}
       {% if event.payload.content %}<pre>{{ event.payload.content }}</pre>{% endif %}
       {% if event.payload.tool_calls %}<div class="hint">tool calls: {{ event.payload.tool_calls|join(", ") }}</div>{% endif %}
+    {% elif event.type == "tool_call" and event.payload.name == "update_plan" and event.payload.arguments.steps %}
+      <div class="hint"><strong>Plan updated</strong>{% if event.payload.is_error %} (error){% endif %}</div>
+      <ul class="plan-list">
+        {% for step in event.payload.arguments.steps %}
+        <li class="plan-step plan-status-{{ step.status }}">{{ step.step }}</li>
+        {% endfor %}
+      </ul>
     {% elif event.type == "tool_call" %}
       <div class="hint"><strong>{{ event.payload.name }}</strong>{% if event.payload.is_error %} (error){% endif %}</div>
       <details class="collapsible">

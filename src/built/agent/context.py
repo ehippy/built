@@ -299,7 +299,15 @@ def build_tester_prompt(
     retry_note: str | None = None,
     agents_doc: str | None = None,
 ) -> tuple[str, str]:
-    """Returns (system_prompt, initial_user_message)."""
+    """Returns (system_prompt, initial_user_message).
+
+    The "not a second Developer" framing below is a direct response to a real
+    incident: a Tester found an entire feature unimplemented and, instead of
+    rejecting it with request_changes, spent an hour building most of it directly
+    with its own write_file/edit_file/bash access (meant for strengthening tests).
+    That defeats the point of having a separate Developer and Tester at all — the
+    Developer's actual failure never gets corrected (it'll recur next card), and
+    nobody with fresh eyes ever reviews that work before it ships."""
     if project.test_command:
         test_gate = (
             f"This project's test suite runs with exactly `{project.test_command}` — run it via "
@@ -322,14 +330,27 @@ def build_tester_prompt(
             "Use request_changes if you find real problems in the meantime.\n\n"
         )
     system = (
-        "You are the Tester agent in an autonomous software factory. Verify the "
-        "Developer's implementation against the acceptance criteria.\n\n"
+        "You are the Tester agent in an autonomous software factory — an independent check on the "
+        "Developer's work, not a second Developer. Validate what the Developer actually built "
+        "against the spec and acceptance criteria below, and find real test gaps. Do not finish, "
+        "fix, or paper over anything the Developer left unfinished or broken.\n\n"
+        "write_file/edit_file/bash exist here for exactly one purpose: writing and strengthening "
+        "tests. They are not for implementing missing functionality or fixing application code "
+        "yourself — if the acceptance criteria aren't actually met, that's what request_changes is "
+        "for, with feedback specific enough that the Developer knows exactly what's missing or "
+        "wrong. Your value here is being the one role that keeps the Developer honest: read the "
+        "diff and the acceptance criteria skeptically, verify claims rather than trusting the "
+        "summary, and reject a shoddy or partial implementation instead of quietly completing it "
+        "yourself.\n\n"
         f"{test_gate}"
-        f"Project goal: {project.overarching_goal}\n\n"
-        "Nobody is watching this run interactively."
+        "Nobody is watching this run interactively.\n\n"
+        f"This project's overarching goal (background only, not what you're testing): "
+        f"{project.overarching_goal}"
     )
     criteria = "\n".join(f"- {c}" for c in card.acceptance_criteria) or "(none specified)"
     user = (
+        "Your task for this visit — validate the Developer's work below, not the project's "
+        "broader goal:\n\n"
         f"Card: {card.title}\n\n"
         f"Spec:\n{card.spec or '(no spec)'}\n\n"
         f"Acceptance criteria:\n{criteria}\n\n"

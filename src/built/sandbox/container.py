@@ -25,6 +25,10 @@ DEFAULT_CPU_QUOTA = 100_000  # 1 CPU
 DEFAULT_PIDS_LIMIT = 256
 
 
+class DockerDaemonAccessError(RuntimeError):
+    """Docker is unavailable to the account running the application."""
+
+
 @dataclass
 class CommandResult:
     exit_code: int
@@ -62,7 +66,15 @@ class DockerCommandExecutor:
     def _run_sync(self, worktree: Path, command: str, timeout_seconds: int) -> CommandResult:
         import docker
 
-        client = docker.from_env()
+        try:
+            client = docker.from_env()
+        except docker.errors.DockerException as exc:
+            raise DockerDaemonAccessError(
+                "Cannot access the Docker daemon. The account running Built/Uvicorn "
+                "must be allowed to use Docker (usually by belonging to the docker group); "
+                "restart the service after changing its group membership. "
+                f"Docker reported: {exc}"
+            ) from exc
         container = None
         try:
             container = client.containers.run(

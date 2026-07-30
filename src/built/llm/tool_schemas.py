@@ -114,7 +114,9 @@ WRITE_FILE = {
             "already exists and you're only changing part of it — write_file makes you (and the "
             "model reading the diff later) pay for the whole file every time, even the 99% that "
             "didn't change. Reach for it for genuinely new files, or when a rewrite is actually "
-            "clearer than a series of edits. "
+            "clearer than a series of edits. If the same change applies to several existing files "
+            "at once, neither write_file nor edit_file is the right tool — that's a one-shot "
+            "sed/grep job via bash (see its description) instead of N calls here. "
             "Whatever you write should be complete and correct as committed, not a draft: match this "
             "repo's existing conventions (naming, formatting, import style) rather than inventing "
             "your own, don't leave placeholder or TODO content standing in for real implementation, "
@@ -146,7 +148,9 @@ EDIT_FILE = {
             "strip the leading line-number-and-tab from every line first, that prefix isn't part of "
             "the file. If old_str isn't unique, this fails and tells you which lines it hit — narrow "
             "old_str with more context to pick one of them, or set replace_all when you deliberately "
-            "mean to change all of them (e.g. renaming a variable throughout a file). "
+            "mean to change all of them (e.g. renaming a variable throughout a file) — that's for "
+            "repeats within one file; when the same mechanical change spans multiple files, prefer "
+            "bash (sed/grep) in a single call over calling edit_file once per file. "
             "Make each call one coherent, self-contained change — prefer several precise edit_file "
             "calls over a single old_str that spans unrelated lines just to make one big diff, and "
             "prefer editing over commenting out or duplicating code you're replacing."
@@ -180,7 +184,22 @@ BASH = {
     "type": "function",
     "function": {
         "name": "bash",
-        "description": "Run a shell command in the repository root — e.g. to run tests, lint, or build.",
+        "description": (
+            "Run a shell command in the repository root, inside a Linux container with standard "
+            "GNU tools (sed, grep, find, awk — not macOS/BSD, so `sed -i 's/x/y/g' file` works "
+            "directly with no backup-suffix argument needed). Use it to run tests, lint, or build — "
+            "and just as importantly, use it for mechanical text changes that are the same across "
+            "multiple files. That's almost always cheaper and more reliable than repeating "
+            "write_file or edit_file once per file: find the affected files with grep -rl or find, "
+            "then apply the change to all of them in one sed/awk call, e.g. "
+            "`grep -rl '.site-footer' games/ | xargs sed -i '/\\.site-footer {/,/^}/d'` to strip the "
+            "same duplicated CSS block out of every game page in one shot. Reach for edit_file "
+            "instead when the change needs judgment about surrounding context that a regex can't "
+            "safely express, or only touches one place. Whichever you use, verify a bulk edit "
+            "actually did what you intended — grep_files for the old pattern, or git_diff — before "
+            "moving on; a sed pattern that's slightly too greedy is a classic way to silently "
+            "mangle more than you meant to."
+        ),
         "parameters": {
             "type": "object",
             "properties": {

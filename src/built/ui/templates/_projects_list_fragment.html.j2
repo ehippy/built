@@ -8,7 +8,11 @@
       <div class="d-flex align-items-center gap-2">
         <strong>{{ project.name }}</strong>
         {% if project.paused_at %}{{ m.badge("paused") }}
-        {% elif activity.is_being_worked %}<span class="spinner-border spinner-border-sm" title="Something is actively being worked on right now"></span>{% endif %}
+        {% elif activity.is_being_worked %}
+        <span class="spinner-border spinner-border-sm flex-shrink-0" role="status" title="Something is actively being worked on right now">
+          <span class="visually-hidden">Working…</span>
+        </span>
+        {% endif %}
       </div>
       <div class="text-body-secondary small">{{ project.overarching_goal }}</div>
       <div class="d-flex flex-wrap gap-1 mt-2">

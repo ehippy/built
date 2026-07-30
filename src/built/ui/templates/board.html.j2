@@ -66,7 +66,11 @@
           </div>
           <div class="small text-body-secondary ps-4 text-truncate">
             {% if not s.enabled %}off — not on the automatic schedule
-            {% elif s.running %}<span class="spinner-border spinner-border-sm" title="Running now"></span> {{ s.current_activity or "starting…" }}
+            {% elif s.running %}
+            <span class="spinner-border spinner-border-sm flex-shrink-0" role="status" title="Running now">
+              <span class="visually-hidden">Running…</span>
+            </span>
+            {{ s.current_activity or "starting…" }}
             {% elif s.last_run_at %}{{ s.last_run_at|timeago }}{% if s.summary %} — {{ s.summary }}{% endif %}
             {% else %}never run yet
             {% endif %}

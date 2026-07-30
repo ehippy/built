@@ -9,7 +9,11 @@
   <div class="card-body py-2 px-3">
     <div class="d-flex align-items-center gap-2 fw-semibold">
       {{ card.title }}
-      {% if card.is_being_worked %}<span class="spinner-border spinner-border-sm" title="An agent is actively working on this card"></span>{% endif %}
+      {% if card.is_being_worked %}
+      <span class="spinner-border spinner-border-sm flex-shrink-0" role="status" title="An agent is actively working on this card">
+        <span class="visually-hidden">Working…</span>
+      </span>
+      {% endif %}
     </div>
     <div class="text-body-secondary small d-flex flex-wrap align-items-center gap-1 mt-1">
       {% if card.priority != "normal" %}{{ badge("priority-" ~ card.priority, card.priority) }}{% endif %}

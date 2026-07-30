@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -12,6 +13,22 @@ class Base(DeclarativeBase):
 
 engine = create_async_engine(settings.database_url, echo=False)
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def _set_sqlite_pragma(dbapi_connection, connection_record) -> None:
+    """Several code paths (orchestrator/curator/deployer loops, and detached
+    asyncio.create_task background jobs like the manual curate trigger) hold a DB
+    session open concurrently with API request handling. SQLite's default rollback
+    journal serializes a writer's COMMIT behind any other connection's open read
+    transaction, which without a busy_timeout raises 'database is locked'
+    immediately instead of waiting. WAL lets readers and the one writer proceed
+    without blocking each other in the first place; busy_timeout is the fallback
+    for the writer-vs-writer case WAL alone doesn't solve."""
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA busy_timeout=30000")
+    cursor.close()
 
 
 ADDITIVE_COLUMNS = [

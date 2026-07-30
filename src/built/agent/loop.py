@@ -295,6 +295,16 @@ async def _require_passing_test_run(
 async def _developer_submit_for_test_handler(
     session: AsyncSession, card: Card, visit: CardColumnVisit, tool_call: ToolCallRequest, endpoint_used: str
 ) -> TerminalHandlerResult:
+    if not await run_attempts.has_completed_plan_this_visit(session, visit.id):
+        return TerminalHandlerResult(
+            handled=False,
+            feedback=(
+                "submit_for_test requires a completed plan first. Call update_plan with the full, "
+                "ordered list of steps needed to satisfy every acceptance criterion (if you haven't "
+                "yet), or update it with every step marked done (if you have) — your most recent "
+                "update_plan call must show all steps done before this will be accepted."
+            ),
+        )
     if not await run_attempts.has_made_any_change_this_visit(session, visit.id):
         return TerminalHandlerResult(
             handled=False,

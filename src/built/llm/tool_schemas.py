@@ -141,6 +141,47 @@ GIT_DIFF = {
     },
 }
 
+UPDATE_PLAN = {
+    "type": "function",
+    "function": {
+        "name": "update_plan",
+        "description": (
+            "Write or update your implementation plan: the full, ordered list of concrete steps "
+            "needed to satisfy every acceptance criterion. Call this first, before exploring or "
+            "changing anything, to lay out your plan — then call it again, with the complete current "
+            "list, whenever a step's status changes (pending -> in_progress when you start it, "
+            "in_progress -> done once it's actually implemented and committed). Always pass every "
+            "step, not just the one that changed — each call replaces the whole plan. "
+            "submit_for_test is rejected server-side unless your most recent call here has at least "
+            "one step and every step marked done."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "steps": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "step": {
+                                "type": "string",
+                                "description": "A concrete, individually checkable unit of work.",
+                            },
+                            "status": {
+                                "type": "string",
+                                "enum": ["pending", "in_progress", "done"],
+                            },
+                        },
+                        "required": ["step", "status"],
+                    },
+                }
+            },
+            "required": ["steps"],
+        },
+    },
+}
+
 SUBMIT_FOR_TEST = {
     "type": "function",
     "function": {
@@ -149,9 +190,11 @@ SUBMIT_FOR_TEST = {
             "Declare the implementation complete and ready for the Tester to verify against the "
             "acceptance criteria. This ends your turn — call it only once every acceptance criterion "
             "is implemented and committed, AND you've run the project's test command via bash and "
-            "gotten exit code 0 yourself. This is checked server-side: it must be that exact "
-            "command, it must have just passed, and no file may have changed since — claiming "
-            "completion without a real passing run will be rejected."
+            "gotten exit code 0 yourself. This is checked server-side: your most recent update_plan "
+            "call must have every step marked done, this visit must have actually changed a file, and "
+            "the test run must be that exact command, must have just passed, and no file may have "
+            "changed since — claiming completion without real, planned, verified work will be "
+            "rejected."
         ),
         "parameters": {
             "type": "object",
@@ -176,6 +219,7 @@ DEVELOPER_TOOLS = [
     BASH,
     GIT_STATUS,
     GIT_DIFF,
+    UPDATE_PLAN,
     SUBMIT_FOR_TEST,
 ]
 

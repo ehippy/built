@@ -120,3 +120,27 @@ async def has_made_any_change_this_visit(session: AsyncSession, column_visit_id:
         )
     )
     return any(payload.get("commit_sha") for payload in result)
+
+
+async def has_completed_plan_this_visit(session: AsyncSession, column_visit_id: str) -> bool:
+    """Developer's submit_for_test gate on planning (see llm.tool_schemas.UPDATE_PLAN):
+    true only if the most recent update_plan call in this visit has at least one
+    step and every step marked done. Only the latest call counts — an earlier
+    all-done snapshot doesn't survive a later update_plan call that adds a new
+    pending step, exactly like has_passing_run_since_last_change only trusts the
+    latest bash run rather than any run that ever passed."""
+    result = await session.scalars(
+        select(CardEvent.payload)
+        .where(
+            CardEvent.column_visit_id == column_visit_id,
+            CardEvent.type == EventType.TOOL_CALL,
+        )
+        .order_by(CardEvent.seq)
+    )
+    latest_steps: list | None = None
+    for payload in result:
+        if payload.get("name") == "update_plan":
+            latest_steps = payload.get("arguments", {}).get("steps") or []
+    if not latest_steps:
+        return False
+    return all(step.get("status") == "done" for step in latest_steps)

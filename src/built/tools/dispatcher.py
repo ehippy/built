@@ -76,6 +76,14 @@ class ToolDispatcher:
             assert self.ctx.base_ref is not None, "review_diff requires ToolContext.base_ref"
             diff = await git_tools.diff_against_ref(self.ctx.worktree_root, self.ctx.base_ref)
             return ToolResult.ok(diff), None
+        if name == "update_plan":
+            # Pure bookkeeping — no worktree/git access, nothing to auto-commit. The
+            # steps themselves are recorded as this TOOL_CALL event's `arguments` by
+            # run_column_visit like any other tool call; run_attempts.
+            # has_completed_plan_this_visit reads them back from there.
+            steps = arguments["steps"]
+            done = sum(1 for step in steps if step.get("status") == "done")
+            return ToolResult.ok(f"Plan recorded: {len(steps)} step(s), {done} marked done."), None
         return ToolResult.error(f"unknown tool: {name!r}"), None
 
 

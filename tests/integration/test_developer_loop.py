@@ -76,12 +76,24 @@ async def test_developer_loop_happy_path_reads_writes_runs_bash_and_submits(db_s
                 tool_calls=[ToolCallRequest(id="call_3", name="bash", arguments={"command": "pytest -q"})],
                 endpoint_used="fake::model",
             ),
-            # Turn 5: done.
+            # Turn 5: marks the plan done — also required before submit_for_test.
             LLMResult(
                 content=None,
                 tool_calls=[
                     ToolCallRequest(
-                        id="call_4", name="submit_for_test", arguments={"summary": "Added subtract()"}
+                        id="call_4",
+                        name="update_plan",
+                        arguments={"steps": [{"step": "Add subtract(a, b) to app.py", "status": "done"}]},
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+            # Turn 6: done.
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_5", name="submit_for_test", arguments={"summary": "Added subtract()"}
                     )
                 ],
                 endpoint_used="fake::model",
@@ -117,9 +129,15 @@ async def test_developer_loop_happy_path_reads_writes_runs_bash_and_submits(db_s
 
     events = await card_service.list_events(db_session, card.id)
     tool_call_events = [e for e in events if e.type.value == "tool_call"]
-    assert [e.payload["name"] for e in tool_call_events] == ["read_file", "write_file", "bash"]
+    assert [e.payload["name"] for e in tool_call_events] == [
+        "read_file",
+        "write_file",
+        "bash",
+        "update_plan",
+    ]
     assert tool_call_events[1].payload["commit_sha"] is not None  # write_file committed
     assert tool_call_events[2].payload["commit_sha"] is None  # bash changed nothing on disk
+    assert tool_call_events[3].payload["commit_sha"] is None  # update_plan doesn't touch the worktree
 
 
 async def test_developer_submit_for_test_is_rejected_without_a_passing_run_then_succeeds(
@@ -164,7 +182,18 @@ async def test_developer_submit_for_test_is_rejected_without_a_passing_run_then_
             LLMResult(
                 content=None,
                 tool_calls=[
-                    ToolCallRequest(id="call_4", name="submit_for_test", arguments={"summary": "done"})
+                    ToolCallRequest(
+                        id="call_4",
+                        name="update_plan",
+                        arguments={"steps": [{"step": "Add subtract(a, b) to app.py", "status": "done"}]},
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(id="call_5", name="submit_for_test", arguments={"summary": "done"})
                 ],
                 endpoint_used="fake::model",
             ),
@@ -179,7 +208,7 @@ async def test_developer_submit_for_test_is_rejected_without_a_passing_run_then_
 
     assert result.column == Column.TESTER
     assert visit.outcome == VisitOutcome.SUBMITTED
-    assert llm.calls[3] is not None  # the loop kept going past the rejected first attempt
+    assert llm.calls[4] is not None  # the loop kept going past the rejected first attempt
 
 
 async def test_developer_submit_for_test_is_rejected_if_nothing_was_ever_changed(db_session, toy_repo_remote):
@@ -218,6 +247,200 @@ async def test_developer_submit_for_test_is_rejected_if_nothing_was_ever_changed
 
     result = await run_developer_visit(
         db_session, project, card, visit, llm_client=llm, dispatcher=dispatcher, max_iterations=3
+    )
+
+    assert result.column == Column.DEVELOPER  # never advanced
+    assert result.lifecycle_state == LifecycleState.BLOCKED
+
+
+async def test_developer_submit_for_test_is_rejected_without_a_plan(db_session, toy_repo_remote):
+    """A real implementation and a real passing run still aren't enough — the
+    Developer must also have externalized a plan and marked it done, so the
+    transcript shows what it thought needed doing, not just that something got
+    done."""
+    project, card, wt_path = await _make_developer_card(db_session, toy_repo_remote)
+    visit = await transitions.start_visit(db_session, card)
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_1",
+                        name="write_file",
+                        arguments={
+                            "path": "app.py",
+                            "content": (
+                                "def greet():\n    return 'hi'\n\n\ndef subtract(a, b):\n    return a - b\n"
+                            ),
+                        },
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[ToolCallRequest(id="call_2", name="bash", arguments={"command": "pytest -q"})],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(id="call_3", name="submit_for_test", arguments={"summary": "done"})
+                ],
+                endpoint_used="fake::model",
+            ),
+        ]
+    )
+    executor = FakeCommandExecutor(CommandResult(exit_code=0, stdout="1 passed", stderr=""))
+    dispatcher = ToolDispatcher(ctx=ToolContext(card_id=card.id, worktree_root=wt_path), executor=executor)
+
+    result = await run_developer_visit(
+        db_session, project, card, visit, llm_client=llm, dispatcher=dispatcher, max_iterations=3
+    )
+
+    assert result.column == Column.DEVELOPER  # never advanced
+    assert result.lifecycle_state == LifecycleState.BLOCKED
+
+
+async def test_developer_submit_for_test_is_rejected_when_plan_has_incomplete_steps(
+    db_session, toy_repo_remote
+):
+    project, card, wt_path = await _make_developer_card(db_session, toy_repo_remote)
+    visit = await transitions.start_visit(db_session, card)
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_1",
+                        name="update_plan",
+                        arguments={
+                            "steps": [
+                                {"step": "Add subtract(a, b) to app.py", "status": "done"},
+                                {"step": "Add tests for subtract()", "status": "in_progress"},
+                            ]
+                        },
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_2",
+                        name="write_file",
+                        arguments={
+                            "path": "app.py",
+                            "content": (
+                                "def greet():\n    return 'hi'\n\n\ndef subtract(a, b):\n    return a - b\n"
+                            ),
+                        },
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[ToolCallRequest(id="call_3", name="bash", arguments={"command": "pytest -q"})],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(id="call_4", name="submit_for_test", arguments={"summary": "done"})
+                ],
+                endpoint_used="fake::model",
+            ),
+        ]
+    )
+    executor = FakeCommandExecutor(CommandResult(exit_code=0, stdout="1 passed", stderr=""))
+    dispatcher = ToolDispatcher(ctx=ToolContext(card_id=card.id, worktree_root=wt_path), executor=executor)
+
+    result = await run_developer_visit(
+        db_session, project, card, visit, llm_client=llm, dispatcher=dispatcher, max_iterations=4
+    )
+
+    assert result.column == Column.DEVELOPER  # never advanced
+    assert result.lifecycle_state == LifecycleState.BLOCKED
+
+
+async def test_developer_submit_for_test_only_the_latest_plan_snapshot_counts(db_session, toy_repo_remote):
+    """A later update_plan call that adds a new (still-pending) step must
+    invalidate an earlier all-done snapshot — the plan is a live checklist, not a
+    one-time box to tick."""
+    project, card, wt_path = await _make_developer_card(db_session, toy_repo_remote)
+    visit = await transitions.start_visit(db_session, card)
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_1",
+                        name="write_file",
+                        arguments={
+                            "path": "app.py",
+                            "content": (
+                                "def greet():\n    return 'hi'\n\n\ndef subtract(a, b):\n    return a - b\n"
+                            ),
+                        },
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[ToolCallRequest(id="call_2", name="bash", arguments={"command": "pytest -q"})],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_3",
+                        name="update_plan",
+                        arguments={"steps": [{"step": "Add subtract(a, b)", "status": "done"}]},
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+            # Discovers more to do after already marking the plan done once.
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_4",
+                        name="update_plan",
+                        arguments={
+                            "steps": [
+                                {"step": "Add subtract(a, b)", "status": "done"},
+                                {"step": "Handle non-numeric arguments", "status": "pending"},
+                            ]
+                        },
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(id="call_5", name="submit_for_test", arguments={"summary": "done"})
+                ],
+                endpoint_used="fake::model",
+            ),
+        ]
+    )
+    executor = FakeCommandExecutor(CommandResult(exit_code=0, stdout="1 passed", stderr=""))
+    dispatcher = ToolDispatcher(ctx=ToolContext(card_id=card.id, worktree_root=wt_path), executor=executor)
+
+    result = await run_developer_visit(
+        db_session, project, card, visit, llm_client=llm, dispatcher=dispatcher, max_iterations=5
     )
 
     assert result.column == Column.DEVELOPER  # never advanced

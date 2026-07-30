@@ -1,7 +1,8 @@
-"""has_passing_run_since_last_change — the rigid test gate Developer's submit_for_test
-and Tester's approve both check server-side (see agent/loop.py's
-_require_passing_test_run). Exercises the domain function directly against real
-CardEvent/RunAttempt rows, without going through the full agent loop."""
+"""The server-side gates Developer's submit_for_test (and, for the test-run gate,
+Tester's approve) check before a terminal tool is allowed to succeed — see
+agent/loop.py's _require_passing_test_run and _developer_submit_for_test_handler.
+Exercises the domain functions directly against real CardEvent/RunAttempt rows,
+without going through the full agent loop."""
 
 from built.domain import run_attempts, transitions
 from built.domain.enums import EventType
@@ -123,3 +124,66 @@ async def test_read_only_tool_call_after_a_passing_run_does_not_invalidate_it(db
     await _record_bash_call(db_session, card, visit, command="pytest -q", exit_code=0)
     await _record_tool_call(db_session, card, visit, name="git_status", commit_sha=None)
     assert await run_attempts.has_passing_run_since_last_change(db_session, visit.id, "pytest -q")
+
+
+async def _record_plan_call(session, card, visit, *, steps):
+    await append_event(
+        session,
+        card_id=card.id,
+        column_visit_id=visit.id,
+        type=EventType.TOOL_CALL,
+        payload={"name": "update_plan", "arguments": {"steps": steps}, "commit_sha": None},
+    )
+
+
+async def test_no_plan_at_all_fails(db_session):
+    card, visit = await _make_visit(db_session)
+    assert not await run_attempts.has_completed_plan_this_visit(db_session, visit.id)
+
+
+async def test_plan_with_an_incomplete_step_fails(db_session):
+    card, visit = await _make_visit(db_session)
+    await _record_plan_call(
+        db_session,
+        card,
+        visit,
+        steps=[{"step": "a", "status": "done"}, {"step": "b", "status": "in_progress"}],
+    )
+    assert not await run_attempts.has_completed_plan_this_visit(db_session, visit.id)
+
+
+async def test_plan_with_every_step_done_succeeds(db_session):
+    card, visit = await _make_visit(db_session)
+    await _record_plan_call(
+        db_session, card, visit, steps=[{"step": "a", "status": "done"}, {"step": "b", "status": "done"}]
+    )
+    assert await run_attempts.has_completed_plan_this_visit(db_session, visit.id)
+
+
+async def test_only_the_latest_plan_call_counts(db_session):
+    """A later update_plan call that adds a new pending step must invalidate an
+    earlier all-done snapshot — the plan reflects current status, not "was ever
+    fully checked off"."""
+    card, visit = await _make_visit(db_session)
+    await _record_plan_call(db_session, card, visit, steps=[{"step": "a", "status": "done"}])
+    await _record_plan_call(
+        db_session,
+        card,
+        visit,
+        steps=[{"step": "a", "status": "done"}, {"step": "b", "status": "pending"}],
+    )
+    assert not await run_attempts.has_completed_plan_this_visit(db_session, visit.id)
+
+
+async def test_a_later_plan_call_marking_everything_done_succeeds(db_session):
+    card, visit = await _make_visit(db_session)
+    await _record_plan_call(
+        db_session,
+        card,
+        visit,
+        steps=[{"step": "a", "status": "done"}, {"step": "b", "status": "pending"}],
+    )
+    await _record_plan_call(
+        db_session, card, visit, steps=[{"step": "a", "status": "done"}, {"step": "b", "status": "done"}]
+    )
+    assert await run_attempts.has_completed_plan_this_visit(db_session, visit.id)

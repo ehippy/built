@@ -386,6 +386,26 @@ async def test_count_column_backlog_ignores_other_columns_and_archived_cards(db_
     assert pm_card.column == Column.PM
 
 
+async def test_count_column_backlog_excludes_epic_parent_cards(db_session, toy_repo_remote):
+    """An epic parent sits column=PM forever (services/card_service.py's
+    link_epic_child) — without this exclusion it would inflate the WIP gate
+    permanently, one unit per surviving epic."""
+    project, _ = await _make_project(db_session, toy_repo_remote, _n="9e")
+    await card_service.create_card(db_session, project.id, title="pm", raw_request="r")
+    epic = await card_service.create_card(db_session, project.id, title="epic", raw_request="r")
+    child = await card_service.create_card(db_session, project.id, title="child", raw_request="r")
+    other_child = await card_service.create_card(db_session, project.id, title="other", raw_request="r")
+    await db_session.commit()
+    await card_service.link_epic_child(db_session, parent_card_id=epic.id, child_card_id=child.id)
+    await card_service.link_epic_child(db_session, parent_card_id=epic.id, child_card_id=other_child.id)
+    await db_session.commit()
+
+    count = await card_service.count_column_backlog(db_session, project.id, Column.PM)
+
+    # pm_card + the two children — epic itself excluded.
+    assert count == 3
+
+
 async def test_run_curator_once_skips_a_paused_project(db_session, toy_repo_remote):
     project, _ = await _make_project(db_session, toy_repo_remote, _n="10")
     await project_service.pause_project(db_session, project.id)

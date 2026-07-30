@@ -117,20 +117,34 @@ src/built/
   services/      the DB-facing layer both api/ and ui/ build on — no business logic lives twice
   api/           JSON API (X-API-Key auth via api/deps.py's RequireApiKey)
   ui/            server-rendered dashboard — routers call services/ directly, no self-HTTP-calling
-  db/            SQLAlchemy models (db/models.py) and schema setup (create_all, no migrations)
+  db/            SQLAlchemy models (db/models.py) and schema setup (create_all + ADDITIVE_COLUMNS)
 tests/
   unit/          pure logic, no I/O
   integration/   real git repos + real sqlite; LLM and Docker always faked (tests/unit/fakes.py)
 ```
 
-There is no migration framework — `db/base.py`'s `create_all()` only creates tables that don't
-exist yet; changing an existing column's type/nullability needs a manual data-dir migration
-(see `data/migrate_context_window.py` for the pattern), not Alembic.
+No Alembic, but not fully migration-free either — `db/base.py`'s `create_all()` creates any
+missing table from current model metadata *and* runs `_add_missing_columns()`, which
+`ALTER TABLE ADD COLUMN`s anything listed in `ADDITIVE_COLUMNS` that isn't already present. A
+new nullable column on an existing table needs zero manual steps: add the `mapped_column` and
+one `(table, column, sql_type)` tuple to `ADDITIVE_COLUMNS`, and it's picked up automatically on
+next restart against an already-deployed database — same effort as a brand-new table, which
+`create_all()` always handles on its own. What this mechanism can't do: change an existing
+column's type, drop a column, or alter constraints on a column that's already there — those
+still need a manual one-off script (see `data/migrate_context_window.py` for the pattern, from
+before `ADDITIVE_COLUMNS` existed).
 
 ### A few conventions worth knowing before editing
 
 - Every enum lives in `domain/enums.py` as a `StrEnum` with a docstring explaining what each
   value means and where it's consumed — read it before adding or reinterpreting a value.
+  `Column`/`LifecycleState`/`ActivityKind` specifically are exhaustively iterated in several
+  places (`card_service.get_board`'s `{column: [] for column in Column}`,
+  `_board_fragment.html.j2`'s hardcoded column loop, `orchestrator/curator.py`'s
+  `for kind in ActivityKind`) — a new *value* on one of those three ripples through every such
+  loop. `VisitOutcome` has no such pattern anywhere and is cheap to extend. When something needs
+  a new "kind of card" that doesn't fit the existing 5-column/4-state shape (e.g. an epic-tracking
+  card), prefer a separate table (`EpicLink`) or a plain new column over a new enum value.
 - `services/` is the only layer that should touch the DB from `api/`/`ui/` — routers don't run
   raw queries.
 - UI templates are `*.html.j2` (not `*.html`), because Starlette/Jinja2 autoescape only fires on

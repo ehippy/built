@@ -40,7 +40,9 @@ from built.llm.tool_schemas import (
     DEPLOYER_PR_TERMINAL_TOOL,
     DEVELOPER_TERMINAL_TOOL,
     DEVELOPER_TOOLS,
+    MAX_EPIC_TASKS,
     MAX_SPLIT_TASKS,
+    PM_EPIC_TERMINAL_TOOL,
     PM_SPLIT_TERMINAL_TOOL,
     PM_TERMINAL_TOOL,
     PM_TOOLS,
@@ -326,6 +328,85 @@ async def _pm_split_into_subtasks_handler(
     return TerminalHandlerResult(handled=True)
 
 
+async def _pm_define_epic_handler(
+    session: AsyncSession, card: Card, visit: CardColumnVisit, tool_call: ToolCallRequest, endpoint_used: str
+) -> TerminalHandlerResult:
+    """Unlike _pm_split_into_subtasks_handler, `card` becomes a live epic tracker
+    (services/card_service.py's link_epic_child) instead of being archived, and
+    each child can declare depends_on — indices into this same tasks array,
+    restricted to earlier positions only, so the resulting graph is acyclic by
+    construction (no runtime cycle check needed here, unlike
+    services/card_service.py's general-purpose add_dependency)."""
+    spec = str(tool_call.arguments.get("spec", "")).strip()
+    if not spec:
+        return TerminalHandlerResult(
+            handled=False, feedback="spec must be a non-empty description of the epic."
+        )
+    tasks = tool_call.arguments.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        return TerminalHandlerResult(
+            handled=False, feedback="tasks must be a non-empty list of {title, raw_request} objects."
+        )
+
+    parsed: list[tuple[str, str, list[int]]] = []
+    for idx, task in enumerate(tasks[:MAX_EPIC_TASKS]):
+        if not isinstance(task, dict):
+            continue
+        title = str(task.get("title", "")).strip()
+        raw_request = str(task.get("raw_request", "")).strip()
+        if not (title and raw_request):
+            continue
+        raw_deps = task.get("depends_on") or []
+        if not isinstance(raw_deps, list):
+            raw_deps = []
+        bad = [d for d in raw_deps if not (isinstance(d, int) and 0 <= d < idx)]
+        if bad:
+            # Rejected outright, not silently dropped like a malformed task dict
+            # above — a dropped edge would silently mean a different dependency
+            # graph than the model intended, whereas a dropped malformed task
+            # doesn't change what the remaining tasks mean.
+            return TerminalHandlerResult(
+                handled=False,
+                feedback=(
+                    f"task[{idx}].depends_on contains invalid indices {bad!r} — a task can only "
+                    f"depend on earlier tasks in this same list (indices 0..{idx - 1})."
+                ),
+            )
+        parsed.append((title, raw_request, sorted(set(raw_deps))))
+
+    if len(parsed) < 2:
+        return TerminalHandlerResult(
+            handled=False,
+            feedback=(
+                "Need at least 2 well-formed {title, raw_request} tasks to define an epic. If this "
+                "is genuinely one piece of work, call submit_spec instead."
+            ),
+        )
+
+    children = [
+        await card_service.create_card(
+            session, card.project_id, title=title, raw_request=raw_request, source=f"epic:{card.id}"
+        )
+        for title, raw_request, _ in parsed
+    ]
+    for child in children:
+        await card_service.link_epic_child(session, parent_card_id=card.id, child_card_id=child.id)
+    for (_, _, deps), child in zip(parsed, children, strict=True):
+        for dep_idx in deps:
+            await card_service.add_dependency(
+                session, card_id=child.id, depends_on_card_id=children[dep_idx].id
+            )
+
+    model_summary = str(tool_call.arguments.get("summary", "")).strip()
+    titles = "; ".join(c.title for c in children)
+    created_note = f"defined epic with {len(children)} child card(s): {titles}"
+    summary = f"{model_summary} — {created_note}" if model_summary else created_note
+    await transitions.define_epic_visit(
+        session, card, visit, spec=spec, summary=summary, endpoint_used=endpoint_used
+    )
+    return TerminalHandlerResult(handled=True)
+
+
 async def _require_passing_test_run(
     session: AsyncSession, card: Card, visit: CardColumnVisit, *, verb: str
 ) -> str | None:
@@ -490,8 +571,16 @@ async def run_pm_visit(
     retry_note: str | None = None,
     agents_doc: str | None = None,
 ) -> Card:
+    current_epic = (
+        await session.get(Card, project.current_epic_id) if project.current_epic_id else None
+    )
     system, user = build_pm_prompt(
-        project, card, retry_recap=retry_recap, retry_note=retry_note, agents_doc=agents_doc
+        project,
+        card,
+        retry_recap=retry_recap,
+        retry_note=retry_note,
+        agents_doc=agents_doc,
+        current_epic=current_epic,
     )
     return await run_column_visit(
         session,
@@ -506,6 +595,7 @@ async def run_pm_visit(
         terminal_handlers={
             PM_TERMINAL_TOOL: _pm_submit_spec_handler,
             PM_SPLIT_TERMINAL_TOOL: _pm_split_into_subtasks_handler,
+            PM_EPIC_TERMINAL_TOOL: _pm_define_epic_handler,
         },
         context_window_config=context_window_config,
     )

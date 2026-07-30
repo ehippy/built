@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from built.db.models import Card, CardColumnVisit, CardEvent, Project
+from built.db.models import Card, CardColumnVisit, CardDependency, CardEvent, EpicLink, Project
 from built.domain import transitions
 from built.domain.enums import Column, EventType, LifecycleState, Priority
 from built.domain.events import append_event
@@ -107,11 +107,21 @@ async def count_column_backlog(session: AsyncSession, project_id: str, column: C
     """How many non-archived cards currently sit in this column for a project —
     what the board's swimlane for that column visually shows. orchestrator/curator.py
     uses this as a WIP-limit gate: no point proposing more PM-column work than the
-    (concurrency-capped) orchestrator can realistically work through."""
+    (concurrency-capped) orchestrator can realistically work through.
+
+    Excludes epic-parent cards: they're parked at column=PM forever (see
+    services/card_service.py's link_epic_child), so without this exclusion every
+    surviving epic would inflate the WIP gate permanently, one unit per epic,
+    throttling curation more than intended as epics accumulate."""
     stmt = (
         select(func.count())
         .select_from(Card)
-        .where(Card.project_id == project_id, Card.column == column, Card.archived_at.is_(None))
+        .where(
+            Card.project_id == project_id,
+            Card.column == column,
+            Card.archived_at.is_(None),
+            Card.id.not_in(select(EpicLink.parent_card_id)),
+        )
     )
     return await session.scalar(stmt) or 0
 
@@ -125,9 +135,17 @@ async def get_board(
     """Cards for a project, grouped by their current column and ordered within each
     column by priority first, then most recent activity — what the dashboard and
     the `/board` API endpoint render. Archived cards are left off by default —
-    that's the whole point of archiving something."""
+    that's the whole point of archiving something.
+
+    Epic-parent cards are excluded from the ordinary 5-column swimlane entirely —
+    they get their own panel (see list_epics) instead of sitting in the PM column
+    forever looking like stuck, unscoped work."""
     cards = await list_cards(session, project_id, include_archived=include_archived)
+    epic_parent_ids = set(await session.scalars(select(EpicLink.parent_card_id)))
+    cards = [c for c in cards if c.id not in epic_parent_ids]
     await _attach_last_activity(session, cards)
+    await _attach_dependency_status(session, cards)
+    await _attach_epic_parent_title(session, cards)
     # Two stable sorts: recency first, then priority — the second pass reorders by
     # priority rank while preserving each rank's existing (already recency-sorted)
     # relative order, without needing a combined sort key.
@@ -137,6 +155,211 @@ async def get_board(
     for card in cards:
         board[card.column].append(card)
     return board
+
+
+# --- Epics: a Card that stays alive tracking child cards, created via the PM's --
+# --- define_epic (agent/loop.py); "is_epic" is EXISTS(epic_links), not a flag ---
+
+
+async def link_epic_child(session: AsyncSession, *, parent_card_id: str, child_card_id: str) -> EpicLink:
+    """Called once per child right after create_card, by the PM's define_epic
+    handler. No nesting: a card can't be both an epic parent and someone's child,
+    and a child can't belong to two epics."""
+    if await is_epic(session, child_card_id):
+        raise ValueError(f"card {child_card_id!r} is already an epic parent — can't also be a child")
+    if await get_epic_parent(session, parent_card_id) is not None:
+        raise ValueError(f"card {parent_card_id!r} is already an epic child — can't also be a parent")
+    existing_parent = await get_epic_parent(session, child_card_id)
+    if existing_parent is not None:
+        raise ValueError(f"card {child_card_id!r} already belongs to epic {existing_parent.id!r}")
+    link = EpicLink(card_id=child_card_id, parent_card_id=parent_card_id)
+    session.add(link)
+    await session.flush()
+    return link
+
+
+async def is_epic(session: AsyncSession, card_id: str) -> bool:
+    stmt = select(EpicLink.card_id).where(EpicLink.parent_card_id == card_id).limit(1)
+    return await session.scalar(stmt) is not None
+
+
+async def get_epic_parent(session: AsyncSession, child_card_id: str) -> Card | None:
+    stmt = (
+        select(Card)
+        .join(EpicLink, EpicLink.parent_card_id == Card.id)
+        .where(EpicLink.card_id == child_card_id)
+    )
+    return await session.scalar(stmt)
+
+
+async def list_epic_children(
+    session: AsyncSession, parent_card_id: str, *, include_archived: bool = False
+) -> list[Card]:
+    stmt = (
+        select(Card)
+        .join(EpicLink, EpicLink.card_id == Card.id)
+        .where(EpicLink.parent_card_id == parent_card_id)
+        .order_by(Card.created_at)
+    )
+    if not include_archived:
+        stmt = stmt.where(Card.archived_at.is_(None))
+    children = list((await session.scalars(stmt)).all())
+    # macros.html.j2's card_tile (the board's epic panel, and any future caller)
+    # reads card.last_activity_at unconditionally — unlike epic_parent_title/
+    # unmet_dependency_count, which templates only access inside {% if %} and so
+    # tolerate being unset, last_activity_at goes through the |timeago filter,
+    # a real Python function that raises on Jinja's Undefined rather than treating
+    # it as falsy. Attach it here so every caller gets a renderable Card for free.
+    await _attach_last_activity(session, children)
+    return children
+
+
+async def list_epics(session: AsyncSession, project_id: str, *, include_archived: bool = False) -> list[Card]:
+    """Every epic-parent card for this project, each annotated with non-persisted
+    children/child_total/child_done — one list_epic_children call per epic, an
+    unoptimized N+1 done deliberately: epic counts per project are expected to be
+    single digits, unlike card counts, so this doesn't need _attach_last_activity's
+    bulk-query treatment."""
+    stmt = (
+        select(Card)
+        .join(EpicLink, EpicLink.parent_card_id == Card.id)
+        .where(Card.project_id == project_id)
+        .distinct()
+        .order_by(Card.created_at)
+    )
+    if not include_archived:
+        stmt = stmt.where(Card.archived_at.is_(None))
+    epics = list((await session.scalars(stmt)).all())
+    for epic in epics:
+        children = await list_epic_children(session, epic.id, include_archived=True)
+        epic.children = children
+        epic.child_total = len(children)
+        epic.child_done = sum(1 for c in children if c.lifecycle_state == LifecycleState.DONE)
+    return epics
+
+
+# --- Dependencies: card_id can't be claimed until depends_on_card_id is DONE ----
+
+
+async def add_dependency(session: AsyncSession, *, card_id: str, depends_on_card_id: str) -> CardDependency:
+    """Idempotent (returns the existing row rather than raising on the unique
+    constraint) and guarded: no self-dependency, both cards must share a project,
+    and no cycle through existing edges. define_epic's own edges never hit the
+    cycle guard (depends_on there is restricted to earlier-sibling indices, acyclic
+    by construction) — this is the general-purpose entry point other future
+    callers (a manual UI control, a later Developer-facing tool) will use."""
+    if card_id == depends_on_card_id:
+        raise ValueError("a card cannot depend on itself")
+    card = await get_card(session, card_id)
+    depends_on = await get_card(session, depends_on_card_id)
+    if card.project_id != depends_on.project_id:
+        raise ValueError("dependencies must be within the same project")
+
+    existing = await session.scalar(
+        select(CardDependency).where(
+            CardDependency.card_id == card_id, CardDependency.depends_on_card_id == depends_on_card_id
+        )
+    )
+    if existing is not None:
+        return existing
+
+    # BFS forward from card_id along "X depends on current" edges (i.e. current
+    # is itself a dependency of X): if depends_on_card_id is reachable this way,
+    # it already transitively depends on card_id, so adding "card_id depends on
+    # depends_on_card_id" would close a cycle back on itself.
+    frontier = [card_id]
+    seen = {card_id}
+    while frontier:
+        next_ids = (
+            await session.scalars(
+                select(CardDependency.card_id).where(CardDependency.depends_on_card_id.in_(frontier))
+            )
+        ).all()
+        frontier = []
+        for next_id in next_ids:
+            if next_id == depends_on_card_id:
+                raise ValueError("would create a dependency cycle")
+            if next_id not in seen:
+                seen.add(next_id)
+                frontier.append(next_id)
+
+    dependency = CardDependency(card_id=card_id, depends_on_card_id=depends_on_card_id)
+    session.add(dependency)
+    await session.flush()
+    return dependency
+
+
+async def remove_dependency(session: AsyncSession, *, card_id: str, depends_on_card_id: str) -> None:
+    dependency = await session.scalar(
+        select(CardDependency).where(
+            CardDependency.card_id == card_id, CardDependency.depends_on_card_id == depends_on_card_id
+        )
+    )
+    if dependency is not None:
+        await session.delete(dependency)
+        await session.flush()
+
+
+async def list_dependencies(session: AsyncSession, card_id: str) -> list[Card]:
+    """Cards this one depends on — card-detail's Dependencies section."""
+    stmt = (
+        select(Card)
+        .join(CardDependency, CardDependency.depends_on_card_id == Card.id)
+        .where(CardDependency.card_id == card_id)
+        .order_by(Card.created_at)
+    )
+    return list((await session.scalars(stmt)).all())
+
+
+async def list_dependents(session: AsyncSession, card_id: str) -> list[Card]:
+    """Cards blocked on this one — card-detail's "blocks" section."""
+    stmt = (
+        select(Card)
+        .join(CardDependency, CardDependency.card_id == Card.id)
+        .where(CardDependency.depends_on_card_id == card_id)
+        .order_by(Card.created_at)
+    )
+    return list((await session.scalars(stmt)).all())
+
+
+async def _attach_dependency_status(session: AsyncSession, cards: list[Card]) -> None:
+    """Sets card.unmet_dependency_count on every card via one grouped query. A
+    dependency that's archived-but-not-done is treated as resolved — archiving
+    already means "drop out of consideration" everywhere else in this app, and
+    without this a human abandoning one piece of a chain would otherwise block its
+    dependent forever with no escape hatch. A FAILED (not archived) dependency
+    deliberately still blocks — that's a real, unresolved problem to notice, not
+    something to silently route around."""
+    if not cards:
+        return
+    stmt = (
+        select(CardDependency.card_id, func.count())
+        .join(Card, Card.id == CardDependency.depends_on_card_id)
+        .where(
+            CardDependency.card_id.in_([c.id for c in cards]),
+            Card.lifecycle_state != LifecycleState.DONE,
+            Card.archived_at.is_(None),
+        )
+        .group_by(CardDependency.card_id)
+    )
+    counts = dict((await session.execute(stmt)).all())
+    for card in cards:
+        card.unmet_dependency_count = counts.get(card.id, 0)
+
+
+async def _attach_epic_parent_title(session: AsyncSession, cards: list[Card]) -> None:
+    """Sets card.epic_parent_title for child cards — the board tile's "· epic: X"
+    trailer."""
+    if not cards:
+        return
+    stmt = (
+        select(EpicLink.card_id, Card.title)
+        .join(Card, Card.id == EpicLink.parent_card_id)
+        .where(EpicLink.card_id.in_([c.id for c in cards]))
+    )
+    titles = dict((await session.execute(stmt)).all())
+    for card in cards:
+        card.epic_parent_title = titles.get(card.id)
 
 
 async def get_project_activity_summary(session: AsyncSession, project_id: str) -> dict:

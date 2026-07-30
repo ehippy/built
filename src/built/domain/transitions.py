@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from built.db.models import Card, CardColumnVisit, Project
+from built.db.models import Card, CardColumnVisit, EpicLink, Project
 from built.domain.enums import Column, EventType, LifecycleState, VisitOutcome
 from built.domain.events import append_event
 
@@ -100,6 +100,68 @@ async def split_pm_visit(
         session, visit, outcome=VisitOutcome.SPLIT, summary=summary, endpoint_used=endpoint_used
     )
     return card
+
+
+async def define_epic_visit(
+    session: AsyncSession,
+    card: Card,
+    visit: CardColumnVisit,
+    *,
+    spec: str,
+    summary: str,
+    endpoint_used: str | None = None,
+) -> Card:
+    """PM's define_epic: this card becomes a live epic tracker for the child cards
+    agent/loop.py's handler already created and linked (via services/card_service.py's
+    link_epic_child) before calling this. Unlike split_pm_visit, NOT archived — it
+    stays on the board, and `column` stays PM forever (it has no Developer/Tester/
+    Reviewer/Deployer work of its own): get_board and count_column_backlog exclude
+    it from the ordinary PM swimlane/backlog via EpicLink, and
+    orchestrator/worker.py's claim_next_card excludes it from ever being claimed.
+    It reaches lifecycle_state=DONE only via _maybe_complete_epic below, once every
+    non-archived child does — never by an agent calling a terminal tool directly."""
+    card.spec = spec
+    await _close_visit(
+        session, visit, outcome=VisitOutcome.EPIC_DEFINED, summary=summary, endpoint_used=endpoint_used
+    )
+    return card
+
+
+async def _maybe_complete_epic(session: AsyncSession, card: Card) -> None:
+    """Call right after a card's lifecycle_state is set to DONE (see the three call
+    sites below). If `card` is an epic's child and every non-archived sibling has
+    also reached DONE, the parent completes too — its own job (tracking the
+    initiative) is now done. Zero non-archived siblings left doesn't count as "all
+    done" (nothing to judge by — shouldn't happen in practice since define_epic
+    requires at least 2 children, but guards against every child ending up
+    archived). A child that ends FAILED or stays BLOCKED simply means the epic
+    never auto-completes — conservative default, surfaced on the board's epic
+    panel so a human notices why.
+
+    Deliberately self-contained (raw select() over EpicLink/Card, not a
+    services.card_service call) — services/card_service.py already imports this
+    module, so importing back would be circular."""
+    parent_id = await session.scalar(select(EpicLink.parent_card_id).where(EpicLink.card_id == card.id))
+    if parent_id is None:
+        return
+    parent = await session.get(Card, parent_id)
+    if parent is None or parent.lifecycle_state != LifecycleState.ACTIVE:
+        return
+    sibling_states = (
+        await session.execute(
+            select(Card.lifecycle_state)
+            .join(EpicLink, EpicLink.card_id == Card.id)
+            .where(EpicLink.parent_card_id == parent_id, Card.archived_at.is_(None))
+        )
+    ).scalars().all()
+    if sibling_states and all(s == LifecycleState.DONE for s in sibling_states):
+        parent.lifecycle_state = LifecycleState.DONE
+        await append_event(
+            session,
+            card_id=parent.id,
+            type=EventType.SYSTEM_NOTE,
+            payload={"action": "epic_auto_completed", "completed_via_child": card.id},
+        )
 
 
 async def complete_developer_visit(
@@ -262,6 +324,7 @@ async def complete_deployer_visit(
         await _close_visit(
             session, visit, outcome=VisitOutcome.DONE, summary=summary, endpoint_used=endpoint_used
         )
+        await _maybe_complete_epic(session, card)
         return card
 
     card.deploy_attempt_count += 1
@@ -285,6 +348,7 @@ async def confirm_ci_passed(session: AsyncSession, card: Card, *, note: str) -> 
     await append_event(
         session, card_id=card.id, type=EventType.SYSTEM_NOTE, payload={"action": "ci_confirmed", "note": note}
     )
+    await _maybe_complete_epic(session, card)
     return card
 
 
@@ -305,6 +369,7 @@ async def confirm_ci_failed_with_followup(session: AsyncSession, card: Card, *, 
     await append_event(
         session, card_id=card.id, type=EventType.SYSTEM_NOTE, payload={"action": "ci_failed", "note": note}
     )
+    await _maybe_complete_epic(session, card)
     return card
 
 

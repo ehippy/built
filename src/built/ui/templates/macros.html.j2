@@ -1,4 +1,4 @@
-{% set state_color = {"active": "primary", "blocked": "warning", "done": "success", "failed": "danger", "paused": "secondary", "watching-ci": "info", "priority-high": "danger", "priority-low": "secondary"} %}
+{% set state_color = {"active": "primary", "blocked": "warning", "done": "success", "failed": "danger", "paused": "secondary", "watching-ci": "info", "priority-high": "danger", "priority-low": "secondary", "waiting": "secondary", "epic": "info"} %}
 
 {% macro badge(state, label=none) -%}
 <span class="badge text-bg-{{ state_color.get(state, "secondary") }}">{{ label or state }}</span>
@@ -18,6 +18,8 @@
       {% if card.archived_at %}{{ badge("paused", "archived") }}{% endif %}
       {% if card.revision_count %}<span>· rev {{ card.revision_count }}</span>{% endif %}
       {% if card.deploy_attempt_count %}<span>· deploy attempt {{ card.deploy_attempt_count }}</span>{% endif %}
+      {% if card.epic_parent_title %}<span>· epic: {{ card.epic_parent_title }}</span>{% endif %}
+      {% if card.unmet_dependency_count %}{{ badge("waiting", "waiting on " ~ card.unmet_dependency_count) }}{% endif %}
     </div>
     <div class="text-body-secondary small mt-1">{{ card.last_activity_at|timeago }}</div>
   </div>

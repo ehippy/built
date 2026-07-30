@@ -69,6 +69,23 @@ class Project(Base):
     # left alone for a while without hiding or losing its cards. An in-flight visit still
     # finishes; pause only blocks new claims.
     paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # The board's "current epic" selector (see EpicLink) — a hint fed into PM/curation
+    # prompts (agent/context.py's _with_current_epic) alongside overarching_goal, never
+    # a replacement for it, and never consulted by claim_next_card. Human-set-only:
+    # define_epic never sets this itself, so a human's chosen focus is never silently
+    # swapped out from under them. Added via db/base.py's ADDITIVE_COLUMNS, not a new
+    # table — a single scalar FK, always read where `project` is already loaded, with
+    # no list/JSON-reassign concern that would justify a side table.
+    # use_alter=True: this FK closes a genuine cycle between projects and cards
+    # (cards.project_id already points the other way) — without it, SQLAlchemy's
+    # metadata-level table sorter (used by tests/conftest.py's per-test table wipe,
+    # via Base.metadata.sorted_tables) can't find a safe dependency order and warns
+    # every test run. Doesn't change actual runtime behavior on SQLite (this app
+    # never turns on PRAGMA foreign_keys, so nothing enforces the constraint anyway)
+    # — purely resolves the bookkeeping cycle.
+    current_epic_id: Mapped[str | None] = mapped_column(
+        ForeignKey("cards.id", use_alter=True, name="fk_projects_current_epic_id"), default=None
+    )
 
     # selectin: async SQLAlchemy has no implicit lazy-load, and this relationship is
     # read unconditionally by ProjectOut serialization — selectin issues its own
@@ -84,7 +101,13 @@ class Project(Base):
         back_populates="project", cascade="all, delete-orphan", lazy="raise"
     )
     cards: Mapped[list["Card"]] = relationship(
-        back_populates="project", cascade="all, delete-orphan", lazy="raise"
+        back_populates="project",
+        # Project.current_epic_id is a second FK between projects and cards (the
+        # reverse direction) — without this, SQLAlchemy can't infer which FK this
+        # relationship should join on and raises AmbiguousForeignKeysError.
+        foreign_keys="Card.project_id",
+        cascade="all, delete-orphan",
+        lazy="raise",
     )
 
 
@@ -263,7 +286,9 @@ class Card(Base):
     # raise on both: transitions.py fetches the project explicitly via session.get()
     # instead, and callers that need visits ask for them with an explicit
     # selectinload(Card.column_visits) query option (see card_service.get_card).
-    project: Mapped["Project"] = relationship(back_populates="cards", lazy="raise")
+    project: Mapped["Project"] = relationship(
+        back_populates="cards", foreign_keys=[project_id], lazy="raise"
+    )
     column_visits: Mapped[list["CardColumnVisit"]] = relationship(
         back_populates="card",
         cascade="all, delete-orphan",
@@ -286,6 +311,50 @@ class Card(Base):
             # was written as UTC.
             lease_expires_at = lease_expires_at.replace(tzinfo=UTC)
         return lease_expires_at > _utcnow()
+
+
+class CardDependency(Base):
+    """One row means: card_id cannot be claimed until depends_on_card_id reaches
+    DONE — see orchestrator/worker.py's claim_next_card. A real join table, not a
+    JSON list on Card, because claim_next_card needs to test this as a SQL subquery
+    against every candidate card on every poll tick, the same way it already
+    excludes busy/paused projects — a JSON array column can't be joined/indexed the
+    same way. Authored today by the PM's define_epic (agent/loop.py); see
+    services/card_service.py's add_dependency for the general-purpose entry point
+    (cycle/cross-project/self-dependency guards live there, not here — this table
+    is deliberately dumb storage)."""
+
+    __tablename__ = "card_dependencies"
+    __table_args__ = (UniqueConstraint("card_id", "depends_on_card_id", name="uq_card_dependencies_pair"),)
+
+    id: Mapped[str] = mapped_column(primary_key=True, default=_new_id)
+    card_id: Mapped[str] = mapped_column(ForeignKey("cards.id"), index=True)
+    # Indexed separately from the (card_id, depends_on_card_id) unique constraint's
+    # composite index — claim-gating's exclusion subquery joins on this column, not
+    # card_id, and a composite index isn't useful for a lookup that leads with its
+    # second column.
+    depends_on_card_id: Mapped[str] = mapped_column(ForeignKey("cards.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class EpicLink(Base):
+    """One row per epic child card. card_id (the child) is the primary key — a card
+    can belong to at most one epic, structurally, not just by convention. "Is this
+    card an epic" is EXISTS(select 1 from epic_links where parent_card_id =
+    card.id), not a stored flag on Card — see services/card_service.py's is_epic.
+    Created by the PM's define_epic (agent/loop.py) alongside each child card; the
+    parent itself is never archived and stays column=PM forever (it has no
+    Developer/Tester/Reviewer/Deployer work of its own) — get_board and
+    count_column_backlog exclude it from the ordinary PM swimlane/backlog via this
+    table, and claim_next_card excludes it from ever being claimed. It reaches
+    lifecycle_state=DONE only via domain/transitions.py's _maybe_complete_epic, once
+    every non-archived child does."""
+
+    __tablename__ = "epic_links"
+
+    card_id: Mapped[str] = mapped_column(ForeignKey("cards.id"), primary_key=True)
+    parent_card_id: Mapped[str] = mapped_column(ForeignKey("cards.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
 class CardColumnVisit(Base):

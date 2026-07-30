@@ -6,7 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from built.config import settings
-from built.db.models import CurationEvent, DeployConfig, Project, ProjectActivityRun, ProjectCurationState
+from built.db.models import (
+    CurationEvent,
+    DeployConfig,
+    EpicLink,
+    Project,
+    ProjectActivityRun,
+    ProjectCurationState,
+)
 from built.domain.enums import ActivityKind, DeployKind, DeployMode
 
 
@@ -115,6 +122,27 @@ async def pause_project(session: AsyncSession, project_id: str) -> Project:
 async def resume_project(session: AsyncSession, project_id: str) -> Project:
     project = await get_project(session, project_id)
     project.paused_at = None
+    await session.flush()
+    return project
+
+
+async def set_current_epic(session: AsyncSession, project_id: str, epic_card_id: str | None) -> Project:
+    """The board page's "current epic" control — human-set-only, never touched by
+    define_epic itself (agent/loop.py), so a human's chosen focus is never silently
+    swapped out from under them. Nudges PM/curation prompts (agent/context.py)
+    alongside overarching_goal, never gates which cards the orchestrator claims.
+    epic_card_id=None clears it."""
+    project = await get_project(session, project_id)
+    if epic_card_id is not None:
+        # Raw query rather than services.card_service.is_epic — card_service already
+        # imports this module (get_project/NotFoundError), so importing back would
+        # be circular.
+        is_epic = await session.scalar(
+            select(EpicLink.card_id).where(EpicLink.parent_card_id == epic_card_id).limit(1)
+        )
+        if is_epic is None:
+            raise ValueError(f"card {epic_card_id!r} is not an epic")
+    project.current_epic_id = epic_card_id
     await session.flush()
     return project
 

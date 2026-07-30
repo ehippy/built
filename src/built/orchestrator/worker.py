@@ -21,7 +21,7 @@ from built.agent.loop import (
 )
 from built.config import settings as builtin_settings
 from built.db.base import async_session_factory
-from built.db.models import Card, CardColumnVisit, Project
+from built.db.models import Card, CardColumnVisit, CardDependency, EpicLink, Project
 from built.domain import transitions
 from built.domain.enums import Column, DeployMode, LifecycleState, Priority
 from built.llm.client import FallbackLLMClient
@@ -83,13 +83,27 @@ async def claim_next_card(session: AsyncSession, worker_id: str) -> Card | None:
     worth doing. A card with deploying_commit_sha set is excluded too — its
     Deployer visit already finished (the git-level push succeeded); it's just
     waiting on orchestrator/ci_watcher.py to confirm CI, not something the worker
-    pool has anything left to do with."""
+    pool has anything left to do with.
+
+    Two more exclusions, same not_in(subquery) shape: a card with an unresolved
+    dependency (a CardDependency row whose depends_on_card_id hasn't reached DONE
+    — an archived-but-not-done dependency doesn't count, so an abandoned
+    prerequisite can't block its dependent forever) never gets claimed until that
+    dependency actually finishes; an epic-parent card (any EpicLink.parent_card_id)
+    never gets claimed at all — it has no Developer/Tester/Reviewer/Deployer work
+    of its own, see domain/transitions.py's define_epic_visit."""
     now = datetime.now(UTC)
     busy_project_ids = select(Card.project_id).where(
         Card.claimed_by_worker_id.is_not(None),
         Card.lease_expires_at >= now,
     )
     paused_project_ids = select(Project.id).where(Project.paused_at.is_not(None))
+    unresolved_dependency_card_ids = (
+        select(CardDependency.card_id)
+        .join(Card, Card.id == CardDependency.depends_on_card_id)
+        .where(Card.lifecycle_state != LifecycleState.DONE, Card.archived_at.is_(None))
+    )
+    epic_parent_ids = select(EpicLink.parent_card_id)
     candidate_id = await session.scalar(
         select(Card.id)
         .where(
@@ -100,6 +114,8 @@ async def claim_next_card(session: AsyncSession, worker_id: str) -> Card | None:
             or_(Card.claimed_by_worker_id.is_(None), Card.lease_expires_at < now),
             Card.project_id.not_in(busy_project_ids),
             Card.project_id.not_in(paused_project_ids),
+            Card.id.not_in(unresolved_dependency_card_ids),
+            Card.id.not_in(epic_parent_ids),
         )
         .order_by(_CLAIM_PRIORITY_ORDER, _CLAIM_COLUMN_PRIORITY, Card.updated_at)
         .limit(1)
@@ -116,6 +132,8 @@ async def claim_next_card(session: AsyncSession, worker_id: str) -> Card | None:
             or_(Card.claimed_by_worker_id.is_(None), Card.lease_expires_at < now),
             Card.project_id.not_in(busy_project_ids),
             Card.project_id.not_in(paused_project_ids),
+            Card.id.not_in(unresolved_dependency_card_ids),
+            Card.id.not_in(epic_parent_ids),
         )
         .values(
             claimed_by_worker_id=worker_id,

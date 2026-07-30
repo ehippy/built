@@ -45,6 +45,9 @@ ADDITIVE_COLUMNS = [
     # not 'active'/'done'), so a lowercase default here reads back as a
     # LookupError instead of Priority.NORMAL.
     ("cards", "priority", "TEXT DEFAULT 'NORMAL'"),
+    # Nullable, no DEFAULT needed — every existing project simply has no current
+    # epic until a human sets one (see db/models.py's Project.current_epic_id).
+    ("projects", "current_epic_id", "TEXT"),
 ]
 
 

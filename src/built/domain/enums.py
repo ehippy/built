@@ -45,6 +45,7 @@ class VisitOutcome(StrEnum):
 
     SUBMITTED = "submitted"  # PM's submit_spec, or Developer's submit_for_test
     SPLIT = "split"  # PM's split_into_subtasks — card archived, replaced by new constituent cards
+    EPIC_DEFINED = "epic_defined"  # PM's define_epic — card stays alive, tracks its new child cards
     APPROVED = "approved"  # Tester's approve
     CHANGES_REQUESTED = "changes_requested"  # Tester's request_changes
     DONE = "done"  # Deployer's run_deploy succeeded (pr_to_operator, or auto_main with no CI to watch)

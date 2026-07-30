@@ -15,10 +15,27 @@ async def card_detail(card_id: str, request: Request, session: SessionDep):
     project = await project_service.get_project(session, card.project_id)
     visits = await card_service.list_column_visits(session, card_id)
     events = await card_service.list_recent_events(session, card_id, limit=200)
+    is_epic = await card_service.is_epic(session, card_id)
+    epic_parent = await card_service.get_epic_parent(session, card_id)
+    epic_children = (
+        await card_service.list_epic_children(session, card_id, include_archived=True) if is_epic else []
+    )
+    dependencies = await card_service.list_dependencies(session, card_id)
+    dependents = await card_service.list_dependents(session, card_id)
     return templates.TemplateResponse(
         request,
         "card_detail.html.j2",
-        {"card": card, "project": project, "visits": visits, "events": events},
+        {
+            "card": card,
+            "project": project,
+            "visits": visits,
+            "events": events,
+            "is_epic": is_epic,
+            "epic_parent": epic_parent,
+            "epic_children": epic_children,
+            "dependencies": dependencies,
+            "dependents": dependents,
+        },
     )
 
 

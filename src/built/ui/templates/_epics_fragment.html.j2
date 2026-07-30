@@ -1,0 +1,33 @@
+{% import "macros.html.j2" as m %}
+<div id="epics" hx-get="/ui/projects/{{ project.id }}/board/epics-fragment" hx-trigger="every 3s" hx-swap="outerHTML">
+  {% if epics %}
+  <div class="card mb-4">
+    <div class="card-body py-2 px-3">
+      <div class="text-body-secondary text-uppercase small fw-semibold mb-2">Epics</div>
+      {% for epic in epics %}
+      <div class="{% if not loop.first %}border-top pt-2 mt-2{% endif %}">
+        <div class="d-flex align-items-center gap-2">
+          <a class="text-decoration-none fw-semibold" href="/ui/cards/{{ epic.id }}">{{ epic.title }}</a>
+          {% if epic.id == current_epic_id %}{{ m.badge("epic", "current") }}{% endif %}
+          {{ m.badge(epic.lifecycle_state) }}
+          <span class="text-body-secondary small">{{ epic.child_done }}/{{ epic.child_total }} done</span>
+        </div>
+        {% if epic.child_total %}
+        <div class="progress mt-1" style="height: 4px;">
+          <div class="progress-bar" style="width: {{ (100 * epic.child_done / epic.child_total)|round(0, 'floor')|int }}%;"></div>
+        </div>
+        {% endif %}
+        {% if epic.children %}
+        <details class="mt-1">
+          <summary class="text-body-secondary small">{{ epic.child_total }} child card{{ "s" if epic.child_total != 1 }}</summary>
+          {% for child in epic.children %}
+            {{ m.card_tile(child) }}
+          {% endfor %}
+        </details>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>

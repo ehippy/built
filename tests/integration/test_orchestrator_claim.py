@@ -300,3 +300,60 @@ async def test_close_dangling_visits_marks_them_interrupted_not_resumed(db_sessi
     assert dangling_card.lifecycle_state == LifecycleState.ACTIVE
     # A visit that already closed normally is left completely alone.
     assert closed_visit.outcome == VisitOutcome.SUBMITTED
+
+
+async def test_does_not_claim_a_card_with_an_unresolved_dependency(db_session):
+    project = await _project(db_session, _n="19")
+    prereq = await card_service.create_card(db_session, project.id, title="prereq", raw_request="r")
+    dependent = await card_service.create_card(db_session, project.id, title="dependent", raw_request="r")
+    await card_service.add_dependency(db_session, card_id=dependent.id, depends_on_card_id=prereq.id)
+
+    claimed = await claim_next_card(db_session, "worker-a")
+    assert claimed is not None
+    assert claimed.id == prereq.id  # only the prerequisite is claimable
+
+    await release_claim(db_session, claimed)
+    visit = await transitions.start_visit(db_session, prereq)
+    await transitions.complete_deployer_visit(db_session, prereq, visit, success=True, summary="s")
+    await db_session.commit()
+
+    claimed_again = await claim_next_card(db_session, "worker-a")
+    assert claimed_again is not None
+    assert claimed_again.id == dependent.id  # unblocked now that the prerequisite is DONE
+
+
+async def test_an_archived_unresolved_dependency_does_not_block_forever(db_session):
+    project = await _project(db_session, _n="20")
+    prereq = await card_service.create_card(db_session, project.id, title="prereq", raw_request="r")
+    dependent = await card_service.create_card(db_session, project.id, title="dependent", raw_request="r")
+    await card_service.add_dependency(db_session, card_id=dependent.id, depends_on_card_id=prereq.id)
+    await card_service.archive_card(db_session, prereq.id)
+
+    claimed = await claim_next_card(db_session, "worker-a")
+
+    assert claimed is not None
+    assert claimed.id == dependent.id
+
+
+async def test_does_not_claim_an_epic_parent_card(db_session):
+    project = await _project(db_session, _n="21")
+    epic = await card_service.create_card(db_session, project.id, title="epic", raw_request="r")
+    child_a = await card_service.create_card(db_session, project.id, title="a", raw_request="r")
+    child_b = await card_service.create_card(db_session, project.id, title="b", raw_request="r")
+    await card_service.link_epic_child(db_session, parent_card_id=epic.id, child_card_id=child_a.id)
+    await card_service.link_epic_child(db_session, parent_card_id=epic.id, child_card_id=child_b.id)
+    await db_session.commit()
+    assert epic.lifecycle_state == LifecycleState.ACTIVE
+    assert epic.column == Column.PM
+
+    seen_ids = set()
+    for _ in range(5):
+        claimed = await claim_next_card(db_session, "worker-a")
+        if claimed is None:
+            break
+        seen_ids.add(claimed.id)
+        await release_claim(db_session, claimed)
+        await db_session.commit()
+
+    assert epic.id not in seen_ids
+    assert seen_ids == {child_a.id, child_b.id}

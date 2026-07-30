@@ -137,6 +137,58 @@
       {% endif %}
     </div>
   </div>
+
+  {% if epic_parent or is_epic or dependencies or dependents %}
+  <div class="col-lg-4">
+    <div class="card card-body h-100">
+      {% if epic_parent %}
+      <h2 class="h5">Epic</h2>
+      <p>Part of <a href="/ui/cards/{{ epic_parent.id }}">{{ epic_parent.title }}</a></p>
+      {% endif %}
+
+      {% if is_epic %}
+      <h2 class="h5">Epic</h2>
+      <p class="text-body-secondary small mb-1">
+        {{ epic_children|selectattr("lifecycle_state", "equalto", "done")|list|length }}/{{ epic_children|length }}
+        child cards done
+        {% if card.lifecycle_state == "active" %}— completes automatically once every child does{% endif %}
+      </p>
+      <ul class="list-group list-group-flush mb-0">
+        {% for child in epic_children %}
+        <li class="list-group-item px-0 d-flex justify-content-between align-items-center gap-2">
+          <a href="/ui/cards/{{ child.id }}" class="text-truncate">{{ child.title }}</a>
+          {{ m.badge(child.lifecycle_state) }}
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+
+      {% if dependencies %}
+      <h2 class="h5 mt-3">Depends on</h2>
+      <ul class="list-group list-group-flush mb-0">
+        {% for dep in dependencies %}
+        <li class="list-group-item px-0 d-flex justify-content-between align-items-center gap-2">
+          <a href="/ui/cards/{{ dep.id }}" class="text-truncate">{{ dep.title }}</a>
+          {% if dep.lifecycle_state == "done" or dep.archived_at %}{{ m.badge("done") }}
+          {% elif dep.lifecycle_state in ("blocked", "failed") %}{{ m.badge(dep.lifecycle_state) }}
+          {% else %}{{ m.badge("waiting") }}
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+
+      {% if dependents %}
+      <h2 class="h5 mt-3">Blocks</h2>
+      <ul class="list-group list-group-flush mb-0">
+        {% for dep in dependents %}
+        <li class="list-group-item px-0"><a href="/ui/cards/{{ dep.id }}">{{ dep.title }}</a></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
 </div>
 
 <div class="card card-body mb-4">

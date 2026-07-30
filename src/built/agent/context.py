@@ -16,6 +16,24 @@ def _with_agents_doc(system: str, agents_doc: str | None) -> str:
     return f"{system}\n\nProject practices (from this repo's AGENTS.md):\n{agents_doc}"
 
 
+def _with_current_epic(system: str, current_epic: Card | None) -> str:
+    """A hint alongside Project.overarching_goal, never a replacement for it — and
+    never consulted by orchestrator/worker.py's claim_next_card, which decides what
+    the orchestrator claims from cards that already exist regardless of this. Only
+    steers what PM/curation choose to propose or write specs for next. Set via the
+    board page (services/project_service.py's set_current_epic), human-only —
+    define_epic never sets this itself, so a human's chosen focus is never silently
+    swapped out from under them."""
+    if current_epic is None:
+        return system
+    description = current_epic.spec or current_epic.raw_request
+    return (
+        f'{system}\n\nThe project\'s current focus is the epic "{current_epic.title}" — {description} '
+        "When scoping or proposing new work, prefer angles that move this epic forward — but the "
+        "project goal above still takes precedence if they ever conflict."
+    )
+
+
 _CURATION_FOCUS: dict[ActivityKind, str] = {
     ActivityKind.BUG_SWEEP: (
         "working in bug-sweep mode: hunt for defects — behavior that contradicts what the code (or "
@@ -59,6 +77,7 @@ def build_curation_prompt(
     *,
     agents_doc: str | None = None,
     extra_context: str | None = None,
+    current_epic: Card | None = None,
 ) -> tuple[str, str]:
     """Returns (system_prompt, initial_user_message) for one curation pass. Never
     tied to any card, and never able to edit the repo — the only thing any kind can
@@ -81,6 +100,7 @@ def build_curation_prompt(
             f"Project goal: {project.overarching_goal}"
         )
         user = f"Recently closed work since the last pass:\n{extra_context or '(nothing new)'}"
+        system = _with_current_epic(system, current_epic)
         return _with_agents_doc(system, agents_doc), user
 
     focus = _CURATION_FOCUS[kind]
@@ -101,6 +121,7 @@ def build_curation_prompt(
     )
     existing = "\n".join(f"- {t}" for t in existing_titles) or "(none yet)"
     user = f"Existing/recent card titles in this project — don't propose duplicates of these:\n{existing}"
+    system = _with_current_epic(system, current_epic)
     return _with_agents_doc(system, agents_doc), user
 
 
@@ -198,6 +219,7 @@ def build_pm_prompt(
     retry_recap: str | None = None,
     retry_note: str | None = None,
     agents_doc: str | None = None,
+    current_epic: Card | None = None,
 ) -> tuple[str, str]:
     """Returns (system_prompt, initial_user_message). PM has read-only repo tools and
     is expected to use them to explore before writing a spec, rather than being handed
@@ -215,19 +237,24 @@ def build_pm_prompt(
         "If it's actually a whole-repo refactor, the same mechanical change repeated across "
         "many independent files, or several unrelated asks bundled together, call "
         "split_into_subtasks instead of submit_spec (see its own description for exactly "
-        "when). Most requests are genuinely one card, including ones with several acceptance "
-        "criteria — don't split just to make the list shorter; split when the work doesn't "
+        "when). If it's a genuine multi-piece initiative worth tracking as a whole — several "
+        "cards that together deliver one larger thing, with real ordering between them — call "
+        "define_epic instead: unlike split_into_subtasks, the parent stays on the board "
+        "tracking its children and can enforce real dependencies between them. Most requests "
+        "are genuinely one card, including ones with several acceptance criteria — don't split "
+        "or make an epic just to make the list shorter; only do either when the work doesn't "
         "actually converge in one coherent pass, not because it's long.\n\n"
         f"Project goal: {project.overarching_goal}\n\n"
         "When ready, call submit_spec — or, for a request too big for one card, "
-        "split_into_subtasks. Nobody is watching this run interactively — do not stop to ask "
-        "a question."
+        "split_into_subtasks or define_epic. Nobody is watching this run interactively — do "
+        "not stop to ask a question."
     )
     user = f"Card: {card.title}\n\nRequest: {card.raw_request}"
     if retry_recap:
         user += f"\n\nContext from your previous attempt at this column:\n{retry_recap}"
     if retry_note:
         user += f"\n\nA human left this instruction for this attempt:\n{retry_note}"
+    system = _with_current_epic(system, current_epic)
     system = _with_agents_doc(system, agents_doc)
     return system, user
 

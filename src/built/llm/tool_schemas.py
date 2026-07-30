@@ -395,9 +395,83 @@ SPLIT_INTO_SUBTASKS = {
     },
 }
 
-PM_TOOLS = [READ_FILE, LIST_FILES, GLOB_FILES, GREP_FILES, SUBMIT_SPEC, SPLIT_INTO_SUBTASKS]
+MAX_EPIC_TASKS = 8  # own constant, not reused from MAX_SPLIT_TASKS — independently tunable later
+
+DEFINE_EPIC = {
+    "type": "function",
+    "function": {
+        "name": "define_epic",
+        "description": (
+            "Use instead of submit_spec when this request is a genuine multi-piece initiative worth "
+            "tracking as a whole — several cards that together deliver one larger thing, where you "
+            "want the parent visible on the board until every piece is done. Unlike split_into_subtasks "
+            "(which retires this card and cuts the new ones loose with no enforced order), this card "
+            "stays alive, tracks its children, and automatically reaches done once every child does. "
+            "Set up real dependency ordering between the children with depends_on — e.g. 'add the "
+            "shared layout' before 'convert page X to use it' — this IS enforced: the orchestrator will "
+            "not claim a dependent card until everything it depends on is fully done. "
+            f"At most {MAX_EPIC_TASKS} child tasks; if it genuinely needs more, group related pieces "
+            "into batches rather than one task per file."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "spec": {
+                    "type": "string",
+                    "description": (
+                        "The epic's own overview — the shared context and goal tying its children "
+                        "together. Nothing implements this card directly, only its children, so this "
+                        "isn't itself an implementable spec the way submit_spec's is."
+                    ),
+                },
+                "tasks": {
+                    "type": "array",
+                    "minItems": 2,
+                    "maxItems": MAX_EPIC_TASKS,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string", "description": "Short title for the child card."},
+                            "raw_request": {
+                                "type": "string",
+                                "description": (
+                                    "Self-contained description of this piece — written so it makes "
+                                    "sense without this card's original request in front of you."
+                                ),
+                            },
+                            "depends_on": {
+                                "type": "array",
+                                "items": {"type": "integer"},
+                                "description": (
+                                    "0-based indices into this same tasks array — every earlier task "
+                                    "that must fully reach done before this one can be claimed. Only "
+                                    "indices strictly less than this task's own position are valid (no "
+                                    "forward or self references) — list every direct prerequisite, not "
+                                    "just the immediately preceding one. Omit or leave empty if this "
+                                    "task has no prerequisites among the others."
+                                ),
+                            },
+                        },
+                        "required": ["title", "raw_request"],
+                    },
+                },
+                "summary": {
+                    "type": "string",
+                    "description": (
+                        "A one-line summary of the epic and why it's structured this way, for the "
+                        "audit log."
+                    ),
+                },
+            },
+            "required": ["spec", "tasks", "summary"],
+        },
+    },
+}
+
+PM_TOOLS = [READ_FILE, LIST_FILES, GLOB_FILES, GREP_FILES, SUBMIT_SPEC, SPLIT_INTO_SUBTASKS, DEFINE_EPIC]
 PM_TERMINAL_TOOL = "submit_spec"
 PM_SPLIT_TERMINAL_TOOL = "split_into_subtasks"
+PM_EPIC_TERMINAL_TOOL = "define_epic"
 
 MAX_PROPOSED_TASKS = 5
 

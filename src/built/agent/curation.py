@@ -44,8 +44,14 @@ async def run_curation_pass(
     endpoint/tool failure ended the run early. Never raises for ordinary failures,
     mirroring run_column_visit's never-crash-the-worker contract."""
     existing_titles = await card_service.list_recent_card_titles(session, project.id)
+    current_epic = await session.get(Card, project.current_epic_id) if project.current_epic_id else None
     system, user = build_curation_prompt(
-        project, kind, existing_titles, agents_doc=agents_doc, extra_context=extra_context
+        project,
+        kind,
+        existing_titles,
+        agents_doc=agents_doc,
+        extra_context=extra_context,
+        current_epic=current_epic,
     )
     messages: list[dict] = [
         {"role": "system", "content": system},

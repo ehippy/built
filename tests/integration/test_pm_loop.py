@@ -277,3 +277,165 @@ async def test_pm_loop_rejects_malformed_acceptance_criteria_and_recovers(db_ses
 
     assert result.column == Column.DEVELOPER
     assert result.acceptance_criteria == ["subtract(2, 1) == 1"]
+
+
+async def test_pm_loop_defines_an_epic_with_dependency_ordered_children(db_session, toy_repo_remote):
+    project, card, wt_path = await _make_pm_card(db_session, toy_repo_remote)
+    visit = await transitions.start_visit(db_session, card)
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_1",
+                        name="define_epic",
+                        arguments={
+                            "spec": "Migrate the frontend to Vue.js incrementally.",
+                            "tasks": [
+                                {"title": "Add build tooling", "raw_request": "Set up Vue tooling."},
+                                {
+                                    "title": "Convert header",
+                                    "raw_request": "Convert header to Vue.",
+                                    "depends_on": [0],
+                                },
+                            ],
+                            "summary": "Vue migration epic",
+                        },
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+        ]
+    )
+    executor = FakeCommandExecutor(CommandResult(exit_code=0, stdout="", stderr=""))
+    dispatcher = ToolDispatcher(ctx=ToolContext(card_id=card.id, worktree_root=wt_path), executor=executor)
+
+    result = await run_pm_visit(
+        db_session, project, card, visit, llm_client=llm, dispatcher=dispatcher, max_iterations=10
+    )
+
+    # Unlike split_into_subtasks, the epic parent stays alive and un-archived.
+    assert result.archived_at is None
+    assert result.column == Column.PM
+    assert result.spec == "Migrate the frontend to Vue.js incrementally."
+    assert visit.outcome == VisitOutcome.EPIC_DEFINED
+
+    children = await card_service.list_epic_children(db_session, card.id)
+    titles = {c.title for c in children}
+    assert titles == {"Add build tooling", "Convert header"}
+
+    header = next(c for c in children if c.title == "Convert header")
+    tooling = next(c for c in children if c.title == "Add build tooling")
+    header_deps = await card_service.list_dependencies(db_session, header.id)
+    assert [d.id for d in header_deps] == [tooling.id]
+    tooling_deps = await card_service.list_dependencies(db_session, tooling.id)
+    assert tooling_deps == []
+
+
+async def test_pm_loop_rejects_a_single_task_epic_and_recovers(db_session, toy_repo_remote):
+    project, card, wt_path = await _make_pm_card(db_session, toy_repo_remote)
+    visit = await transitions.start_visit(db_session, card)
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_1",
+                        name="define_epic",
+                        arguments={
+                            "spec": "Not really an epic.",
+                            "tasks": [{"title": "Only one", "raw_request": "just this"}],
+                            "summary": "not really an epic",
+                        },
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_2",
+                        name="submit_spec",
+                        arguments={
+                            "spec": "Add subtract(a, b).",
+                            "acceptance_criteria": ["subtract(2, 1) == 1"],
+                            "summary": "fixed",
+                        },
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+        ]
+    )
+    executor = FakeCommandExecutor(CommandResult(exit_code=0, stdout="", stderr=""))
+    dispatcher = ToolDispatcher(ctx=ToolContext(card_id=card.id, worktree_root=wt_path), executor=executor)
+
+    result = await run_pm_visit(
+        db_session, project, card, visit, llm_client=llm, dispatcher=dispatcher, max_iterations=10
+    )
+
+    assert result.column == Column.DEVELOPER
+    assert result.archived_at is None
+    children = await card_service.list_cards(db_session, project.id, include_archived=False)
+    assert not any(c.title == "Only one" for c in children)
+
+
+async def test_pm_loop_rejects_a_forward_depends_on_index_and_recovers(db_session, toy_repo_remote):
+    """depends_on may only reference earlier tasks — a forward or self reference is
+    rejected outright (not silently dropped), and nothing gets created from that
+    call, unlike a merely-malformed task dict elsewhere in the same list."""
+    project, card, wt_path = await _make_pm_card(db_session, toy_repo_remote)
+    visit = await transitions.start_visit(db_session, card)
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_1",
+                        name="define_epic",
+                        arguments={
+                            "spec": "Bad epic.",
+                            "tasks": [
+                                {"title": "First", "raw_request": "r", "depends_on": [1]},
+                                {"title": "Second", "raw_request": "r"},
+                            ],
+                            "summary": "bad depends_on",
+                        },
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_2",
+                        name="submit_spec",
+                        arguments={
+                            "spec": "Add subtract(a, b).",
+                            "acceptance_criteria": ["subtract(2, 1) == 1"],
+                            "summary": "fixed",
+                        },
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+        ]
+    )
+    executor = FakeCommandExecutor(CommandResult(exit_code=0, stdout="", stderr=""))
+    dispatcher = ToolDispatcher(ctx=ToolContext(card_id=card.id, worktree_root=wt_path), executor=executor)
+
+    result = await run_pm_visit(
+        db_session, project, card, visit, llm_client=llm, dispatcher=dispatcher, max_iterations=10
+    )
+
+    assert result.column == Column.DEVELOPER
+    children = await card_service.list_cards(db_session, project.id, include_archived=False)
+    assert not any(c.title in ("First", "Second") for c in children)

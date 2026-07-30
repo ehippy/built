@@ -71,6 +71,7 @@ async def board(project_id: str, request: Request, session: SessionDep, show_arc
     board = await card_service.get_board(session, project_id, include_archived=show_archived)
     statuses = await _curation_statuses(session, project_id)
     curation_state = await project_service.get_curation_state(session, project_id)
+    epics = await card_service.list_epics(session, project_id)
     return templates.TemplateResponse(
         request,
         "board.html.j2",
@@ -80,6 +81,8 @@ async def board(project_id: str, request: Request, session: SessionDep, show_arc
             "show_archived": show_archived,
             "statuses": statuses,
             "curation_paused_at": curation_state.paused_at if curation_state else None,
+            "epics": epics,
+            "current_epic_id": project.current_epic_id,
         },
     )
 
@@ -92,6 +95,30 @@ async def board_fragment(project_id: str, request: Request, session: SessionDep,
         request,
         "_board_fragment.html.j2",
         {"project": project, "board": board, "show_archived": show_archived},
+    )
+
+
+@router.get("/projects/{project_id}/board/epics-fragment")
+async def board_epics_fragment(project_id: str, request: Request, session: SessionDep):
+    project = await project_service.get_project(session, project_id)
+    epics = await card_service.list_epics(session, project_id)
+    return templates.TemplateResponse(
+        request,
+        "_epics_fragment.html.j2",
+        {"project": project, "epics": epics, "current_epic_id": project.current_epic_id},
+    )
+
+
+@router.post("/projects/{project_id}/current-epic")
+async def set_current_epic(
+    project_id: str, session: SessionDep, request: Request, epic_card_id: str = Form("")
+) -> RedirectResponse:
+    """Board page's current-epic <select>. Human-set-only (see
+    services/project_service.py's set_current_epic) — empty string clears it, same
+    convention as the checkbox-omission handling on set_curation_kind_enabled."""
+    await project_service.set_current_epic(session, project_id, epic_card_id or None)
+    return RedirectResponse(
+        request.headers.get("referer") or f"/ui/projects/{project_id}/board", status_code=303
     )
 
 

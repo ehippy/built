@@ -7,6 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from built.db.base import Base
 from built.domain.enums import (
     ActivityKind,
+    ChatRole,
     DeployKind,
     DeployMode,
     EventType,
@@ -86,6 +87,11 @@ class Project(Base):
     current_epic_id: Mapped[str | None] = mapped_column(
         ForeignKey("cards.id", use_alter=True, name="fk_projects_current_epic_id"), default=None
     )
+    # A "clear chat" cutoff, not a delete: ChatMessage rows with seq <= this value are
+    # excluded from both the rendered transcript and what agent/chat.py replays into the
+    # model, but stay in the table — same archive-not-delete posture as Card.archived_at.
+    # Added via ADDITIVE_COLUMNS, same precedent as current_epic_id above.
+    chat_cleared_before_seq: Mapped[int | None] = mapped_column(Integer, default=None)
 
     # selectin: async SQLAlchemy has no implicit lazy-load, and this relationship is
     # read unconditionally by ProjectOut serialization — selectin issues its own
@@ -223,6 +229,41 @@ class CurationEvent(Base):
     seq: Mapped[int] = mapped_column(Integer)
     type: Mapped[EventType]
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class ChatMessage(Base):
+    """One row per turn in a project's single, ongoing brainstorming chat (agent/
+    chat.py) — unlike CardEvent/CurationEvent, this must be exactly replayable back
+    into llm/client.py's complete(messages=...), not just good for rendering, so it
+    stores OpenAI message shape directly (role/content/tool_calls/tool_call_id)
+    instead of a freeform payload dict. seq is monotonic per project_id — there is
+    deliberately no session-grouping table; scope is one chat per project, so
+    project_id alone is the key. See Project.chat_cleared_before_seq for how "clear
+    chat" works without deleting these rows."""
+
+    __tablename__ = "chat_messages"
+    __table_args__ = (UniqueConstraint("project_id", "seq", name="uq_chat_messages_project_seq"),)
+
+    id: Mapped[str] = mapped_column(primary_key=True, default=_new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    seq: Mapped[int] = mapped_column(Integer)
+    role: Mapped[ChatRole]
+    content: Mapped[str | None] = mapped_column(Text, default=None)
+    # Assistant rows only: [{"id": tool_call_id, "name": str, "arguments": dict}, ...].
+    # Kept as a plain dict here, not the OpenAI wire shape (which double-JSON-encodes
+    # `arguments` as a string) — services/chat_service.py's to_openai_messages does
+    # that encoding only transiently, at the point of calling complete().
+    tool_calls: Mapped[list | None] = mapped_column(JSON, default=None)
+    tool_call_id: Mapped[str | None] = mapped_column(default=None)  # role == TOOL only
+    tool_name: Mapped[str | None] = mapped_column(default=None)  # role == TOOL only
+    is_error: Mapped[bool] = mapped_column(default=False)
+    # Set only on a create_ticket/update_ticket tool-result row — lets the chat
+    # fragment link straight to the card it just filed/edited.
+    card_id: Mapped[str | None] = mapped_column(ForeignKey("cards.id"), default=None)
+    tokens_in: Mapped[int | None] = mapped_column(Integer, default=None)
+    tokens_out: Mapped[int | None] = mapped_column(Integer, default=None)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 

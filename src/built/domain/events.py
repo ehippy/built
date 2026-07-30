@@ -3,8 +3,8 @@ import re
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from built.db.models import CardEvent, CurationEvent
-from built.domain.enums import ActivityKind, EventType
+from built.db.models import CardEvent, ChatMessage, CurationEvent
+from built.domain.enums import ActivityKind, ChatRole, EventType
 
 MAX_PAYLOAD_CHARS = 20_000
 
@@ -66,6 +66,48 @@ async def append_curation_event(
     session.add(event)
     await session.flush()
     return event
+
+
+async def append_chat_message(
+    session: AsyncSession,
+    *,
+    project_id: str,
+    role: ChatRole,
+    content: str | None = None,
+    tool_calls: list[dict] | None = None,
+    tool_call_id: str | None = None,
+    tool_name: str | None = None,
+    is_error: bool = False,
+    card_id: str | None = None,
+    tokens_in: int | None = None,
+    tokens_out: int | None = None,
+    latency_ms: int | None = None,
+) -> ChatMessage:
+    """Same idea as append_event/append_curation_event, scoped to project_id alone —
+    there's no session-grouping table, just one ongoing chat per project. Scrubs
+    content/tool_calls through _scrub_and_cap unchanged: an LLM echoing a grep_files
+    hit, or a human pasting something, into chat is exactly the kind of secret-leak
+    vector CardEvent/CurationEvent already guard against."""
+    current_max = await session.scalar(
+        select(func.max(ChatMessage.seq)).where(ChatMessage.project_id == project_id)
+    )
+    message = ChatMessage(
+        project_id=project_id,
+        seq=(current_max or 0) + 1,
+        role=role,
+        content=_scrub_and_cap(content) if content is not None else None,
+        tool_calls=_scrub_and_cap(tool_calls) if tool_calls is not None else None,
+        tool_call_id=tool_call_id,
+        tool_name=tool_name,
+        is_error=is_error,
+        card_id=card_id,
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        latency_ms=latency_ms,
+    )
+    session.add(message)
+    await session.flush()
+    return message
 
 
 def _scrub_and_cap(value):

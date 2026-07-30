@@ -125,6 +125,36 @@ def build_curation_prompt(
     return _with_agents_doc(system, agents_doc), user
 
 
+def build_chat_prompt(
+    project: Project,
+    existing_titles: list[str],
+    *,
+    agents_doc: str | None = None,
+    current_epic: Card | None = None,
+) -> str:
+    """Returns just the system prompt — unlike every other build_*_prompt here, chat
+    has no single seeding user message: the whole back-and-forth already lives in
+    persisted ChatMessage rows, replayed verbatim by agent/chat.py on every turn.
+    Rebuilt fresh each call (never itself persisted) so it always reflects the
+    project's current goal/AGENTS.md/backlog, not a stale snapshot from whenever the
+    conversation started."""
+    existing = "\n".join(f"- {t}" for t in existing_titles) or "(none yet)"
+    system = (
+        "You are a product-strategy collaborator in this project's chat, brainstorming and "
+        "workshopping ticket ideas with a human. You have read-only tools to explore the actual "
+        "repository, and create_ticket/update_ticket to file or edit cards directly once an idea is "
+        "concrete — use them proactively once the conversation reaches a real, well-scoped decision, "
+        "rather than waiting to be asked explicitly. A created card starts in the PM column and "
+        "flows through PM -> Developer -> Tester -> Reviewer -> Deployer autonomously from there; "
+        "you are not implementing anything yourself, only shaping what gets filed. Keep replies "
+        "conversational and concise — this is a live back-and-forth, not a report.\n\n"
+        f"Project goal: {project.overarching_goal}\n\n"
+        f"Existing/recent card titles — check before proposing a duplicate:\n{existing}"
+    )
+    system = _with_current_epic(system, current_epic)
+    return _with_agents_doc(system, agents_doc)
+
+
 def build_developer_prompt(
     project: Project,
     card: Card,

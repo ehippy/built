@@ -95,6 +95,14 @@ class Settings(BaseSettings):
     # can ever work through it.
     curator_max_pm_backlog: int = 15
 
+    # Project chat (agent/chat.py + ui/routers/chat.py): a human brainstorming
+    # tickets with an LLM for one project. Purely request-driven — invoked
+    # synchronously per human message, no scheduler loop — so no *_enabled/
+    # poll_interval pair the way curator/reviver have. Small relative to
+    # curator/reviver's iteration caps: a chat turn should resolve in a couple of
+    # tool-call exchanges, not an exhaustive unsupervised pass.
+    chat_max_tool_iterations: int = 6
+
     # Auto-archiver: a deterministic sweep (no LLM, unlike Reviver/Curator) that
     # archives DONE cards once they've sat idle past auto_archive_done_after_days —
     # keeps the board from accumulating finished work forever without a human

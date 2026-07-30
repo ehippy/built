@@ -3,6 +3,7 @@ retry should reach whichever column's prompt is built next, and stay out of the
 prompt entirely when there isn't one."""
 
 from built.agent.context import (
+    build_chat_prompt,
     build_deployer_prompt,
     build_developer_prompt,
     build_pm_prompt,
@@ -79,3 +80,29 @@ def test_deployer_prompt_includes_retry_note_when_present():
         retry_note="rebase onto main and resolve the conflict in index.html",
     )
     assert "rebase onto main and resolve the conflict in index.html" in user
+
+
+def test_chat_prompt_includes_project_goal():
+    system = build_chat_prompt(_project(), [])
+    assert "goal" in system
+
+
+def test_chat_prompt_lists_existing_titles_to_avoid_duplicates():
+    system = build_chat_prompt(_project(), ["Add a health check endpoint"])
+    assert "Add a health check endpoint" in system
+
+
+def test_chat_prompt_says_none_yet_when_no_existing_titles():
+    system = build_chat_prompt(_project(), [])
+    assert "(none yet)" in system
+
+
+def test_chat_prompt_includes_agents_doc_when_present():
+    system = build_chat_prompt(_project(), [], agents_doc="Always run the linter before committing.")
+    assert "Always run the linter before committing." in system
+
+
+def test_chat_prompt_includes_current_epic_when_set():
+    epic = _card(title="Ship v2 onboarding", spec="Redesign the onboarding flow.")
+    system = build_chat_prompt(_project(), [], current_epic=epic)
+    assert "Ship v2 onboarding" in system

@@ -1,0 +1,55 @@
+<div id="chat-transcript" class="d-flex flex-column gap-2" hx-get="/ui/projects/{{ project.id }}/chat/fragment" hx-trigger="every 2s" hx-swap="outerHTML">
+  {% for message in messages %}
+  {% if message.role == "user" %}
+  <div class="chat-msg card border-primary align-self-end" style="max-width: 80%;" id="chat-msg-{{ message.seq }}" hx-preserve="true">
+    <div class="card-body py-2 px-3 small">
+      <div class="text-body-secondary text-uppercase small mb-1 d-flex justify-content-between gap-3">
+        <span>You</span>
+        <span>{{ message.created_at|timeago }}</span>
+      </div>
+      <div>{{ message.content }}</div>
+    </div>
+  </div>
+  {% elif message.role == "assistant" %}
+    {% if message.content or message.tool_calls %}
+    <div class="chat-msg card {% if message.is_error %}border-danger{% endif %} align-self-start" style="max-width: 80%;" id="chat-msg-{{ message.seq }}" hx-preserve="true">
+      <div class="card-body py-2 px-3 small">
+        <div class="text-body-secondary text-uppercase small mb-1 d-flex justify-content-between gap-3">
+          <span>Assistant{% if message.is_error %} <i class="bi bi-exclamation-triangle-fill text-danger"></i>{% endif %}</span>
+          <span>{{ message.created_at|timeago }}</span>
+        </div>
+        {% if message.content %}<div>{{ message.content|markdown }}</div>{% endif %}
+        {% if message.tool_calls %}<div class="text-body-secondary">{% if message.content %}also {% endif %}calling: {{ message.tool_calls|map(attribute="name")|join(", ") }}</div>{% endif %}
+      </div>
+    </div>
+    {% endif %}
+  {% elif message.role == "tool" %}
+  <div class="event card border-{% if message.is_error %}danger{% else %}secondary{% endif %} align-self-start" style="max-width: 80%;" id="chat-msg-{{ message.seq }}" hx-preserve="true">
+    <div class="card-body py-2 px-3 small">
+      {% if message.tool_name in ("create_ticket", "update_ticket") and message.card_id %}
+      <div>
+        <i class="bi bi-ticket-perforated"></i>
+        <a href="/ui/cards/{{ message.card_id }}">{{ message.content }}</a>
+      </div>
+      {% else %}
+      <div class="mb-1"><strong>{{ message.tool_name }}</strong>{% if message.is_error %} (error){% endif %}</div>
+      <details>
+        <summary class="text-body-secondary">Output ({{ (message.content or "")|length }} chars){% if message.is_error %} <i class="bi bi-exclamation-triangle-fill text-danger"></i>{% endif %}</summary>
+        <pre class="mb-0">{{ message.content }}</pre>
+      </details>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+  {% else %}
+  <p class="text-body-secondary">No messages yet — say hello, or ask what's worth working on next.</p>
+  {% endfor %}
+  {% if is_turn_running %}
+  <div class="text-body-secondary fst-italic d-flex align-items-center gap-2 align-self-start">
+    <span class="spinner-border spinner-border-sm flex-shrink-0" role="status">
+      <span class="visually-hidden">Thinking…</span>
+    </span>
+    Thinking…
+  </div>
+  {% endif %}
+</div>

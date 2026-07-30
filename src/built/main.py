@@ -25,6 +25,7 @@ from built.orchestrator.reviver import run_reviver_loop
 from built.orchestrator.worker import run_worker_pool
 from built.ui.routers import board as ui_board
 from built.ui.routers import cards as ui_cards
+from built.ui.routers import chat as ui_chat
 from built.ui.routers import endpoint_configs as ui_endpoint_configs
 from built.ui.routers import logs as ui_logs
 from built.ui.routers import projects as ui_projects
@@ -114,6 +115,7 @@ def create_app() -> FastAPI:
     app.include_router(ui_projects.router)
     app.include_router(ui_board.router)
     app.include_router(ui_cards.router)
+    app.include_router(ui_chat.router)
     app.include_router(ui_endpoint_configs.router)
     app.include_router(ui_logs.router)
 

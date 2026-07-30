@@ -524,6 +524,67 @@ PROPOSE_TASKS = {
 CURATION_TOOLS = [READ_FILE, LIST_FILES, GLOB_FILES, GREP_FILES, PROPOSE_TASKS]
 CURATION_TERMINAL_TOOL = "propose_tasks"
 
+MAX_TICKETS_PER_CHAT_TURN = 5
+
+CREATE_TICKET = {
+    "type": "function",
+    "function": {
+        "name": "create_ticket",
+        "description": (
+            "Create a new card on this project's board, in the PM column — exactly like a human "
+            "filing a request. Use this once you and the human have actually converged on a "
+            "concrete, well-scoped idea during this conversation, not speculatively for every idea "
+            "mentioned in passing. Does not end the conversation — keep chatting afterward. At most "
+            f"{MAX_TICKETS_PER_CHAT_TURN} new tickets per turn; if you're proposing more, check in "
+            "with the human before filing the rest as a follow-up."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "A short title for the card."},
+                "raw_request": {
+                    "type": "string",
+                    "description": (
+                        "Self-contained description of the work, written as if a human requested it "
+                        "directly — whoever specs it later won't have this conversation in front of "
+                        "them."
+                    ),
+                },
+            },
+            "required": ["title", "raw_request"],
+        },
+    },
+}
+
+UPDATE_TICKET = {
+    "type": "function",
+    "function": {
+        "name": "update_ticket",
+        "description": (
+            "Edit an existing card's title and/or request text — e.g. after the human clarifies or "
+            "changes their mind about something already filed. Only title and raw_request are "
+            "editable here; a card's spec/acceptance criteria are written later by the PM column, "
+            "not by this conversation, and won't retroactively change if the card has already moved "
+            "past PM."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "card_id": {"type": "string", "description": "The card to edit."},
+                "title": {"type": "string", "description": "New title."},
+                "raw_request": {"type": "string", "description": "New request text."},
+            },
+            "required": ["card_id", "title", "raw_request"],
+        },
+    },
+}
+
+# Project chat (agent/chat.py) — read-only browsing plus create_ticket/update_ticket, which
+# are ordinary (non-terminal) tools here: a chat turn ends when the model replies with no
+# further tool calls, not by calling a designated "done" tool, so the conversation stays
+# open after a card is filed or edited.
+CHAT_TOOLS = [READ_FILE, LIST_FILES, GLOB_FILES, GREP_FILES, CREATE_TICKET, UPDATE_TICKET]
+
 APPROVE = {
     "type": "function",
     "function": {

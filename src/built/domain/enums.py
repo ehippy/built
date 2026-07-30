@@ -92,6 +92,20 @@ class DeployMode(StrEnum):
     PR_TO_OPERATOR = "pr_to_operator"
 
 
+class ChatRole(StrEnum):
+    """ChatMessage.role — mirrors OpenAI's message-role vocabulary directly, since
+    reconstructing `messages` for llm/client.py's complete() is the whole reason
+    project chat is stored as structured rows rather than a rendering summary like
+    CardEvent/CurationEvent. SYSTEM is reserved for a future compaction checkpoint;
+    v1 never writes it — the live system prompt is rebuilt fresh every turn by
+    agent/context.py's build_chat_prompt instead."""
+
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
+    TOOL = "tool"
+
+
 class ActivityKind(StrEnum):
     """A periodic curation pass over a project. Every kind does the same mechanical
     thing — explore read-only, decide, call propose_tasks — differing only in system

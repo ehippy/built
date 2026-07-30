@@ -48,6 +48,9 @@ ADDITIVE_COLUMNS = [
     # Nullable, no DEFAULT needed — every existing project simply has no current
     # epic until a human sets one (see db/models.py's Project.current_epic_id).
     ("projects", "current_epic_id", "TEXT"),
+    # Nullable, no DEFAULT needed — every existing project has never had its chat
+    # cleared (see db/models.py's Project.chat_cleared_before_seq).
+    ("projects", "chat_cleared_before_seq", "INTEGER"),
 ]
 
 

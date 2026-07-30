@@ -13,9 +13,11 @@
     <p class="text-body-secondary">{{ project.overarching_goal }}</p>
   </div>
   <div class="d-flex gap-2">
-    <details>
-      <summary class="btn btn-secondary">Curation</summary>
-      <div class="card card-body mt-2" style="min-width: 20rem;">
+    <div class="dropdown">
+      <button class="btn btn-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+        Curation
+      </button>
+      <div class="dropdown-menu p-3" style="min-width: 20rem;">
         <p class="text-body-secondary">Run a focused pass over the repo and propose cards for whatever it finds — nothing is ever edited directly, every kind only ever proposes new cards.</p>
         <div class="d-grid gap-2">
           <form method="post" action="/ui/projects/{{ project.id }}/curate/bug_sweep">
@@ -35,10 +37,12 @@
           </form>
         </div>
       </div>
-    </details>
-    <details>
-      <summary class="btn btn-primary">New card</summary>
-      <div class="card card-body mt-2" style="min-width: 24rem;">
+    </div>
+    <div class="dropdown">
+      <button class="btn btn-primary dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+        New card
+      </button>
+      <div class="dropdown-menu dropdown-menu-end p-3" style="min-width: 24rem;">
         <form method="post" action="/ui/projects/{{ project.id }}/cards">
           <div class="mb-3">
             <label class="form-label" for="title">Title</label>
@@ -59,7 +63,7 @@
           <button class="btn btn-primary" type="submit">Add to board</button>
         </form>
       </div>
-    </details>
+    </div>
   </div>
 </div>
 

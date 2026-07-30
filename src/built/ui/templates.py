@@ -54,6 +54,18 @@ def _clocktime(dt) -> str:
     return dt.astimezone().strftime("%H:%M:%S")
 
 
+def tool_descriptor(arguments: dict | None) -> str:
+    """The single most useful argument to show next to a tool name in a compact
+    label, e.g. "read_file(app.py)" or "grep_files(TODO)" — not used by the bash
+    tool, which shows its full command instead of a one-word descriptor. Shared
+    between the card event transcript and the board's curation status panel
+    (built.ui.routers.board._describe_curation_event) so a tool call reads
+    identically wherever it's shown."""
+    args = arguments or {}
+    return args.get("path") or args.get("pattern") or args.get("command") or ""
+
+
 templates.env.filters["timeago"] = _timeago
 templates.env.filters["markdown"] = _render_markdown
 templates.env.filters["clocktime"] = _clocktime
+templates.env.filters["tool_descriptor"] = tool_descriptor

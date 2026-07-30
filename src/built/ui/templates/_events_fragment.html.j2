@@ -23,7 +23,8 @@
         <pre>{{ event.payload.result }}</pre>
       </details>
     {% elif event.type == "tool_call" %}
-      <div class="hint"><strong>{{ event.payload.name }}</strong>{% if event.payload.is_error %} (error){% endif %}</div>
+      {% set descriptor = event.payload.arguments|tool_descriptor %}
+      <div class="hint"><strong>{{ event.payload.name }}({{ descriptor }})</strong>{% if event.payload.is_error %} (error){% endif %}</div>
       <details class="collapsible">
         <summary>Output ({{ event.payload.result|length }} chars){% if event.payload.is_error %} ⚠{% endif %}</summary>
         <pre>{{ event.payload.result }}</pre>

@@ -8,7 +8,7 @@ from built.db.models import CurationEvent
 from built.domain.enums import ActivityKind, EventType, Priority
 from built.orchestrator.curator import is_curation_running, run_curation_activity
 from built.services import card_service, project_service
-from built.ui.templates import templates
+from built.ui.templates import templates, tool_descriptor
 
 router = APIRouter(prefix="/ui", tags=["ui"])
 
@@ -30,9 +30,8 @@ def _describe_curation_event(event: CurationEvent) -> str:
     if name:
         if name == "propose_tasks":
             return str(event.payload.get("result") or "propose_tasks")
-        args = event.payload.get("arguments") or {}
-        descriptor = args.get("path") or args.get("pattern") or args.get("command") or ""
-        return f"{name}({descriptor})" if descriptor else f"{name}()"
+        descriptor = tool_descriptor(event.payload.get("arguments"))
+        return f"{name}({descriptor})"
     tool_calls = event.payload.get("tool_calls") or []
     if tool_calls:
         return f"calling {tool_calls[0]}…"

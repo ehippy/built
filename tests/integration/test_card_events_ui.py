@@ -151,6 +151,34 @@ async def test_bash_tool_call_shows_the_command_alongside_its_output(db_session)
     assert "Configuration file: /workspace/_config.yml" in fragment.text
 
 
+async def test_read_file_tool_call_shows_which_file_it_read(db_session):
+    """The generic tool_call rendering used to show only the bare tool name — no
+    way to tell which file a read_file (or grep_files/glob_files/write_file/
+    edit_file) call actually touched without expanding the raw Output details.
+    The board's curation status panel already solved this (board.py's
+    _describe_curation_event); the card transcript never got the same fix."""
+    project = await _make_project(db_session, _n="9")
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    await append_event(
+        db_session,
+        card_id=card.id,
+        type=EventType.TOOL_CALL,
+        payload={
+            "name": "read_file",
+            "arguments": {"path": "games/snake.html"},
+            "result": "     1\t---\n     2\tlayout: game\n",
+            "is_error": False,
+            "commit_sha": None,
+        },
+    )
+    await db_session.commit()
+
+    async with _client() as client:
+        fragment = await client.get(f"/ui/cards/{card.id}/events/fragment")
+
+    assert "read_file(games/snake.html)" in fragment.text
+
+
 async def test_changes_requested_transition_shows_the_full_feedback_not_just_summary(db_session):
     """A changes_requested transition's payload previously carried only the
     one-line `summary` — the fuller `feedback` (what actually becomes

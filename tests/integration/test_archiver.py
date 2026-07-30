@@ -1,12 +1,14 @@
 """orchestrator/archiver.py — a deterministic (no LLM) sweep that archives DONE
 cards once they've sat idle past the configured threshold, so the board doesn't
-accumulate finished work forever without a human archiving it by hand."""
+accumulate finished work forever without a human archiving it by hand. Also cleans
+up on-disk git worktrees for cards that are archived or DONE."""
 
 from datetime import UTC, datetime, timedelta
 
 from built.config import settings
 from built.domain import transitions
-from built.orchestrator.archiver import run_archiver_once
+from built.orchestrator.archiver import cleanup_stale_worktrees_once, run_archiver_once
+from built.sandbox import worktree
 from built.services import card_service, project_service
 
 
@@ -78,3 +80,71 @@ async def test_does_not_re_archive_an_already_archived_done_card(db_session, mon
     archived_count = await run_archiver_once()
 
     assert archived_count == 0
+
+
+async def _make_card_with_worktree(session, toy_repo_remote, *, title):
+    project = await project_service.create_project(
+        session,
+        name=f"archiver-wt-{title}",
+        overarching_goal="goal",
+        repo_remote_url=str(toy_repo_remote),
+    )
+    card = await card_service.create_card(session, project.id, title=title, raw_request="r")
+    wt_path = await worktree.create_card_worktree(project, card)
+    card.worktree_path = str(wt_path)
+    await session.commit()
+    return project, card, wt_path
+
+
+async def test_cleanup_removes_worktree_for_an_archived_card(db_session, toy_repo_remote):
+    project, card, wt_path = await _make_card_with_worktree(db_session, toy_repo_remote, title="archived")
+    await card_service.archive_card(db_session, card.id)
+    await db_session.commit()
+
+    cleaned = await cleanup_stale_worktrees_once()
+
+    assert cleaned == 1
+    assert not wt_path.exists()
+    await db_session.refresh(card)
+    assert card.worktree_path is None
+
+
+async def test_cleanup_removes_worktree_for_a_done_card(db_session, toy_repo_remote):
+    project, card, wt_path = await _make_card_with_worktree(db_session, toy_repo_remote, title="done")
+    visit = await transitions.start_visit(db_session, card)
+    await transitions.complete_deployer_visit(db_session, card, visit, success=True, summary="Deployed")
+    await db_session.commit()
+
+    cleaned = await cleanup_stale_worktrees_once()
+
+    assert cleaned == 1
+    assert not wt_path.exists()
+    await db_session.refresh(card)
+    assert card.worktree_path is None
+
+
+async def test_cleanup_leaves_an_active_cards_worktree_alone(db_session, toy_repo_remote):
+    project, card, wt_path = await _make_card_with_worktree(db_session, toy_repo_remote, title="active")
+
+    cleaned = await cleanup_stale_worktrees_once()
+
+    assert cleaned == 0
+    assert wt_path.exists()
+    await db_session.refresh(card)
+    assert card.worktree_path == str(wt_path)
+
+
+async def test_cleanup_ignores_archived_cards_with_no_recorded_worktree(db_session):
+    project = await project_service.create_project(
+        db_session,
+        name="archiver-wt-none",
+        overarching_goal="goal",
+        repo_remote_url="https://example.invalid/repo.git",
+    )
+    card = await card_service.create_card(db_session, project.id, title="never worked", raw_request="r")
+    await card_service.archive_card(db_session, card.id)
+    await db_session.commit()
+
+    cleaned = await cleanup_stale_worktrees_once()
+
+    assert cleaned == 0

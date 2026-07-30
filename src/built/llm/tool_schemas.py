@@ -425,7 +425,9 @@ PROPOSE_TASKS = {
                                 "type": "string",
                                 "description": (
                                     "The gap/bug/opportunity and what should be done about it, "
-                                    "written as if a human requested it."
+                                    "written as if a human requested it. One issue per task — if you "
+                                    "found several distinct problems, that's several array entries, "
+                                    "not one raw_request that lists them all."
                                 ),
                             },
                         },

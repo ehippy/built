@@ -18,26 +18,36 @@ def _with_agents_doc(system: str, agents_doc: str | None) -> str:
 
 _CURATION_FOCUS: dict[ActivityKind, str] = {
     ActivityKind.BUG_SWEEP: (
-        "working in bug-sweep mode: look specifically for defects — broken behavior, unhandled edge "
-        "cases, error states that aren't handled gracefully. Point at something concrete in the code, "
-        "not a vague hunch."
+        "working in bug-sweep mode: hunt for defects — behavior that contradicts what the code (or "
+        "its own docs/comments) claims it does, edge cases left unhandled, error paths that fail "
+        "silently or ungracefully. Each finding needs a concrete file and the exact condition that "
+        "triggers it — 'error handling could be better' is not a bug, a specific input producing a "
+        "specific wrong result is. Leave style/naming complaints to polish-review and missing "
+        "capabilities to opportunity-brainstorm."
     ),
     ActivityKind.OPPORTUNITY_BRAINSTORM: (
-        "working in opportunity-brainstorm mode: look for valuable new features or capabilities that "
-        "would genuinely further the project's stated goal — not busywork or polish, real product "
-        "opportunities."
+        "working in opportunity-brainstorm mode: look for a genuine capability gap — something the "
+        "project's stated goal implies but the code doesn't yet do, or an existing feature that's "
+        "half-built and stops short of being useful. Ground each idea in something concrete you found "
+        "while exploring (a stubbed-out path, a TODO, a workflow with no entry point), not a generic "
+        "feature that could bolt onto any app. Leave bug fixes to bug-sweep and cosmetic improvements "
+        "to polish-review."
     ),
     ActivityKind.POLISH_REVIEW: (
-        "working in polish-review mode: look for rough edges — inconsistent UI/UX, confusing naming, "
-        "missing or unclear error messages, code-style inconsistencies. Small, concrete fixes, not a "
-        "rewrite."
+        "working in polish-review mode: look for rough edges in things that already work correctly — "
+        "inconsistent UI/UX, confusing or inconsistent naming, missing or unclear error/log messages, "
+        "formatting inconsistencies. Point at the specific file, screen, or message — not a general "
+        "sense that something could be cleaner. Small, targeted fixes only, never a rewrite or a "
+        "rename sweep across the whole codebase; leave actually-broken behavior to bug-sweep and "
+        "missing capabilities to opportunity-brainstorm."
     ),
     ActivityKind.STAY_DRY: (
         "working in stay-DRY mode: look for duplicated or near-duplicated code — repeated logic, "
         "copy-pasted blocks, parallel implementations of the same idea living in different files or "
-        "functions. For each one, propose a concrete refactor that extracts or consolidates the shared "
-        "code, naming the specific files/functions involved. Skip incidental similarity that isn't "
-        "actually the same concept — not every repeated line is worth deduplicating."
+        "functions. Name the specific files/functions involved and propose a concrete refactor that "
+        "extracts or consolidates the shared code. Skip incidental similarity that isn't actually the "
+        "same concept, and skip pure style inconsistency (that's polish-review's job) — this is about "
+        "logic that's actually repeated."
     ),
 }
 
@@ -61,10 +71,12 @@ def build_curation_prompt(
             "You are the agent that keeps this project's AGENTS.md up to date. Below is a summary of "
             "recently closed work. Decide whether anything in it is a real, recurring practice or "
             "hard-won lesson worth documenting for future agents working on this repo — most closed "
-            "cards aren't. If something is, call propose_tasks with exactly one card describing the "
-            "specific update to make to AGENTS.md; the actual edit happens through the normal "
-            "pipeline, not by you. propose_tasks requires at least one task, so if nothing feels truly "
-            "worth flagging, propose the single most real (if marginal) observation rather than "
+            "cards aren't. If something is, call propose_tasks with exactly one card describing that "
+            "one specific update to make to AGENTS.md; the actual edit happens through the normal "
+            "pipeline, not by you. If several things seem worth documenting, pick the single most "
+            "valuable one rather than folding them all into one sprawling update — the rest can "
+            "surface on a future pass. propose_tasks requires at least one task, so if nothing feels "
+            "truly worth flagging, propose the single most real (if marginal) observation rather than "
             "forcing something contrived.\n\n"
             f"Project goal: {project.overarching_goal}"
         )
@@ -76,6 +88,10 @@ def build_curation_prompt(
         f"You are the Product Manager agent in an autonomous software factory, {focus} Use the "
         "read-only tools to actually look at the code before proposing anything — don't propose work "
         "that's already done or already queued.\n\n"
+        "Each task must be one coherent, independently workable unit — small enough for a Developer "
+        "to build and a Tester to verify in a single focused pass. If you find several distinct "
+        "issues, that's several tasks, not one task whose raw_request lists them all; never bundle "
+        "unrelated findings together just to stay under the task limit below.\n\n"
         f"Project goal: {project.overarching_goal}\n\n"
         f"When ready, call propose_tasks with 1 to {MAX_PROPOSED_TASKS} concrete, well-scoped tasks. "
         "Each becomes a new card that flows through the same PM -> Developer -> Tester -> Deployer "

@@ -21,6 +21,49 @@ def test_read_file_ok_and_missing(ctx):
     assert missing.is_error
 
 
+def test_read_file_prefixes_line_numbers(ctx):
+    result = read_tools.read_file(ctx, "src/app.py")
+    lines = result.output.splitlines()
+    assert lines[0] == "     1\tdef greet():"
+    assert lines[1] == "     2\t    return 'hi'"
+
+
+def test_read_file_offset_and_limit_page_through_a_file(ctx, tmp_path):
+    (tmp_path / "big.txt").write_text("\n".join(f"line{i}" for i in range(1, 11)) + "\n")
+
+    first_page = read_tools.read_file(ctx, "big.txt", limit=3)
+    assert not first_page.is_error
+    assert [line.split("\t")[1] for line in first_page.output.splitlines()[:3]] == [
+        "line1",
+        "line2",
+        "line3",
+    ]
+    assert "7 more line(s) below" in first_page.output
+    assert "offset=4" in first_page.output
+
+    second_page = read_tools.read_file(ctx, "big.txt", offset=4, limit=3)
+    assert not second_page.is_error
+    body, _, _trailer = second_page.output.partition("\n\n")
+    assert [line.split("\t")[1] for line in body.splitlines()] == ["line4", "line5", "line6"]
+
+    past_the_end = read_tools.read_file(ctx, "big.txt", offset=100)
+    assert past_the_end.is_error
+    assert "only 10 lines" in past_the_end.output
+
+
+def test_read_file_default_limit_truncates_long_files(ctx, tmp_path):
+    (tmp_path / "long.txt").write_text("\n".join(f"line{i}" for i in range(1, 2100)) + "\n")
+
+    result = read_tools.read_file(ctx, "long.txt")
+    assert not result.is_error
+    body, _, trailer = result.output.partition("\n\n")
+    body_lines = body.splitlines()
+    assert len(body_lines) == read_tools.DEFAULT_READ_LINES
+    assert body_lines[-1].split("\t")[1] == "line2000"
+    assert "99 more line(s) below" in trailer
+    assert "offset=2001" in trailer
+
+
 def test_read_file_rejects_escape(ctx):
     result = read_tools.read_file(ctx, "../../etc/passwd")
     assert result.is_error

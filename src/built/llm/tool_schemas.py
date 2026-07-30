@@ -6,11 +6,31 @@ READ_FILE = {
     "type": "function",
     "function": {
         "name": "read_file",
-        "description": "Read a text file from the repository. Paths are relative to the repo root.",
+        "description": (
+            "Read a file's contents, prefixed with line numbers (format: a right-aligned number, a "
+            "tab, then the actual line — never include that prefix in old_str if you use this output "
+            "with edit_file). Defaults to the first 2000 lines; if the response says more lines "
+            "follow, either pass limit to pull more at once, or better, pass offset to jump straight "
+            "to the section you actually need. For a large or unfamiliar file, grep_files first to "
+            "find which lines matter, then read_file with offset near that line — cheaper and more "
+            "precise than reading start-to-finish when you already know what you're looking for. "
+            "Reach for this once you know which file and roughly which lines; use grep_files/"
+            "glob_files instead when you're still figuring out which file that is."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Path to the file, relative to the repo root."}
+                "path": {"type": "string", "description": "Path to the file, relative to the repo root."},
+                "offset": {
+                    "type": "integer",
+                    "description": (
+                        "1-indexed line number to start reading from. Defaults to 1 (the start of the file)."
+                    ),
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of lines to return. Defaults to 2000.",
+                },
             },
             "required": ["path"],
         },
@@ -21,7 +41,11 @@ LIST_FILES = {
     "type": "function",
     "function": {
         "name": "list_files",
-        "description": "List the files and subdirectories directly inside a directory.",
+        "description": (
+            "List the files and subdirectories directly inside one directory (not recursive). Use "
+            "this for a quick look at what's in a specific folder; use glob_files instead when "
+            "you're searching by name/extension pattern across the whole tree."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -38,7 +62,13 @@ GLOB_FILES = {
     "type": "function",
     "function": {
         "name": "glob_files",
-        "description": "Find files matching a glob pattern (e.g. '**/*.py').",
+        "description": (
+            "Find files by name or path pattern (e.g. '**/*.py', 'src/**/test_*.js') without reading "
+            "any file contents — essentially free. Use this to answer 'does this file exist' or "
+            "'what's the naming convention here' before you commit to reading or writing anything; "
+            "reach for grep_files instead when what you actually know is a symbol or string you're "
+            "looking for, not a filename shape."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -53,7 +83,14 @@ GREP_FILES = {
     "type": "function",
     "function": {
         "name": "grep_files",
-        "description": "Search file contents for a regular expression.",
+        "description": (
+            "Search file contents for a regular expression; returns 'path:line_number:line text' for "
+            "every match. This is the cheap way to find where a symbol, string, or pattern lives — "
+            "prefer it over read_file whenever you're looking for something specific rather than "
+            "trying to understand a whole file's structure. Once a hit tells you which file and line, "
+            "follow up with read_file(path, offset=<that line>) instead of reading the file "
+            "start-to-finish."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -90,7 +127,9 @@ EDIT_FILE = {
         "name": "edit_file",
         "description": (
             "Replace one exact, unique occurrence of old_str with new_str in an existing file. "
-            "Include enough surrounding context in old_str to make it unique."
+            "Include enough surrounding context in old_str to make it unique. old_str must match the "
+            "file's actual bytes — if you copied it from read_file's output, strip the leading line "
+            "number and tab from every line first; that prefix isn't part of the file."
         ),
         "parameters": {
             "type": "object",

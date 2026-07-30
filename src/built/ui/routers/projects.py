@@ -12,6 +12,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from built.api.deps import SessionDep
+from built.config import settings
 from built.domain.enums import Column, DeployKind, DeployMode
 from built.services import card_service, endpoint_service, project_service
 from built.ui.templates import templates
@@ -79,7 +80,12 @@ async def project_settings(project_id: str, request: Request, session: SessionDe
     return templates.TemplateResponse(
         request,
         "project_settings.html.j2",
-        {"project": project, "endpoint_configs": endpoint_configs, "deploy_config": project.deploy_config},
+        {
+            "project": project,
+            "endpoint_configs": endpoint_configs,
+            "deploy_config": project.deploy_config,
+            "default_max_tokens": settings.default_max_tokens,
+        },
     )
 
 
@@ -139,6 +145,7 @@ async def add_project_endpoint_config(
     priority: int = Form(0),
     api_key_ref: str = Form(""),
     max_concurrency: int = Form(1),
+    context_window: str = Form(""),
 ) -> RedirectResponse:
     await endpoint_service.create_endpoint_config(
         session,
@@ -149,6 +156,7 @@ async def add_project_endpoint_config(
         priority=priority,
         api_key_ref=api_key_ref or None,
         max_concurrency=max_concurrency,
+        context_window=int(context_window) if context_window.strip() else None,
     )
     return RedirectResponse(f"/ui/projects/{project_id}/settings", status_code=303)
 

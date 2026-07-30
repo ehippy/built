@@ -2,6 +2,7 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
 
 from built.api.deps import SessionDep
+from built.config import settings
 from built.domain.enums import Column
 from built.services import endpoint_service
 from built.ui.templates import templates
@@ -13,7 +14,9 @@ router = APIRouter(prefix="/ui", tags=["ui"])
 async def list_global_endpoint_configs(request: Request, session: SessionDep):
     endpoint_configs = await endpoint_service.list_endpoint_configs(session, only_global=True)
     return templates.TemplateResponse(
-        request, "endpoint_configs.html.j2", {"endpoint_configs": endpoint_configs}
+        request,
+        "endpoint_configs.html.j2",
+        {"endpoint_configs": endpoint_configs, "default_max_tokens": settings.default_max_tokens},
     )
 
 
@@ -26,6 +29,7 @@ async def create_global_endpoint_config(
     priority: int = Form(0),
     api_key_ref: str = Form(""),
     max_concurrency: int = Form(1),
+    context_window: str = Form(""),
 ) -> RedirectResponse:
     await endpoint_service.create_endpoint_config(
         session,
@@ -36,8 +40,24 @@ async def create_global_endpoint_config(
         priority=priority,
         api_key_ref=api_key_ref or None,
         max_concurrency=max_concurrency,
+        context_window=int(context_window) if context_window.strip() else None,
     )
     return RedirectResponse("/ui/endpoint-configs", status_code=303)
+
+
+@router.post("/endpoint-configs/{endpoint_id}/context-window")
+async def set_endpoint_context_window(
+    endpoint_id: str,
+    session: SessionDep,
+    context_window: int = Form(...),
+    next: str = "/ui/endpoint-configs",
+) -> RedirectResponse:
+    """The model's real context window isn't discoverable from here — an operator has
+    to tell the app what it is, or every project resolving to this endpoint silently
+    caps at settings.default_max_tokens (128k) regardless of what the model actually
+    supports."""
+    await endpoint_service.update_endpoint_config(session, endpoint_id, context_window=context_window)
+    return RedirectResponse(next, status_code=303)
 
 
 @router.post("/endpoint-configs/{endpoint_id}/toggle")

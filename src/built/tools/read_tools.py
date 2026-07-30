@@ -6,11 +6,16 @@ from pathlib import Path
 
 from built.tools.base import PathEscapesWorktreeError, ToolContext, ToolResult
 
-MAX_READ_BYTES = 200_000
+# A hard ceiling on what we'll even open — catches a binary/generated artifact
+# rather than dumping megabytes of tokens into the conversation. Distinct from
+# DEFAULT_READ_LINES: a file under this ceiling but longer than that default is
+# still fully readable, just paged via offset/limit instead of all at once.
+MAX_FILE_BYTES = 5_000_000
+DEFAULT_READ_LINES = 2000
 MAX_MATCHES = 500
 
 
-def read_file(ctx: ToolContext, path: str) -> ToolResult:
+def read_file(ctx: ToolContext, path: str, offset: int = 1, limit: int | None = None) -> ToolResult:
     try:
         resolved = ctx.resolve(path)
     except PathEscapesWorktreeError as exc:
@@ -18,12 +23,27 @@ def read_file(ctx: ToolContext, path: str) -> ToolResult:
     if not resolved.is_file():
         return ToolResult.error(f"no such file: {path!r}")
     data = resolved.read_bytes()
-    if len(data) > MAX_READ_BYTES:
-        return ToolResult.error(f"{path!r} is too large to read ({len(data)} bytes)")
+    if len(data) > MAX_FILE_BYTES:
+        return ToolResult.error(
+            f"{path!r} is {len(data)} bytes — too large to open at all. If it's a text file, use "
+            "grep_files to find the lines you actually need, or shell out to `sed`/`head` via bash."
+        )
     try:
-        return ToolResult.ok(data.decode("utf-8"))
+        text = data.decode("utf-8")
     except UnicodeDecodeError:
         return ToolResult.error(f"{path!r} is not valid UTF-8 text")
+
+    lines = text.splitlines()
+    total = len(lines)
+    start = max(offset, 1) - 1
+    if total and start >= total:
+        return ToolResult.error(f"{path!r} has only {total} lines — offset {offset} is past the end")
+    end = min(start + (limit if limit else DEFAULT_READ_LINES), total)
+
+    numbered = "\n".join(f"{i:>6}\t{lines[i - 1]}" for i in range(start + 1, end + 1))
+    if end < total:
+        numbered += f"\n\n[{total - end} more line(s) below — pass offset={end + 1} to continue reading]"
+    return ToolResult.ok(numbered)
 
 
 def list_files(ctx: ToolContext, path: str = ".") -> ToolResult:

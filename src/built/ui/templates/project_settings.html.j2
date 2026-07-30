@@ -95,7 +95,7 @@
   </p>
   {% if endpoint_configs %}
   <table>
-    <thead><tr><th>Role</th><th>Base URL</th><th>Model</th><th>Priority</th><th>Max concurrency</th><th>Enabled</th><th></th></tr></thead>
+    <thead><tr><th>Role</th><th>Base URL</th><th>Model</th><th>Priority</th><th>Max concurrency</th><th>Context window</th><th>Enabled</th><th></th></tr></thead>
     <tbody>
     {% for ep in endpoint_configs %}
       <tr>
@@ -104,6 +104,13 @@
         <td>{{ ep.model }}</td>
         <td>{{ ep.priority }}</td>
         <td>{{ ep.max_concurrency }}</td>
+        <td>
+          <form class="inline" method="post" action="/ui/endpoint-configs/{{ ep.id }}/context-window?next=/ui/projects/{{ project.id }}/settings">
+            <input type="number" name="context_window" min="1" value="{{ ep.context_window or default_max_tokens }}" class="context-window-input">
+            <button class="btn secondary small" type="submit">Save</button>
+          </form>
+          {% if not ep.context_window %}<div class="hint">unset — using app default</div>{% endif %}
+        </td>
         <td>{{ "yes" if ep.enabled else "no" }}</td>
         <td>
           <form class="inline" method="post" action="/ui/endpoint-configs/{{ ep.id }}/toggle?next=/ui/projects/{{ project.id }}/settings">
@@ -157,6 +164,11 @@
       <label for="max_concurrency">Max concurrency</label>
       <input type="number" id="max_concurrency" name="max_concurrency" min="1" value="1">
       <div class="hint">Max simultaneous requests this backend should ever receive, shared across every project/role that resolves to it (matched on base URL + model) — not just this project. A single local model instance can rarely usefully handle more than 1 at once.</div>
+    </div>
+    <div class="field">
+      <label for="context_window">Context window (optional)</label>
+      <input type="number" id="context_window" name="context_window" min="1" placeholder="app default: {{ default_max_tokens }}">
+      <div class="hint">Total tokens this model actually supports. Left blank, this endpoint caps at the app default ({{ default_max_tokens }}) regardless of the model's real capacity.</div>
     </div>
     <button class="btn" type="submit">Add endpoint</button>
   </form>

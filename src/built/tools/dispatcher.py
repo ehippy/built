@@ -45,7 +45,12 @@ class ToolDispatcher:
 
     async def _call(self, name: str, arguments: dict) -> tuple[ToolResult, CommandResult | None]:
         if name == "read_file":
-            return read_tools.read_file(self.ctx, arguments["path"]), None
+            kwargs = {}
+            if "offset" in arguments:
+                kwargs["offset"] = arguments["offset"]
+            if "limit" in arguments:
+                kwargs["limit"] = arguments["limit"]
+            return read_tools.read_file(self.ctx, arguments["path"], **kwargs), None
         if name == "list_files":
             return read_tools.list_files(self.ctx, arguments.get("path", ".")), None
         if name == "glob_files":

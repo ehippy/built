@@ -62,7 +62,11 @@ class ToolDispatcher:
         if name == "edit_file":
             return (
                 write_tools.edit_file(
-                    self.ctx, arguments["path"], arguments["old_str"], arguments["new_str"]
+                    self.ctx,
+                    arguments["path"],
+                    arguments["old_str"],
+                    arguments["new_str"],
+                    replace_all=arguments.get("replace_all", False),
                 ),
                 None,
             )

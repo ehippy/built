@@ -4,7 +4,7 @@ anything — path confinement via ToolContext.resolve() is protection enough."""
 import re
 from pathlib import Path
 
-from built.tools.base import PathEscapesWorktreeError, ToolContext, ToolResult
+from built.tools.base import PathEscapesWorktreeError, ToolContext, ToolResult, format_numbered_lines
 
 # A hard ceiling on what we'll even open — catches a binary/generated artifact
 # rather than dumping megabytes of tokens into the conversation. Distinct from
@@ -40,7 +40,7 @@ def read_file(ctx: ToolContext, path: str, offset: int = 1, limit: int | None = 
         return ToolResult.error(f"{path!r} has only {total} lines — offset {offset} is past the end")
     end = min(start + (limit if limit else DEFAULT_READ_LINES), total)
 
-    numbered = "\n".join(f"{i:>6}\t{lines[i - 1]}" for i in range(start + 1, end + 1))
+    numbered = format_numbered_lines(lines[start:end], start + 1)
     if end < total:
         numbered += f"\n\n[{total - end} more line(s) below — pass offset={end + 1} to continue reading]"
     return ToolResult.ok(numbered)

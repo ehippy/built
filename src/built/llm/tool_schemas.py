@@ -109,7 +109,18 @@ WRITE_FILE = {
     "type": "function",
     "function": {
         "name": "write_file",
-        "description": "Create a file or fully overwrite it. Prefer edit_file for small changes.",
+        "description": (
+            "Create a new file, or fully overwrite an existing one. Prefer edit_file whenever a file "
+            "already exists and you're only changing part of it — write_file makes you (and the "
+            "model reading the diff later) pay for the whole file every time, even the 99% that "
+            "didn't change. Reach for it for genuinely new files, or when a rewrite is actually "
+            "clearer than a series of edits. "
+            "Whatever you write should be complete and correct as committed, not a draft: match this "
+            "repo's existing conventions (naming, formatting, import style) rather than inventing "
+            "your own, don't leave placeholder or TODO content standing in for real implementation, "
+            "and don't pad it with speculative options or abstractions the task doesn't need — write "
+            "the thing that's actually being asked for, done properly, and nothing else."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -126,10 +137,19 @@ EDIT_FILE = {
     "function": {
         "name": "edit_file",
         "description": (
-            "Replace one exact, unique occurrence of old_str with new_str in an existing file. "
-            "Include enough surrounding context in old_str to make it unique. old_str must match the "
-            "file's actual bytes — if you copied it from read_file's output, strip the leading line "
-            "number and tab from every line first; that prefix isn't part of the file."
+            "Replace old_str with new_str in an existing file — the primary way to change code here: "
+            "it touches only what's actually changing instead of making you reproduce the whole file "
+            "the way write_file would. By default old_str must be unique in the file and exactly one "
+            "occurrence is replaced; include just enough surrounding context (usually a line or two "
+            "is plenty) to pin down one location — you don't need to quote a large block. old_str "
+            "must match the file's actual bytes exactly: if you copied it from read_file's output, "
+            "strip the leading line-number-and-tab from every line first, that prefix isn't part of "
+            "the file. If old_str isn't unique, this fails and tells you which lines it hit — narrow "
+            "old_str with more context to pick one of them, or set replace_all when you deliberately "
+            "mean to change all of them (e.g. renaming a variable throughout a file). "
+            "Make each call one coherent, self-contained change — prefer several precise edit_file "
+            "calls over a single old_str that spans unrelated lines just to make one big diff, and "
+            "prefer editing over commenting out or duplicating code you're replacing."
         ),
         "parameters": {
             "type": "object",
@@ -137,9 +157,19 @@ EDIT_FILE = {
                 "path": {"type": "string", "description": "Path to the file, relative to the repo root."},
                 "old_str": {
                     "type": "string",
-                    "description": "The exact text to replace (must be unique in the file).",
+                    "description": (
+                        "The exact text to replace (must be unique in the file unless replace_all is set)."
+                    ),
                 },
                 "new_str": {"type": "string", "description": "The replacement text."},
+                "replace_all": {
+                    "type": "boolean",
+                    "description": (
+                        "Replace every occurrence of old_str instead of requiring exactly one. Use "
+                        "this deliberately for a genuine global change (e.g. a rename) — not as a "
+                        "shortcut to avoid picking context that uniquely identifies one location."
+                    ),
+                },
             },
             "required": ["path", "old_str", "new_str"],
         },

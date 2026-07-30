@@ -106,10 +106,34 @@ def test_write_file_rejects_escape(ctx):
     assert not (ctx.worktree_root.parent / "outside.txt").exists()
 
 
+def test_write_file_confirmation_includes_stats_and_preview(ctx):
+    result = write_tools.write_file(ctx, "src/new.py", "a = 1\nb = 2\n")
+    assert not result.is_error
+    assert "wrote 12 chars (2 lines) to src/new.py" in result.output
+    assert "     1\ta = 1" in result.output
+    assert "     2\tb = 2" in result.output
+
+
+def test_write_file_preview_truncates_long_content(ctx):
+    content = "\n".join(f"x{i} = {i}" for i in range(1, 30)) + "\n"
+    result = write_tools.write_file(ctx, "src/new.py", content)
+    assert not result.is_error
+    assert len(result.output.splitlines()) < 30
+    assert "more line(s)" in result.output
+
+
 def test_edit_file_replaces_unique_match(ctx):
     result = write_tools.edit_file(ctx, "src/app.py", "return 'hi'", "return 'hello'")
     assert not result.is_error
     assert "return 'hello'" in (ctx.worktree_root / "src" / "app.py").read_text()
+
+
+def test_edit_file_shows_post_edit_snippet(ctx):
+    result = write_tools.edit_file(ctx, "src/app.py", "return 'hi'", "return 'hello'")
+    assert not result.is_error
+    assert "edited src/app.py" in result.output
+    # The snippet shows the resulting file content, line-numbered, not just a bare confirmation.
+    assert "     2\t    return 'hello'" in result.output
 
 
 def test_edit_file_rejects_ambiguous_match(ctx):
@@ -117,6 +141,16 @@ def test_edit_file_rejects_ambiguous_match(ctx):
     result = write_tools.edit_file(ctx, "dup.py", "x = 1", "x = 2")
     assert result.is_error
     assert "not unique" in result.output
+    # Line numbers of every match, so the model can disambiguate without a grep round trip.
+    assert "line(s) 1, 2" in result.output
+
+
+def test_edit_file_replace_all(ctx):
+    (ctx.worktree_root / "dup.py").write_text("x = 1\ny = 1\nz = 1\n")
+    result = write_tools.edit_file(ctx, "dup.py", "= 1", "= 2", replace_all=True)
+    assert not result.is_error
+    assert "replaced 3 occurrence(s)" in result.output
+    assert (ctx.worktree_root / "dup.py").read_text() == "x = 2\ny = 2\nz = 2\n"
 
 
 def test_edit_file_rejects_no_match(ctx):

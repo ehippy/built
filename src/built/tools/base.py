@@ -63,3 +63,13 @@ class ToolResult:
     @classmethod
     def error(cls, message: str) -> "ToolResult":
         return cls(output=message, is_error=True)
+
+
+def format_numbered_lines(lines: list[str], start_line: int) -> str:
+    """Render already-sliced `lines` with a 'right-aligned line number, tab, text'
+    prefix — the one format every tool that echoes file content back (read_file,
+    edit_file's post-edit snippet) uses, so output looks and aligns identically no
+    matter which tool produced it. `start_line` is the 1-indexed line number of
+    lines[0]. This prefix is never part of the file itself — callers that build
+    old_str for edit_file from this output must strip it first."""
+    return "\n".join(f"{i:>6}\t{line}" for i, line in enumerate(lines, start=start_line))

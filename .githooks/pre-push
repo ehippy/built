@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Runs before `git push`, mirroring .github/workflows/ci.yml — the same lint and
+# test steps CI would run, so a push that's going to turn CI red fails locally
+# first instead. Not a guarantee: a check that only ever runs on this machine
+# can't catch a bug that depends on this machine's own state differing from a
+# fresh CI runner's (e.g. ambient global git config) — it catches the ordinary
+# case (lint errors, real test failures), not every possible CI-vs-local gap.
+#
+# Enable once per clone with:
+#   git config core.hooksPath .githooks
+set -euo pipefail
+
+echo "pre-push: ruff check ..."
+ruff check .
+
+echo "pre-push: pytest ..."
+pytest -q
+
+echo "pre-push: OK"

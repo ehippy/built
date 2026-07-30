@@ -131,6 +131,14 @@ ruff check .         # lint
 
 CI (`.github/workflows/ci.yml`) runs both on every push and PR.
 
+Optional but recommended: a `pre-push` hook that runs the same two commands before a push
+leaves your machine, so a broken push fails locally instead of turning CI red. Enable it once
+per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ## Project layout
 
 ```

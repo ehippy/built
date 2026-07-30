@@ -1,5 +1,8 @@
+import asyncio
+
 from httpx import ASGITransport, AsyncClient
 
+from built.api.routers import projects as projects_router
 from built.main import app
 
 AUTH = {"X-API-Key": "test-api-key"}
@@ -130,7 +133,14 @@ async def test_project_and_card_lifecycle_via_api():
         assert unarchive_resp.json()["archived_at"] is None
 
 
-async def test_curate_endpoint_requires_auth_and_starts_in_background():
+async def test_curate_endpoint_requires_auth_and_starts_in_background(monkeypatch):
+    started = asyncio.Event()
+
+    async def fake_curation_activity(*_args, **_kwargs):
+        started.set()
+
+    monkeypatch.setattr(projects_router, "run_curation_activity", fake_curation_activity)
+
     async with _client() as client:
         create_resp = await client.post(
             "/api/v1/projects",
@@ -149,6 +159,8 @@ async def test_curate_endpoint_requires_auth_and_starts_in_background():
         started_resp = await client.post(f"/api/v1/projects/{project['id']}/curate/bug_sweep", headers=AUTH)
         assert started_resp.status_code == 202
         assert started_resp.json() == {"status": "started"}
+        async with asyncio.timeout(5):
+            await started.wait()
 
         invalid_kind_resp = await client.post(
             f"/api/v1/projects/{project['id']}/curate/not-a-real-kind", headers=AUTH

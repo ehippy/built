@@ -69,7 +69,10 @@ async def test_card_spec_renders_as_markdown_but_escapes_raw_html(db_session):
 
     assert page.status_code == 200
     # Markdown syntax is converted into real HTML elements, not shown as a raw blob.
-    assert "<h1>Heading</h1>" in page.text
+    # Headings render as a bold block rather than an actual <h1>-<h6> — a card's
+    # spec is user content inside this page, not a document with its own outline,
+    # see templates._CardMarkdownRenderer.
+    assert "Heading</strong>" in page.text
     assert "<strong>thing</strong>" in page.text
     assert "<li>step one</li>" in page.text
     # Raw HTML embedded in the spec source is still escaped, not executed.

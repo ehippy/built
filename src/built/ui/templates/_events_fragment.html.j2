@@ -1,6 +1,9 @@
 {% set type_color = {"tool_call": "primary", "transition": "success", "error": "danger", "compaction": "secondary", "llm_response": "secondary", "system_note": "secondary"} %}
 <div id="transcript" class="d-flex flex-column gap-2" hx-get="/ui/cards/{{ card.id }}/events/fragment" hx-trigger="every 2s" hx-swap="outerHTML">
-  {% for event in events %}
+  {% if card.is_being_worked %}
+  <div class="text-body-secondary fst-italic d-flex align-items-center gap-2"><span class="spinner-border spinner-border-sm"></span> Agent is working…</div>
+  {% endif %}
+  {% for event in events|reverse %}
   <div class="event card border-{{ type_color.get(event.type, "secondary") }}" id="event-{{ event.seq }}" hx-preserve="true">
     <div class="card-body py-2 px-3 small">
     <div class="event-head d-flex justify-content-between text-body-secondary text-uppercase small mb-1">
@@ -57,7 +60,4 @@
   {% else %}
   <p class="text-body-secondary">No activity yet.</p>
   {% endfor %}
-  {% if card.is_being_worked %}
-  <div class="text-body-secondary fst-italic d-flex align-items-center gap-2"><span class="spinner-border spinner-border-sm"></span> Agent is working…</div>
-  {% endif %}
 </div>

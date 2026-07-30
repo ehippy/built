@@ -9,9 +9,21 @@ from markupsafe import Markup
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
+
+class _CardMarkdownRenderer(mistune.HTMLRenderer):
+    """A card's spec is user content embedded inside this app's own page — not a
+    document with its own outline — so a stray '# Heading' in it shouldn't render
+    as an actual <h1>, competing with (or outsizing) the page's real heading
+    hierarchy. Every markdown heading level renders identically: bold and
+    modestly sized, distinguishable from body text but never louder than it."""
+
+    def heading(self, text: str, level: int, **attrs: object) -> str:
+        return f'<strong class="d-block mt-3 mb-1">{text}</strong>\n'
+
+
 # escape=True (the default) escapes any raw HTML embedded in the markdown source
 # rather than passing it through, so agent-generated spec text can't inject markup.
-_markdown = mistune.create_markdown()
+_markdown = mistune.create_markdown(renderer=_CardMarkdownRenderer())
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 # Starlette's default autoescape only fires for names ending in .html/.htm/.xml —

@@ -637,3 +637,24 @@ async def unarchive_card(session: AsyncSession, card_id: str) -> Card:
     card.archived_at = None
     await session.flush()
     return card
+
+
+async def archive_all_in_column(session: AsyncSession, project_id: str, column: Column) -> int:
+    """The board's per-column "archive all" action — same per-card semantics as
+    archive_card (doesn't touch lifecycle_state or an in-flight claim), just applied
+    to every not-yet-archived card in one column at once. Excludes epic-parent cards
+    for the same reason count_column_backlog does: they're parked at column=PM
+    forever by design, not stuck work waiting to be cleared out. Returns how many
+    cards were archived."""
+    stmt = select(Card).where(
+        Card.project_id == project_id,
+        Card.column == column,
+        Card.archived_at.is_(None),
+        Card.id.not_in(select(EpicLink.parent_card_id)),
+    )
+    cards = list((await session.scalars(stmt)).all())
+    now = datetime.now(UTC)
+    for card in cards:
+        card.archived_at = now
+    await session.flush()
+    return len(cards)

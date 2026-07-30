@@ -25,11 +25,11 @@
     {% endif %}
     {% if project.paused_at %}
     <form method="post" action="/ui/projects/{{ project.id }}/resume">
-      <button class="btn btn-primary" type="submit" title="Paused since {{ project.paused_at|timeago }} — resume to let the orchestrator claim cards again">&#9654; Resume</button>
+      <button class="btn btn-primary" type="submit" title="Paused since {{ project.paused_at|timeago }} — resume to let the orchestrator claim cards again"><i class="bi bi-play-fill"></i> Resume</button>
     </form>
     {% else %}
     <form method="post" action="/ui/projects/{{ project.id }}/pause">
-      <button class="btn btn-outline-secondary" type="submit" title="Pause to stop the orchestrator from claiming new cards for this project">&#10074;&#10074; Pause</button>
+      <button class="btn btn-outline-secondary" type="submit" title="Pause to stop the orchestrator from claiming new cards for this project"><i class="bi bi-pause-fill"></i> Pause</button>
     </form>
     {% endif %}
     <div class="dropdown">
@@ -44,11 +44,11 @@
           </span>
           {% if curation_paused_at %}
           <form method="post" action="/ui/projects/{{ project.id }}/curation/resume">
-            <button class="btn btn-sm btn-primary" type="submit">&#9654; Resume</button>
+            <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-play-fill"></i> Resume</button>
           </form>
           {% else %}
           <form method="post" action="/ui/projects/{{ project.id }}/curation/pause">
-            <button class="btn btn-sm btn-outline-secondary" type="submit">&#10074;&#10074; Pause</button>
+            <button class="btn btn-sm btn-outline-secondary" type="submit"><i class="bi bi-pause-fill"></i> Pause</button>
           </form>
           {% endif %}
         </div>

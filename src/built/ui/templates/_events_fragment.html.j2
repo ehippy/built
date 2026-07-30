@@ -29,14 +29,14 @@
       <div class="mb-1"><strong>bash</strong>{% if event.payload.is_error %} (error){% endif %}</div>
       <pre class="bash-command bg-body-secondary p-2 rounded">$ {{ event.payload.arguments.command }}</pre>
       <details>
-        <summary class="text-body-secondary">Output ({{ event.payload.result|length }} chars){% if event.payload.is_error %} ⚠{% endif %}</summary>
+        <summary class="text-body-secondary">Output ({{ event.payload.result|length }} chars){% if event.payload.is_error %} <i class="bi bi-exclamation-triangle-fill text-danger"></i>{% endif %}</summary>
         <pre class="mb-0">{{ event.payload.result }}</pre>
       </details>
     {% elif event.type == "tool_call" %}
       {% set descriptor = event.payload.arguments|tool_descriptor %}
       <div class="mb-1"><strong>{{ event.payload.name }}({{ descriptor }})</strong>{% if event.payload.is_error %} (error){% endif %}</div>
       <details>
-        <summary class="text-body-secondary">Output ({{ event.payload.result|length }} chars){% if event.payload.is_error %} ⚠{% endif %}</summary>
+        <summary class="text-body-secondary">Output ({{ event.payload.result|length }} chars){% if event.payload.is_error %} <i class="bi bi-exclamation-triangle-fill text-danger"></i>{% endif %}</summary>
         <pre class="mb-0">{{ event.payload.result }}</pre>
       </details>
     {% elif event.type == "transition" %}

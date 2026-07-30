@@ -18,7 +18,9 @@
   }
 
   function render() {
-    toggle.textContent = effectiveTheme() === "dark" ? "☀" : "☾";
+    toggle.innerHTML = effectiveTheme() === "dark"
+      ? '<i class="bi bi-sun-fill"></i>'
+      : '<i class="bi bi-moon-stars-fill"></i>';
   }
 
   toggle.addEventListener("click", function () {

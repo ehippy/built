@@ -15,7 +15,14 @@
       <div class="bg-body-tertiary rounded p-2 h-100">
         <div class="d-flex justify-content-between align-items-baseline fw-bold text-uppercase small text-body-secondary px-1 pb-2">
           <span>{{ label }}</span>
-          <span>{{ board[column]|length }}</span>
+          <span class="d-flex align-items-center gap-2">
+            {% if board[column] and not show_archived %}
+            <form method="post" action="/ui/projects/{{ project.id }}/board/columns/{{ column }}/archive-all" onsubmit="return confirm('Archive all {{ board[column]|length }} card(s) in {{ label }}? They\'ll be hidden from the board — Show archived cards can bring them back.');">
+              <button class="btn btn-link btn-sm p-0 text-body-secondary text-decoration-none lh-1" type="submit" title="Archive all cards in {{ label }}" aria-label="Archive all cards in {{ label }}"><i class="bi bi-trash"></i></button>
+            </form>
+            {% endif %}
+            <span>{{ board[column]|length }}</span>
+          </span>
         </div>
         {% if in_flight %}
           {% for card in in_flight %}

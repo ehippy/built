@@ -3,6 +3,7 @@ unarchiving to get it off the board without deleting its history."""
 
 from httpx import ASGITransport, AsyncClient
 
+from built.domain.enums import Column
 from built.main import app
 from built.services import card_service, project_service
 
@@ -104,3 +105,53 @@ async def test_ui_edit_archive_unarchive_round_trip(db_session):
 
         board_after = await client.get(f"/ui/projects/{project.id}/board")
         assert "new title" in board_after.text
+
+
+async def test_archive_all_in_column_only_archives_that_columns_non_archived_cards(db_session):
+    project = await _make_project(db_session, _n="7")
+    pm1 = await card_service.create_card(db_session, project.id, title="pm1", raw_request="r")
+    pm2 = await card_service.create_card(db_session, project.id, title="pm2", raw_request="r")
+    already_archived = await card_service.create_card(db_session, project.id, title="pm3", raw_request="r")
+    await card_service.archive_card(db_session, already_archived.id)
+    other_column = await card_service.create_card(db_session, project.id, title="dev1", raw_request="r")
+    other_column.column = Column.DEVELOPER
+    await db_session.flush()
+
+    count = await card_service.archive_all_in_column(db_session, project.id, Column.PM)
+
+    assert count == 2  # already_archived wasn't touched again, other_column is a different column
+    board = await card_service.get_board(db_session, project.id, include_archived=True)
+    archived_ids = {c.id for c in board[Column.PM] if c.archived_at is not None}
+    assert archived_ids == {pm1.id, pm2.id, already_archived.id}
+    assert other_column.archived_at is None
+
+
+async def test_archive_all_in_column_excludes_epic_parents(db_session):
+    project = await _make_project(db_session, _n="8")
+    epic = await card_service.create_card(db_session, project.id, title="epic", raw_request="r")
+    child = await card_service.create_card(db_session, project.id, title="child", raw_request="r")
+    await card_service.link_epic_child(db_session, parent_card_id=epic.id, child_card_id=child.id)
+
+    count = await card_service.archive_all_in_column(db_session, project.id, Column.PM)
+
+    assert count == 1  # only the child, not the epic parent
+    assert child.archived_at is not None
+    assert epic.archived_at is None
+
+
+async def test_ui_archive_all_in_column(db_session):
+    project = await _make_project(db_session, _n="9")
+    card = await card_service.create_card(db_session, project.id, title="to be archived", raw_request="r")
+    await db_session.commit()
+
+    async with _client() as client:
+        resp = await client.post(
+            f"/ui/projects/{project.id}/board/columns/pm/archive-all", follow_redirects=False
+        )
+        assert resp.status_code == 303
+
+        board = await client.get(f"/ui/projects/{project.id}/board")
+        assert "to be archived" not in board.text
+
+        board_with_archived = await client.get(f"/ui/projects/{project.id}/board?show_archived=true")
+        assert "to be archived" in board_with_archived.text

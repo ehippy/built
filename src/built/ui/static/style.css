@@ -581,6 +581,7 @@ th {
 .event.type-tool_call { border-left: 3px solid var(--accent); }
 .event.type-transition { border-left: 3px solid var(--state-done); }
 .event.type-error { border-left: 3px solid var(--state-failed); }
+.event.type-compaction { border-left: 3px solid var(--text-muted); }
 
 .event pre.bash-command {
   background: var(--column-bg);

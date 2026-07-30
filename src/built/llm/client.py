@@ -4,10 +4,11 @@ without touching call sites.
 
 Endpoint fallback is a hand-rolled ordered loop, not litellm.Router: retry ownership
 is split so each piece has exactly one job. litellm's own per-call retry
-(`num_retries`, kept low) owns *transient* failures — timeouts, 5xx, rate limits — on
-a single endpoint. This loop owns *falling through* to the next configured endpoint
-once litellm gives up on the current one. Router's own fallback configuration would
-do something similar, but through a config surface this loop makes explicit instead.
+(`num_retries`, see settings.llm_num_retries) owns *transient* failures — timeouts,
+5xx, connection resets, rate limits — on a single endpoint. This loop owns *falling
+through* to the next configured endpoint once litellm gives up on the current one.
+Router's own fallback configuration would do something similar, but through a config
+surface this loop makes explicit instead.
 """
 
 import asyncio
@@ -20,8 +21,6 @@ from typing import Protocol
 import litellm
 
 from built.db.models import EndpointConfig
-
-DEFAULT_NUM_RETRIES = 1
 
 # Keyed by (base_url, model) — the physical backend, not the EndpointConfig row —
 # so a project-specific and a global EndpointConfig that happen to point at the same
@@ -132,7 +131,7 @@ class FallbackLLMClient:
                 api_key=_resolve_api_key(endpoint.api_key_ref),
                 messages=messages,
                 tools=tools or None,
-                num_retries=DEFAULT_NUM_RETRIES,
+                num_retries=settings.llm_num_retries,
                 timeout=settings.llm_timeout_seconds,
             )
             latency_ms = int((time.monotonic() - start) * 1000)

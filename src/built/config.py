@@ -61,6 +61,15 @@ class Settings(BaseSettings):
     # actually stuck.
     llm_timeout_seconds: float = 300
 
+    # litellm's own per-call retry (see llm/client.py's module docstring for how this
+    # is split from FallbackLLMClient's own next-endpoint fallback). Was fixed at 1 —
+    # too low for a single-endpoint setup (the common case: one local LLM server, no
+    # fallback chain to fall through to), where a transient blip (connection reset,
+    # momentary overload) had nowhere to go but straight to blocking the card. Higher
+    # rides out more transient failures at the cost of a genuinely-down endpoint
+    # taking longer to finally give up and fail over (or block).
+    llm_num_retries: int = 3
+
     # The Reviver (agent/reviver.py): an autonomous background pass over blocked/failed
     # cards that decides whether to retry them (with a diagnostic note) or leave them
     # for a human. Wakes on its own on a timer — no manual trigger.

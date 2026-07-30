@@ -64,6 +64,7 @@ class EventType(StrEnum):
     TRANSITION = "transition"
     SYSTEM_NOTE = "system_note"
     ERROR = "error"
+    COMPACTION = "compaction"  # a context_window.compact() pass — see agent/loop.py
 
 
 class RunAttemptStatus(StrEnum):

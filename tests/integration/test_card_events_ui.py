@@ -182,3 +182,61 @@ async def test_changes_requested_transition_shows_the_full_feedback_not_just_sum
     assert "4 test failures, missing README" in fragment.text
     assert "expected 5 entries in _data/whats-new.yml, found 4" in fragment.text
     assert "README.md does not exist at the repo root" in fragment.text
+
+
+async def test_compaction_event_shows_summary_as_an_expandable_entry(db_session):
+    """Compaction used to be completely invisible — no CardEvent at all. Once
+    logged, it needs to actually be legible: before/after counts up front, and
+    the summary of what got dropped available to expand, not just a raw dict dump."""
+    project = await _make_project(db_session, _n="7")
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    await append_event(
+        db_session,
+        card_id=card.id,
+        type=EventType.COMPACTION,
+        payload={
+            "messages_before": 42,
+            "messages_after": 7,
+            "tokens_before": 9000,
+            "tokens_after": 1500,
+            "summary": "The agent explored games/ and found the Jekyll layouts already in place.",
+        },
+    )
+    await db_session.commit()
+
+    async with _client() as client:
+        fragment = await client.get(f"/ui/cards/{card.id}/events/fragment")
+
+    assert "Context compacted" in fragment.text
+    assert "42" in fragment.text
+    assert "7" in fragment.text
+    assert "9000" in fragment.text
+    assert "1500" in fragment.text
+    assert "The agent explored games/ and found the Jekyll layouts already in place." in fragment.text
+
+
+async def test_compaction_event_without_a_summary_says_so(db_session):
+    """A fallback path (summarizer failed, or too little to summarize) still
+    drops messages but has no summary text — must not look identical to a
+    successful compaction with an empty expandable section."""
+    project = await _make_project(db_session, _n="8")
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    await append_event(
+        db_session,
+        card_id=card.id,
+        type=EventType.COMPACTION,
+        payload={
+            "messages_before": 20,
+            "messages_after": 6,
+            "tokens_before": 5000,
+            "tokens_after": 800,
+            "summary": None,
+        },
+    )
+    await db_session.commit()
+
+    async with _client() as client:
+        fragment = await client.get(f"/ui/cards/{card.id}/events/fragment")
+
+    assert "Context compacted" in fragment.text
+    assert "dropped without a summary" in fragment.text

@@ -74,6 +74,29 @@ def _fake_response() -> SimpleNamespace:
     return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=None)
 
 
+async def test_num_retries_comes_from_settings(monkeypatch):
+    """Was a hardcoded constant (DEFAULT_NUM_RETRIES = 1) — too low for the common
+    single-endpoint setup (one local LLM server, no fallback chain to fall through
+    to), where a transient blip had nowhere to go but straight to blocking the
+    card. Now a real setting; this pins that FallbackLLMClient actually reads it
+    rather than a stale module-level default."""
+    from built.config import settings
+
+    monkeypatch.setattr(settings, "llm_num_retries", 7)
+    captured = {}
+
+    async def _capturing_acompletion(**kwargs):
+        captured.update(kwargs)
+        return _fake_response()
+
+    monkeypatch.setattr(llm_client_module.litellm, "acompletion", _capturing_acompletion)
+    client = FallbackLLMClient([_endpoint(max_concurrency=1)])
+
+    await client.complete(messages=[], tools=[])
+
+    assert captured["num_retries"] == 7
+
+
 def _tracking_acompletion(peak: list[int], in_flight: list[int], *, hold_seconds: float = 0.05):
     async def _acompletion(**kwargs):
         in_flight[0] += 1

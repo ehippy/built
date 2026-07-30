@@ -23,6 +23,7 @@ from built.agent.context import (
     build_tester_prompt,
 )
 from built.agent.context_window import (
+    CompactionEvent,
     ContextWindowConfig,
     compact,
     estimate_tokens,
@@ -54,23 +55,22 @@ async def _maybe_compact(
     llm_client: LLMClient,
     config: ContextWindowConfig,
     iteration: int,
-) -> list[dict]:
+) -> tuple[list[dict], CompactionEvent | None]:
     """Compact messages if they approach the context window. Skips silently
     when config.max_tokens is very large, and only does a first-time compact
     to avoid repeated summarization overhead."""
     token_count = estimate_tokens(messages)
     budget = config.max_tokens - config.keep_tokens
     if token_count <= budget * 0.85:
-        return messages
+        return messages, None
     # Compact the message list — the summarizer uses the first endpoint in
     # the chain (same model family is typical for a fallback chain).
-    compacted = await compact(
+    return await compact(
         messages,
         llm_client,
         config,
         model_name=f"iteration-{iteration}",
     )
-    return compacted
 
 
 @dataclass
@@ -144,7 +144,22 @@ async def run_column_visit(
             card.lease_expires_at = datetime.now(UTC) + timedelta(seconds=settings.claim_lease_seconds)
 
             # Compact if the message list approaches the context window.
-            messages = await _maybe_compact(messages, llm_client, config, iteration)
+            messages, compaction_event = await _maybe_compact(messages, llm_client, config, iteration)
+            if compaction_event is not None:
+                await append_event(
+                    session,
+                    card_id=card.id,
+                    column_visit_id=visit.id,
+                    type=EventType.COMPACTION,
+                    payload={
+                        "messages_before": compaction_event.messages_before,
+                        "messages_after": compaction_event.messages_after,
+                        "tokens_before": compaction_event.tokens_before,
+                        "tokens_after": compaction_event.tokens_after,
+                        "summary": compaction_event.summary,
+                    },
+                )
+                await session.commit()
 
             result = await llm_client.complete(messages=messages, tools=tools)
             await append_event(

@@ -41,16 +41,26 @@ meta-commentary — just the summary in prose form.
 
 
 @dataclass
+class CompactionEvent:
+    """Details of one compaction pass, for the caller to log as a CardEvent —
+    this module has no session/card_id of its own by design (it's a pure
+    transform over a message list), so it hands the details back rather than
+    writing anything itself. `summary` is None when messages were dropped
+    without ever producing one (trim-only, or a fallback path — see compact())."""
+
+    messages_before: int
+    messages_after: int
+    tokens_before: int
+    tokens_after: int
+    summary: str | None = None
+
+
+@dataclass
 class ContextWindowConfig:
     max_tokens: int
     keep_messages: int = 10
     summary_max_tokens: int = 4096
     max_tool_result_chars: int = 4000
-
-    @property
-    def budget_messages(self) -> int:
-        """Messages beyond this index are fair game for summarization."""
-        return max(0, self.keep_messages - 2)
 
     @property
     def keep_tokens(self) -> int:
@@ -151,68 +161,97 @@ async def compact(
     llm_client: LLMClient,
     config: ContextWindowConfig,
     model_name: str,
-) -> list[dict]:
+) -> tuple[list[dict], CompactionEvent | None]:
     """Condense the message list when token count threatens the context window.
 
-    Strategy:
-    1. Estimate current token count.
-    2. If under budget (with margin), return messages as-is.
-    3. Otherwise, take the oldest non-system messages, send them to the LLM
-       for summarization, and replace them with a single summary block.
-    4. If the summary call failed or the block is still too large, fall back
-       to hard truncation.
+    messages[0] (the system prompt) and messages[1] (the original task-defining
+    user prompt — a card's spec and acceptance criteria) are pinned: every path
+    below preserves both verbatim, never summarized and never dropped. Confirmed
+    in production: an earlier version of this function only ever kept messages[0]
+    in its final reconstruction, silently discarding messages[1:keep_messages] —
+    including the task prompt — the moment a visit actually ran long enough to
+    compact. The agent could still see recent tool-call history afterward, but
+    had no way to recover what it was actually supposed to be building (it isn't
+    restated anywhere else — the system prompt is generic role instructions, not
+    this card's spec).
 
-    Always preserves the first K messages (config.keep_messages) as a minimum.
-    Returns the compacted message list.
+    Strategy:
+    1. Estimate current token count; return as-is if under budget.
+    2. Otherwise, keep the pinned prefix and the most recent `keep_messages`
+       verbatim, and summarize whatever falls in between.
+    3. If there's nothing meaningful in between, or summarization fails, fall
+       back to pinned + tail — never a blind last-N slice of the whole list,
+       which is exactly what could drop the pinned prefix.
+
+    Returns (messages, CompactionEvent | None) — the second element is None only
+    when nothing actually changed (still under budget, or nothing old enough to
+    touch). Confirmed in production that compaction itself was otherwise
+    completely invisible: no CardEvent, no card-specific trace anywhere, not even
+    the extra LLM call this makes to do the summarizing. The caller (agent/loop.py,
+    which has session/card_id) is responsible for actually logging this.
     """
     token_count = estimate_tokens(messages)
     budget = config.max_tokens - config.keep_tokens
 
     if token_count <= budget * 0.85:
-        return messages
+        return messages, None
 
-    budget_messages = config.budget_messages
-    if budget_messages <= 0:
-        # Not enough headroom — just drop to keep_messages from the end.
-        return messages[-config.keep_messages :]
+    pinned = messages[:2] if len(messages) > 1 else messages[:1]
+    rest = messages[len(pinned) :]
 
-    # Collect messages to summarize: everything after the safe zone.
-    summary_candidates = list(messages[budget_messages:])
+    if len(rest) <= config.keep_messages:
+        # Nothing old enough to summarize beyond the pinned prefix + recent tail.
+        return messages, None
 
-    # If tool results in these messages are very large, try trimming them first.
+    tail = rest[-config.keep_messages :] if config.keep_messages else []
+    middle = rest[: len(rest) - len(tail)]
+
+    def _event(result: list[dict], *, summary: str | None) -> CompactionEvent:
+        return CompactionEvent(
+            messages_before=len(messages),
+            messages_after=len(result),
+            tokens_before=token_count,
+            tokens_after=estimate_tokens(result),
+            summary=summary,
+        )
+
+    # If tool results in the middle segment are very large, try trimming them first.
     trimmed = False
-    if len(summary_candidates) > 2:
-        for msg in summary_candidates:
-            if msg["role"] == "assistant":
-                for tc in msg.get("tool_calls") or []:
-                    args = tc.get("function", {}).get("arguments", "{}")
-                    if len(args) > config.max_tool_result_chars:
-                        tc["function"]["arguments"] = (
-                            args[: config.max_tool_result_chars] + f"... [truncated from {len(args)} chars]"
-                        )
-                        trimmed = True
-        if trimmed:
-            token_count = estimate_tokens(messages[:budget_messages] + summary_candidates)
-            if token_count <= budget * 0.85 + 1000:
-                return messages[:budget_messages] + summary_candidates
+    for msg in middle:
+        if msg["role"] == "assistant":
+            for tc in msg.get("tool_calls") or []:
+                args = tc.get("function", {}).get("arguments", "{}")
+                if len(args) > config.max_tool_result_chars:
+                    tc["function"]["arguments"] = (
+                        args[: config.max_tool_result_chars] + f"... [truncated from {len(args)} chars]"
+                    )
+                    trimmed = True
+    if trimmed:
+        trimmed_token_count = estimate_tokens(pinned + middle + tail)
+        if trimmed_token_count <= budget * 0.85 + 1000:
+            result = pinned + middle + tail
+            return result, _event(result, summary=None)
 
-    # Build conversation text and summarize.
-    conv_text = _build_conversation_text(messages, budget_messages)
+    # Build conversation text and summarize just the middle segment.
+    conv_text = _build_conversation_text(middle, 0)
     if len(conv_text) < 200:
-        # Not enough content to meaningfully summarize — just truncate.
-        return messages[-config.keep_messages :]
+        # Not enough content to meaningfully summarize — drop the middle outright.
+        result = pinned + tail
+        return result, _event(result, summary=None)
 
     try:
         summary = await summarize_segment(llm_client, conversation_text=conv_text, model_name=model_name)
     except Exception:  # noqa: BLE001 — summarizer failure is not fatal; fall back to truncation
         logger.exception("summarizer failed, falling back to hard truncation")
-        return messages[-config.keep_messages :]
+        result = pinned + tail
+        return result, _event(result, summary=None)
 
     if not summary:
-        return messages[-config.keep_messages :]
+        result = pinned + tail
+        return result, _event(result, summary=None)
 
     summary_block = _format_summary_block(summary)
-    compacted = [messages[0], summary_block] + list(messages[min(config.keep_messages, len(messages)) :])
+    compacted = pinned + [summary_block] + tail
     new_token_count = estimate_tokens(compacted)
 
     # If still over budget, hard truncate the summary block's content.
@@ -220,9 +259,7 @@ async def compact(
         # Rough char-to-token ratio of 4
         target_chars = max(200, math.ceil((budget - 50) * 0.08))  # ~50 tokens for the wrapper
         summary = summary[:target_chars] + "... [summary truncated]"
-        compacted = [messages[0], _format_summary_block(summary)] + list(
-            messages[min(config.keep_messages, len(messages)) : config.keep_messages + 5]
-        )
+        compacted = pinned + [_format_summary_block(summary)] + tail
 
     logger.info(
         "compacted %d -> %d messages (%d -> %d est tokens)",
@@ -231,4 +268,4 @@ async def compact(
         token_count,
         estimate_tokens(compacted),
     )
-    return compacted
+    return compacted, _event(compacted, summary=summary)

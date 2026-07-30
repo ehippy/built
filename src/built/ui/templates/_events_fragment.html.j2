@@ -32,6 +32,20 @@
       <div class="hint">{{ event.payload.column }} &rarr; {{ event.payload.outcome }}</div>
       <pre>{{ event.payload.summary }}</pre>
       {% if event.payload.feedback %}<pre>{{ event.payload.feedback }}</pre>{% endif %}
+    {% elif event.type == "compaction" %}
+      <div class="hint">
+        <strong>Context compacted</strong>
+        — {{ event.payload.messages_before }} &rarr; {{ event.payload.messages_after }} messages
+        ({{ event.payload.tokens_before }} &rarr; {{ event.payload.tokens_after }} est. tokens)
+      </div>
+      {% if event.payload.summary %}
+      <details class="collapsible">
+        <summary>Summary of dropped turns ({{ event.payload.summary|length }} chars)</summary>
+        <pre>{{ event.payload.summary }}</pre>
+      </details>
+      {% else %}
+      <div class="hint">Older turns were dropped without a summary (too little to summarize, or summarization failed).</div>
+      {% endif %}
     {% else %}
       <pre>{{ event.payload }}</pre>
     {% endif %}

@@ -108,8 +108,11 @@ BUILT_API_KEY=some-long-random-string
 Start it:
 
 ```bash
-uvicorn built.main:app --reload
+uvicorn built.main:app --reload --reload-exclude 'data/*'
 ```
+
+`data/` holds live runtime state (the SQLite database, managed clones, and
+worktrees), so it is ignored by Git and excluded from Uvicorn's reload watcher.
 
 Then, from the UI (or the API, with `X-API-Key` set to the value above):
 

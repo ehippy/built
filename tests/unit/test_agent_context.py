@@ -39,6 +39,31 @@ def test_developer_prompt_includes_retry_note_when_present():
     assert "rebase onto main first" in user
 
 
+def test_developer_prompt_leads_with_rejection_feedback_not_appends_it():
+    """card.latest_feedback used to be appended at the very end of the user
+    message, after Card/Request/Spec/Acceptance criteria — same tier as
+    retry_recap/retry_note. It needs to lead instead: the most specific,
+    up-to-date signal of what's actually wrong shouldn't be the thing most
+    likely to get deprioritized against everything else in the prompt."""
+    card = _card(latest_feedback="tests/test_whats_new.js fails: expected 5 entries, found 4")
+    _, user = build_developer_prompt(_project(), card)
+
+    assert "THIS IS A REVISION" in user
+    feedback_pos = user.index("expected 5 entries, found 4")
+    card_pos = user.index("Card: t")
+    assert feedback_pos < card_pos
+
+
+def test_developer_prompt_omits_revision_framing_when_no_feedback():
+    _, user = build_developer_prompt(_project(), _card())
+    assert "THIS IS A REVISION" not in user
+
+
+def test_developer_prompt_tells_the_plan_to_cover_every_feedback_item():
+    system, _ = build_developer_prompt(_project(), _card(latest_feedback="x"))
+    assert "step for every item in that feedback" in system
+
+
 def test_tester_prompt_includes_retry_note_when_present():
     _, user = build_tester_prompt(
         _project(), _card(), developer_summary="did stuff", retry_note="re-run flaky test"

@@ -31,6 +31,7 @@
     {% elif event.type == "transition" %}
       <div class="hint">{{ event.payload.column }} &rarr; {{ event.payload.outcome }}</div>
       <pre>{{ event.payload.summary }}</pre>
+      {% if event.payload.feedback %}<pre>{{ event.payload.feedback }}</pre>{% endif %}
     {% else %}
       <pre>{{ event.payload }}</pre>
     {% endif %}

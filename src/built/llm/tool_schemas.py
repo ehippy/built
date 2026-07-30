@@ -327,7 +327,16 @@ REQUEST_CHANGES = {
             "properties": {
                 "feedback": {
                     "type": "string",
-                    "description": "Specific, actionable feedback for the Developer — what failed and why.",
+                    "description": (
+                        "Detailed, itemized feedback for the Developer — this is the only record of "
+                        "your review they'll see, not your exploration, so it has to stand on its own. "
+                        "One item per problem: the exact file(s) affected, what's wrong or missing "
+                        "there specifically, and — for test failures — the actual failure output, not "
+                        "just a count. 'Old test files not deleted, 4 tests not converted, missing "
+                        "README, 4 test failures' is a compressed inventory, not feedback — it leaves "
+                        "the Developer re-discovering everything you already found. Write what you'd "
+                        "want handed to you if you were about to fix this yourself."
+                    ),
                 },
                 "summary": {"type": "string", "description": "A one-line summary for the audit log."},
             },

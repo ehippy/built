@@ -3,7 +3,7 @@ else real, including the server-side `approve` gate against a real RunAttempt ro
 
 from built.agent.loop import run_tester_visit
 from built.domain import transitions
-from built.domain.enums import Column, LifecycleState, VisitOutcome
+from built.domain.enums import Column, EventType, LifecycleState, VisitOutcome
 from built.llm.client import LLMResult, ToolCallRequest
 from built.sandbox import worktree
 from built.sandbox.container import CommandResult
@@ -258,3 +258,10 @@ async def test_tester_request_changes_bounces_back_to_developer(db_session, toy_
     assert result.revision_count == 1
     assert result.latest_feedback == "subtract() is missing entirely"
     assert visit.outcome == VisitOutcome.CHANGES_REQUESTED
+
+    # The transition event's payload carries the full feedback, not just the
+    # one-line summary — the transcript previously only ever showed `summary`.
+    events = await card_service.list_events(db_session, card.id)
+    transition = next(e for e in events if e.type == EventType.TRANSITION)
+    assert transition.payload["summary"] == "not implemented"
+    assert transition.payload["feedback"] == "subtract() is missing entirely"

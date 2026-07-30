@@ -149,3 +149,36 @@ async def test_bash_tool_call_shows_the_command_alongside_its_output(db_session)
     assert 'class="bash-command"' in fragment.text
     # The output is still there too, just no longer the only thing shown.
     assert "Configuration file: /workspace/_config.yml" in fragment.text
+
+
+async def test_changes_requested_transition_shows_the_full_feedback_not_just_summary(db_session):
+    """A changes_requested transition's payload previously carried only the
+    one-line `summary` — the fuller `feedback` (what actually becomes
+    card.latest_feedback for the Developer's next attempt) never showed up in the
+    transcript itself."""
+    project = await _make_project(db_session, _n="6")
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    await append_event(
+        db_session,
+        card_id=card.id,
+        type=EventType.TRANSITION,
+        payload={
+            "column": "tester",
+            "outcome": "changes_requested",
+            "summary": "4 test failures, missing README",
+            "feedback": (
+                "1. tests/test_whats_new.js fails: expected 5 entries in _data/whats-new.yml, "
+                "found 4 — the Simon Says entry from the spec is missing.\n"
+                "2. README.md does not exist at the repo root; the spec requires one documenting "
+                "the Jekyll build steps."
+            ),
+        },
+    )
+    await db_session.commit()
+
+    async with _client() as client:
+        fragment = await client.get(f"/ui/cards/{card.id}/events/fragment")
+
+    assert "4 test failures, missing README" in fragment.text
+    assert "expected 5 entries in _data/whats-new.yml, found 4" in fragment.text
+    assert "README.md does not exist at the repo root" in fragment.text

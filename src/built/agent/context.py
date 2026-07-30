@@ -124,6 +124,12 @@ def build_developer_prompt(
         "call has every step marked done — exploring is how you figure out what the plan should be, "
         "not a substitute for writing one or executing it, and planning is not a substitute for "
         "understanding what's actually there first.\n\n"
+        "If the user message below opens with rejection feedback, that's real: a previous attempt "
+        "was reviewed and specific, concrete problems were found in the actual prior work — not "
+        "hypothetical gaps in the spec. Your plan must include a step for every item in that "
+        "feedback, not just a fresh pass over the acceptance criteria as if this were the first "
+        "attempt. The feedback is the most authoritative, up-to-date signal of what's actually "
+        "wrong; treat it as higher-priority than re-deriving the same plan from the spec again.\n\n"
         f"{test_gate}"
         "submit_for_test is also rejected if this visit hasn't actually changed any files yet, "
         "however thoroughly you've explored or planned. If you find the acceptance criteria are "
@@ -137,18 +143,23 @@ def build_developer_prompt(
     )
 
     criteria = "\n".join(f"- {c}" for c in card.acceptance_criteria) or "(none specified)"
-    user = (
-        "Your task for this visit — the only thing to work on, not the project's broader goal:\n\n"
+    user = "Your task for this visit — the only thing to work on, not the project's broader goal:\n\n"
+    if card.latest_feedback:
+        # Leads the message, not an afterthought appended at the end — this is the
+        # most specific, most actionable, most up-to-date signal of what's actually
+        # wrong, and it needs to survive contact with everything else below it.
+        user += (
+            "THIS IS A REVISION — a previous attempt at this card was reviewed and rejected. "
+            "Your update_plan must include a step for every item below, not just a fresh pass "
+            "over the acceptance criteria as if this were attempt one:\n\n"
+            f"Rejection feedback (address every item):\n{card.latest_feedback}\n\n"
+        )
+    user += (
         f"Card: {card.title}\n\n"
         f"Request: {card.raw_request}\n\n"
         f"Spec:\n{card.spec or '(no spec — work from the request directly)'}\n\n"
         f"Acceptance criteria:\n{criteria}"
     )
-    if card.latest_feedback:
-        user += (
-            "\n\nThe Tester previously rejected this work with the following feedback — "
-            f"address it:\n{card.latest_feedback}"
-        )
     if retry_recap:
         user += f"\n\nContext from your previous attempt at this column:\n{retry_recap}"
     if retry_note:
@@ -320,15 +331,26 @@ def build_tester_prompt(
             "checked server-side against your most recent bash run: it must be that specific "
             "command, it must have exited 0, and you must not write_file/edit_file/bash anything "
             "afterward without rerunning it — a green run followed by an unverified tweak doesn't "
-            "count as tested. If something is wrong, call request_changes with specific, "
-            "actionable feedback for the Developer.\n\n"
+            "count as tested. If something is wrong, call request_changes — see below for what "
+            "the feedback needs to actually contain.\n\n"
         )
     else:
         test_gate = (
             "This project has no test command configured yet, so approve will be rejected "
             "server-side no matter what you do — that's a configuration gap for a human to fix. "
-            "Use request_changes if you find real problems in the meantime.\n\n"
+            "Use request_changes if you find real problems in the meantime — see below for what "
+            "the feedback needs to actually contain.\n\n"
         )
+    request_changes_gate = (
+        "When you call request_changes, the feedback field is the only record of your review the "
+        "Developer ever sees — not your exploration, just that text. Make it earn its keep: one "
+        "item per problem, naming the exact file(s) affected and what's wrong or missing there "
+        "specifically, and quoting the actual failure output for anything test-related, not just "
+        "how many tests failed. 'Old test files not deleted, 4 tests not converted, missing "
+        "README, 4 test failures' is a compressed inventory, not feedback — it leaves the "
+        "Developer re-discovering everything you already found instead of fixing it. Write what "
+        "you'd want handed to you if you were about to fix this yourself.\n\n"
+    )
     system = (
         "You are the Tester agent in an autonomous software factory — an independent check on the "
         "Developer's work, not a second Developer. Validate what the Developer actually built "
@@ -343,6 +365,7 @@ def build_tester_prompt(
         "summary, and reject a shoddy or partial implementation instead of quietly completing it "
         "yourself.\n\n"
         f"{test_gate}"
+        f"{request_changes_gate}"
         "Nobody is watching this run interactively.\n\n"
         f"This project's overarching goal (background only, not what you're testing): "
         f"{project.overarching_goal}"

@@ -38,17 +38,26 @@ async def _close_visit(
     outcome: VisitOutcome,
     summary: str,
     endpoint_used: str | None = None,
+    feedback: str | None = None,
 ) -> None:
     visit.ended_at = datetime.now(UTC)
     visit.outcome = outcome
     visit.summary = summary
     visit.endpoint_used = endpoint_used
+    payload = {"column": visit.column.value, "outcome": outcome.value, "summary": summary}
+    # Only request_changes callers pass this — the transcript previously showed just
+    # the one-line `summary` for a changes_requested transition, never the fuller
+    # `feedback` that actually became card.latest_feedback for the Developer's next
+    # attempt, so anyone reading the transcript saw far less detail than the
+    # Developer itself got.
+    if feedback is not None:
+        payload["feedback"] = feedback
     await append_event(
         session,
         card_id=visit.card_id,
         column_visit_id=visit.id,
         type=EventType.TRANSITION,
-        payload={"column": visit.column.value, "outcome": outcome.value, "summary": summary},
+        payload=payload,
     )
 
 
@@ -147,7 +156,12 @@ async def complete_reviewer_visit_changes_requested(
     if card.revision_count > project.max_revisions:
         card.lifecycle_state = LifecycleState.BLOCKED
     await _close_visit(
-        session, visit, outcome=VisitOutcome.CHANGES_REQUESTED, summary=summary, endpoint_used=endpoint_used
+        session,
+        visit,
+        outcome=VisitOutcome.CHANGES_REQUESTED,
+        summary=summary,
+        endpoint_used=endpoint_used,
+        feedback=feedback,
     )
     return card
 
@@ -174,7 +188,12 @@ async def complete_tester_visit_changes_requested(
     if card.revision_count > project.max_revisions:
         card.lifecycle_state = LifecycleState.BLOCKED
     await _close_visit(
-        session, visit, outcome=VisitOutcome.CHANGES_REQUESTED, summary=summary, endpoint_used=endpoint_used
+        session,
+        visit,
+        outcome=VisitOutcome.CHANGES_REQUESTED,
+        summary=summary,
+        endpoint_used=endpoint_used,
+        feedback=feedback,
     )
     return card
 

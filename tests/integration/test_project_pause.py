@@ -58,15 +58,24 @@ async def test_ui_pause_and_resume_round_trip(db_session):
         assert f"/ui/projects/{project.id}/pause" in list_resp_after.text
 
 
-async def test_settings_page_reflects_paused_state(db_session):
+async def test_board_page_reflects_paused_state(db_session):
+    """The pause/resume control lives on the board page, not settings — see
+    board.html.j2's header. Settings dropped its own copy of this control
+    entirely rather than duplicating it."""
     project = await _make_project(db_session, _n="4")
     await db_session.commit()
 
     async with _client() as client:
-        before = await client.get(f"/ui/projects/{project.id}/settings")
-        assert "Pause project" in before.text
+        before = await client.get(f"/ui/projects/{project.id}/board")
+        assert f'action="/ui/projects/{project.id}/pause"' in before.text
+        assert f'action="/ui/projects/{project.id}/resume"' not in before.text
 
         await client.post(f"/ui/projects/{project.id}/pause")
 
-        after = await client.get(f"/ui/projects/{project.id}/settings")
-        assert "Resume project" in after.text
+        after = await client.get(f"/ui/projects/{project.id}/board")
+        assert f'action="/ui/projects/{project.id}/resume"' in after.text
+        assert f'action="/ui/projects/{project.id}/pause"' not in after.text
+
+        settings = await client.get(f"/ui/projects/{project.id}/settings")
+        assert f'action="/ui/projects/{project.id}/pause"' not in settings.text
+        assert f'action="/ui/projects/{project.id}/resume"' not in settings.text

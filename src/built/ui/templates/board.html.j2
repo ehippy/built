@@ -1,4 +1,5 @@
 {% extends "base.html.j2" %}
+{% import "macros.html.j2" as m %}
 {% block title %}{{ project.name }} · Board{% endblock %}
 {% block content %}
 <ul class="nav nav-tabs mb-4">
@@ -9,10 +10,19 @@
 
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
   <div>
-    <h1>{{ project.name }}</h1>
+    <h1>{{ project.name }} {% if project.paused_at %}<span class="fs-6">{{ m.badge("paused") }}</span>{% endif %}</h1>
     <p class="text-body-secondary">{{ project.overarching_goal }}</p>
   </div>
   <div class="d-flex gap-2">
+    {% if project.paused_at %}
+    <form method="post" action="/ui/projects/{{ project.id }}/resume">
+      <button class="btn btn-primary" type="submit" title="Paused since {{ project.paused_at|timeago }} — resume to let the orchestrator claim cards again">&#9654; Resume</button>
+    </form>
+    {% else %}
+    <form method="post" action="/ui/projects/{{ project.id }}/pause">
+      <button class="btn btn-outline-secondary" type="submit" title="Pause to stop the orchestrator from claiming new cards for this project">&#10074;&#10074; Pause</button>
+    </form>
+    {% endif %}
     <div class="dropdown">
       <button class="btn btn-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
         Curation

@@ -134,8 +134,23 @@ async def test_ensure_tool_worktree_self_heals_after_abandoned_merge_conflict(to
     (wt_path / "app.py").write_text("def greet():\n    return 'unresolved local change'\n")
     await git_tools.commit_all(wt_path, message="local change on tool branch")
     try:
+        # -c user.name/user.email, matching deploy_runner.py's own real merge call —
+        # --no-ff needs a committer identity to even attempt the merge, and without
+        # this the command fails on "Committer identity unknown" before ever
+        # reaching conflict detection on a machine/CI runner with no global git
+        # config (confirmed empirically: passed locally where ~/.gitconfig already
+        # has an identity, failed in CI where nothing does).
         await git_tools.run_git(
-            "merge", "--no-ff", "-m", "merge attempt", "conflicting-branch", cwd=wt_path
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.com",
+            "merge",
+            "--no-ff",
+            "-m",
+            "merge attempt",
+            "conflicting-branch",
+            cwd=wt_path,
         )
         raise AssertionError("expected this merge to conflict")
     except git_tools.GitCommandError:

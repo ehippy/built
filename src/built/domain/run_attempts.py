@@ -99,3 +99,24 @@ async def has_passing_run_since_last_change(
         )
     )
     return not any(payload.get("commit_sha") for payload in later_payloads)
+
+
+async def has_made_any_change_this_visit(session: AsyncSession, column_visit_id: str) -> bool:
+    """A second, narrower gate on top of has_passing_run_since_last_change: a
+    Developer visit that never calls write_file/edit_file (or a bash command that
+    changes tracked files) can still trivially satisfy that check by running an
+    already-passing test command against an untouched repo — confirmed in
+    production on a large migration card where four consecutive Developer visits
+    each read the whole repo repeatedly and then submitted having written nothing
+    at all, because the project's test command only covered pre-existing game
+    logic the task never touched. Same failure shape as the gameable check this
+    module already closed once (claim success without real verification) — this
+    closes the sibling loophole (verify something true but irrelevant, then claim
+    success) rather than assuming any passing run implies real work happened."""
+    result = await session.scalars(
+        select(CardEvent.payload).where(
+            CardEvent.column_visit_id == column_visit_id,
+            CardEvent.type == EventType.TOOL_CALL,
+        )
+    )
+    return any(payload.get("commit_sha") for payload in result)

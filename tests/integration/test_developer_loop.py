@@ -142,6 +142,65 @@ async def test_developer_submit_for_test_is_rejected_without_a_passing_run_then_
             ),
             LLMResult(
                 content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_2",
+                        name="write_file",
+                        arguments={
+                            "path": "app.py",
+                            "content": (
+                                "def greet():\n    return 'hi'\n\n\ndef subtract(a, b):\n    return a - b\n"
+                            ),
+                        },
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[ToolCallRequest(id="call_3", name="bash", arguments={"command": "pytest -q"})],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(id="call_4", name="submit_for_test", arguments={"summary": "done"})
+                ],
+                endpoint_used="fake::model",
+            ),
+        ]
+    )
+    executor = FakeCommandExecutor(CommandResult(exit_code=0, stdout="1 passed", stderr=""))
+    dispatcher = ToolDispatcher(ctx=ToolContext(card_id=card.id, worktree_root=wt_path), executor=executor)
+
+    result = await run_developer_visit(
+        db_session, project, card, visit, llm_client=llm, dispatcher=dispatcher, max_iterations=10
+    )
+
+    assert result.column == Column.TESTER
+    assert visit.outcome == VisitOutcome.SUBMITTED
+    assert llm.calls[3] is not None  # the loop kept going past the rejected first attempt
+
+
+async def test_developer_submit_for_test_is_rejected_if_nothing_was_ever_changed(db_session, toy_repo_remote):
+    """Confirmed in production on a large migration card: a Developer that reads
+    the whole repo, never calls write_file/edit_file, then runs the project's
+    already-passing test command (which happened to cover none of the actual task)
+    could submit_for_test having implemented nothing at all — has_passing_run_since_
+    last_change has no way to tell "verified real work" apart from "verified an
+    untouched repo still works". This is the gate that catches the difference."""
+    project, card, wt_path = await _make_developer_card(db_session, toy_repo_remote)
+    visit = await transitions.start_visit(db_session, card)
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[ToolCallRequest(id="call_1", name="read_file", arguments={"path": "app.py"})],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
                 tool_calls=[ToolCallRequest(id="call_2", name="bash", arguments={"command": "pytest -q"})],
                 endpoint_used="fake::model",
             ),
@@ -158,12 +217,11 @@ async def test_developer_submit_for_test_is_rejected_without_a_passing_run_then_
     dispatcher = ToolDispatcher(ctx=ToolContext(card_id=card.id, worktree_root=wt_path), executor=executor)
 
     result = await run_developer_visit(
-        db_session, project, card, visit, llm_client=llm, dispatcher=dispatcher, max_iterations=10
+        db_session, project, card, visit, llm_client=llm, dispatcher=dispatcher, max_iterations=3
     )
 
-    assert result.column == Column.TESTER
-    assert visit.outcome == VisitOutcome.SUBMITTED
-    assert llm.calls[2] is not None  # the loop kept going past the rejected first attempt
+    assert result.column == Column.DEVELOPER  # never advanced
+    assert result.lifecycle_state == LifecycleState.BLOCKED
 
 
 async def test_developer_submit_for_test_is_rejected_when_the_run_doesnt_match_the_configured_command(

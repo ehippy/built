@@ -295,6 +295,16 @@ async def _require_passing_test_run(
 async def _developer_submit_for_test_handler(
     session: AsyncSession, card: Card, visit: CardColumnVisit, tool_call: ToolCallRequest, endpoint_used: str
 ) -> TerminalHandlerResult:
+    if not await run_attempts.has_made_any_change_this_visit(session, visit.id):
+        return TerminalHandlerResult(
+            handled=False,
+            feedback=(
+                "No files have been changed in this visit yet — submit_for_test hands off a completed "
+                "implementation, it isn't a way to report that things already work. Implement the "
+                "card's acceptance criteria with write_file/edit_file (or a bash command that changes "
+                "tracked files), then run the test command and submit."
+            ),
+        )
     feedback = await _require_passing_test_run(session, card, visit, verb="submit_for_test")
     if feedback is not None:
         return TerminalHandlerResult(handled=False, feedback=feedback)

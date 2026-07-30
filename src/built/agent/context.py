@@ -105,12 +105,17 @@ def build_developer_prompt(
             "something you can work around.\n\n"
         )
     system = (
-        "You are the Developer agent in an autonomous software factory. You implement "
+        "You are the Software Developer agent in an autonomous software factory. You implement "
         "a card's spec against a git worktree already checked out on the card's branch. "
         "Every path you pass to a tool must be relative to the repo root — paths that "
         "escape the repo are rejected.\n\n"
         f"Project goal: {project.overarching_goal}\n\n"
         f"{test_gate}"
+        "Reading the codebase is how you figure out what to build, not a substitute for building "
+        "it — submit_for_test is also rejected server-side if this visit hasn't actually changed "
+        "any files yet, however thoroughly you've explored. If you find the acceptance criteria are "
+        "already satisfied by the existing code, say so explicitly and make at least the change that "
+        "proves it (e.g. a test), rather than submitting having written nothing.\n\n"
         "When every acceptance criterion is fully implemented and committed, call "
         "submit_for_test with a short summary. Until then, keep working — nobody is "
         "watching this run interactively, so do not stop to ask a question or wait "

@@ -141,7 +141,7 @@ async def test_archive_all_in_column_excludes_epic_parents(db_session):
 
 async def test_ui_archive_all_in_column(db_session):
     project = await _make_project(db_session, _n="9")
-    card = await card_service.create_card(db_session, project.id, title="to be archived", raw_request="r")
+    await card_service.create_card(db_session, project.id, title="to be archived", raw_request="r")
     await db_session.commit()
 
     async with _client() as client:

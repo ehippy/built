@@ -40,6 +40,8 @@ from built.llm.tool_schemas import (
     DEPLOYER_PR_TERMINAL_TOOL,
     DEVELOPER_TERMINAL_TOOL,
     DEVELOPER_TOOLS,
+    MAX_SPLIT_TASKS,
+    PM_SPLIT_TERMINAL_TOOL,
     PM_TERMINAL_TOOL,
     PM_TOOLS,
     REVIEWER_TOOLS,
@@ -47,6 +49,7 @@ from built.llm.tool_schemas import (
     deployer_tools,
 )
 from built.sandbox import deploy_runner
+from built.services import card_service
 from built.tools.dispatcher import DispatchOutcome, ToolDispatcher
 
 
@@ -285,6 +288,44 @@ async def _pm_submit_spec_handler(
     return TerminalHandlerResult(handled=True)
 
 
+async def _pm_split_into_subtasks_handler(
+    session: AsyncSession, card: Card, visit: CardColumnVisit, tool_call: ToolCallRequest, endpoint_used: str
+) -> TerminalHandlerResult:
+    tasks = tool_call.arguments.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        return TerminalHandlerResult(
+            handled=False, feedback="tasks must be a non-empty list of {title, raw_request} objects."
+        )
+    valid: list[tuple[str, str]] = []
+    for task in tasks[:MAX_SPLIT_TASKS]:
+        if not isinstance(task, dict):
+            continue
+        title = str(task.get("title", "")).strip()
+        raw_request = str(task.get("raw_request", "")).strip()
+        if title and raw_request:
+            valid.append((title, raw_request))
+    if len(valid) < 2:
+        return TerminalHandlerResult(
+            handled=False,
+            feedback=(
+                "That's not a split — need at least 2 well-formed {title, raw_request} tasks. If "
+                "this card is genuinely just one piece of work, call submit_spec instead."
+            ),
+        )
+    created = [
+        await card_service.create_card(
+            session, card.project_id, title=title, raw_request=raw_request, source=f"split:{card.id}"
+        )
+        for title, raw_request in valid
+    ]
+    model_summary = str(tool_call.arguments.get("summary", "")).strip()
+    titles = "; ".join(c.title for c in created)
+    created_note = f"created {len(created)} card(s): {titles}"
+    summary = f"{model_summary} — {created_note}" if model_summary else created_note
+    await transitions.split_pm_visit(session, card, visit, summary=summary, endpoint_used=endpoint_used)
+    return TerminalHandlerResult(handled=True)
+
+
 async def _require_passing_test_run(
     session: AsyncSession, card: Card, visit: CardColumnVisit, *, verb: str
 ) -> str | None:
@@ -462,7 +503,10 @@ async def run_pm_visit(
         system_prompt=system,
         user_prompt=user,
         tools=PM_TOOLS,
-        terminal_handlers={PM_TERMINAL_TOOL: _pm_submit_spec_handler},
+        terminal_handlers={
+            PM_TERMINAL_TOOL: _pm_submit_spec_handler,
+            PM_SPLIT_TERMINAL_TOOL: _pm_split_into_subtasks_handler,
+        },
         context_window_config=context_window_config,
     )
 

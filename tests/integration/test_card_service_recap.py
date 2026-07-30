@@ -80,6 +80,49 @@ async def test_recap_includes_prior_outcome_and_recent_tool_calls(db_session):
     assert "108 passed" in recap
 
 
+async def test_recap_surfaces_the_full_feedback_not_just_the_terse_summary(db_session):
+    """A Tester (or Reviewer) that rejected once and gets re-invoked after the
+    Developer's revision needs its own detailed findings back, not just the
+    one-line audit-log summary — otherwise it has no way to check whether its own
+    specific items were actually addressed and has to re-derive the review from
+    scratch each pass."""
+    project = await _make_project(db_session, name="tester-feedback")
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+
+    pm_visit = await transitions.start_visit(db_session, card)
+    await transitions.complete_pm_visit(
+        db_session, card, pm_visit, spec="spec", acceptance_criteria=["x"], summary="PM done"
+    )
+    dev_visit_1 = await transitions.start_visit(db_session, card)
+    await transitions.complete_developer_visit(db_session, card, dev_visit_1, summary="implemented x")
+    assert card.column == Column.TESTER
+
+    tester_visit_1 = await transitions.start_visit(db_session, card)
+    detailed_feedback = (
+        "1. tests/test_x.js fails: expected 5, got 4 — missing the Y case.\n"
+        "2. README.md not updated with the new flag."
+    )
+    await transitions.complete_tester_visit_changes_requested(
+        db_session, card, tester_visit_1, feedback=detailed_feedback, summary="2 issues found"
+    )
+    assert card.column == Column.DEVELOPER
+
+    dev_visit_2 = await transitions.start_visit(db_session, card)
+    await transitions.complete_developer_visit(db_session, card, dev_visit_2, summary="addressed feedback")
+    assert card.column == Column.TESTER
+
+    tester_visit_2 = await transitions.start_visit(db_session, card)
+    await db_session.commit()
+
+    recap = await card_service.get_previous_attempt_recap(
+        db_session, card.id, card.column, before_attempt=tester_visit_2.attempt_number
+    )
+
+    assert recap is not None
+    assert "2 issues found" in recap  # the terse audit-log summary is still there...
+    assert detailed_feedback in recap  # ...but so is the actual itemized feedback
+
+
 async def test_recap_only_looks_at_the_same_column(db_session):
     project = await _make_project(db_session, name="cross-column")
     card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")

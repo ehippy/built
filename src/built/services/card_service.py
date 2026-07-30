@@ -280,6 +280,24 @@ async def get_previous_attempt_recap(
     lines = [
         f"Attempt #{prev_visit.attempt_number} ended: {outcome} — {prev_visit.summary or '(no summary)'}"
     ]
+    # `summary` above is deliberately terse ("a one-line summary for the audit log") —
+    # the actual substance of a request_changes/reject is in the transition event's
+    # `feedback`, which otherwise only ever reaches the Developer via card.latest_feedback
+    # (a single shared field the next reviewer down the line can overwrite). Without this,
+    # a Tester/Reviewer re-invoked after its own rejection has no way to check whether its
+    # own specific findings were actually addressed — it can only start a generically fresh
+    # review and hope it re-derives the same list.
+    transition_payload = await session.scalar(
+        select(CardEvent.payload)
+        .where(CardEvent.column_visit_id == prev_visit.id, CardEvent.type == EventType.TRANSITION)
+        .limit(1)
+    )
+    feedback_text = (transition_payload or {}).get("feedback")
+    if feedback_text:
+        lines.append(
+            f"Your own detailed feedback from that attempt (verify each item was addressed):\n"
+            f"{feedback_text}"
+        )
     if events:
         lines.append("Its last actions there, most recent last (avoid repeating work already done):")
         lines.extend(_describe_tool_call_event(e.payload) for e in events)

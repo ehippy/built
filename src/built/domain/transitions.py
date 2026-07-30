@@ -81,6 +81,27 @@ async def complete_pm_visit(
     return card
 
 
+async def split_pm_visit(
+    session: AsyncSession,
+    card: Card,
+    visit: CardColumnVisit,
+    *,
+    summary: str,
+    endpoint_used: str | None = None,
+) -> Card:
+    """PM's split_into_subtasks: this card was too broad for one Developer visit to
+    implement and one Tester visit to verify coherently. The replacement cards
+    already exist on the backlog by the time this is called (agent/loop.py's handler
+    creates them first) — archive this one rather than advancing it, the same way a
+    human archiving a card works: history/events/visits stay intact and it's still
+    reachable at its own URL, it just drops off the board and out of claiming."""
+    card.archived_at = datetime.now(UTC)
+    await _close_visit(
+        session, visit, outcome=VisitOutcome.SPLIT, summary=summary, endpoint_used=endpoint_used
+    )
+    return card
+
+
 async def complete_developer_visit(
     session: AsyncSession,
     card: Card,

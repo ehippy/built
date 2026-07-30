@@ -338,8 +338,66 @@ SUBMIT_SPEC = {
     },
 }
 
-PM_TOOLS = [READ_FILE, LIST_FILES, GLOB_FILES, GREP_FILES, SUBMIT_SPEC]
+MAX_SPLIT_TASKS = 8
+
+SPLIT_INTO_SUBTASKS = {
+    "type": "function",
+    "function": {
+        "name": "split_into_subtasks",
+        "description": (
+            "Use instead of submit_spec when this card is too big for one Developer visit to "
+            "implement and one Tester visit to verify as a single coherent pass — a whole-repo "
+            "refactor, the same mechanical change repeated across many independent files, or "
+            "several genuinely unrelated asks bundled into one request. A long acceptance-criteria "
+            "list is not by itself a reason to split — most real cards have several criteria that "
+            "all belong to one unit of work; split when the criteria don't actually belong "
+            "together, not just because there are many of them. "
+            "This retires the current card (archived, not claimable again) and creates each task "
+            "below as its own new card, which goes through the normal PM -> Developer -> Tester -> "
+            "Deployer pipeline independently — you're only naming and scoping the pieces here, not "
+            "writing their specs; each gets its own future PM visit for that. Write each "
+            "raw_request as self-contained: whoever specs it later won't have this card's original "
+            "request in front of them, so restate whatever context they'd need (file paths, names, "
+            "the specific slice of the original ask). List foundational pieces first — e.g. 'add "
+            "the shared layout' before 'convert page X to use it' — since there's no enforced "
+            "dependency between the resulting cards, only the order they're likely to be picked up "
+            f"in. At most {MAX_SPLIT_TASKS} tasks; if it genuinely needs more than that, group "
+            "related pieces into batches rather than one task per file."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "tasks": {
+                    "type": "array",
+                    "minItems": 2,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string", "description": "Short title for the new card."},
+                            "raw_request": {
+                                "type": "string",
+                                "description": (
+                                    "Self-contained description of this piece — written so it makes "
+                                    "sense without the original card's request in front of you."
+                                ),
+                            },
+                        },
+                        "required": ["title", "raw_request"],
+                    },
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "A one-line summary of how and why this was split, for the audit log.",
+                },
+            },
+            "required": ["tasks", "summary"],
+        },
+    },
+}
+
+PM_TOOLS = [READ_FILE, LIST_FILES, GLOB_FILES, GREP_FILES, SUBMIT_SPEC, SPLIT_INTO_SUBTASKS]
 PM_TERMINAL_TOOL = "submit_spec"
+PM_SPLIT_TERMINAL_TOOL = "split_into_subtasks"
 
 MAX_PROPOSED_TASKS = 5
 

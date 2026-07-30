@@ -15,6 +15,13 @@
         <li class="plan-step plan-status-{{ step.status }}">{{ step.step }}</li>
         {% endfor %}
       </ul>
+    {% elif event.type == "tool_call" and event.payload.name == "bash" %}
+      <div class="hint"><strong>bash</strong>{% if event.payload.is_error %} (error){% endif %}</div>
+      <pre class="bash-command">$ {{ event.payload.arguments.command }}</pre>
+      <details class="collapsible">
+        <summary>Output ({{ event.payload.result|length }} chars){% if event.payload.is_error %} ⚠{% endif %}</summary>
+        <pre>{{ event.payload.result }}</pre>
+      </details>
     {% elif event.type == "tool_call" %}
       <div class="hint"><strong>{{ event.payload.name }}</strong>{% if event.payload.is_error %} (error){% endif %}</div>
       <details class="collapsible">

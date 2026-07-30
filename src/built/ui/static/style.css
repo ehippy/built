@@ -582,6 +582,14 @@ th {
 .event.type-transition { border-left: 3px solid var(--state-done); }
 .event.type-error { border-left: 3px solid var(--state-failed); }
 
+.event pre.bash-command {
+  background: var(--column-bg);
+  color: var(--accent);
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  margin: 0 0 0.35rem;
+}
+
 .plan-list {
   list-style: none;
   margin: 0.35rem 0 0;

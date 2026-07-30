@@ -120,3 +120,32 @@ async def test_update_plan_renders_as_a_checklist_not_a_generic_tool_result(db_s
     assert 'class="plan-step plan-status-done"' in fragment.text
     assert 'class="plan-step plan-status-in_progress"' in fragment.text
     assert 'class="plan-step plan-status-pending"' in fragment.text
+
+
+async def test_bash_tool_call_shows_the_command_alongside_its_output(db_session):
+    """Only the output was ever rendered for a bash tool call — the command that
+    produced it (the actual interesting part of "what is it running") was never
+    shown anywhere in the transcript."""
+    project = await _make_project(db_session, _n="5")
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    await append_event(
+        db_session,
+        card_id=card.id,
+        type=EventType.TOOL_CALL,
+        payload={
+            "name": "bash",
+            "arguments": {"command": "bundle exec jekyll build --destination _site"},
+            "result": "exit code: 0\nConfiguration file: /workspace/_config.yml",
+            "is_error": False,
+            "commit_sha": None,
+        },
+    )
+    await db_session.commit()
+
+    async with _client() as client:
+        fragment = await client.get(f"/ui/cards/{card.id}/events/fragment")
+
+    assert "bundle exec jekyll build --destination _site" in fragment.text
+    assert 'class="bash-command"' in fragment.text
+    # The output is still there too, just no longer the only thing shown.
+    assert "Configuration file: /workspace/_config.yml" in fragment.text

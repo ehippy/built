@@ -80,7 +80,7 @@
   <div class="col-lg-8">
     <div class="card card-body h-100">
       <h2 class="h5">Request</h2>
-      <p>{{ card.raw_request }}</p>
+      <div>{{ card.raw_request|markdown }}</div>
 
       {% if card.spec %}
       <h2 class="h5">Spec</h2>

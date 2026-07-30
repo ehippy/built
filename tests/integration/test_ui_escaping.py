@@ -50,6 +50,38 @@ async def test_card_transcript_escapes_html_in_event_payloads(db_session):
     assert "&lt;script&gt;window.__pwned" in page.text
 
 
+async def test_card_raw_request_renders_as_markdown_but_escapes_raw_html(db_session):
+    """raw_request gets the same markdown treatment as spec — it's the only content
+    a card created by the PM's split_into_subtasks or curation's propose_tasks has
+    until (and unless) a real PM visit fills in a spec, so it needs to render
+    correctly on its own, not just look right once a spec eventually exists."""
+    project = await project_service.create_project(
+        db_session,
+        name="Markdown check 2",
+        overarching_goal="goal",
+        repo_remote_url="https://example.invalid/repo.git",
+    )
+    card = await card_service.create_card(
+        db_session,
+        project.id,
+        title="t",
+        raw_request=(
+            "Do the **thing**, then:\n\n- step one\n- step two\n\n"
+            "<script>window.__pwned = true;</script>"
+        ),
+    )
+    await db_session.commit()
+
+    async with _client() as client:
+        page = await client.get(f"/ui/cards/{card.id}")
+
+    assert page.status_code == 200
+    assert "<strong>thing</strong>" in page.text
+    assert "<li>step one</li>" in page.text
+    assert "<script>window.__pwned" not in page.text
+    assert "&lt;script&gt;window.__pwned" in page.text
+
+
 async def test_card_spec_renders_as_markdown_but_escapes_raw_html(db_session):
     project = await project_service.create_project(
         db_session,

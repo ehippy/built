@@ -27,25 +27,42 @@
       <button class="btn btn-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
         Curation
       </button>
-      <div class="dropdown-menu p-3" style="min-width: 20rem;">
-        <p class="text-body-secondary">Run a focused pass over the repo and propose cards for whatever it finds — nothing is ever edited directly, every kind only ever proposes new cards.</p>
-        <div class="d-grid gap-2">
-          <form method="post" action="/ui/projects/{{ project.id }}/curate/bug_sweep">
-            <button class="btn btn-secondary w-100" type="submit">Bug sweep</button>
+      <div class="dropdown-menu p-3" style="min-width: 27rem;">
+        <p class="text-body-secondary">Run a focused pass over the repo and propose cards for whatever it finds — nothing is ever edited directly, every kind only ever proposes new cards. Uncheck a kind to take it off the automatic schedule; "Run now" always works regardless.</p>
+        <div class="d-flex align-items-center justify-content-between border rounded p-2 mb-2">
+          <span class="small">
+            {% if curation_paused_at %}Automatic curation paused since {{ curation_paused_at|timeago }}{% else %}Automatic curation is active{% endif %}
+          </span>
+          {% if curation_paused_at %}
+          <form method="post" action="/ui/projects/{{ project.id }}/curation/resume">
+            <button class="btn btn-sm btn-primary" type="submit">&#9654; Resume</button>
           </form>
-          <form method="post" action="/ui/projects/{{ project.id }}/curate/opportunity_brainstorm">
-            <button class="btn btn-secondary w-100" type="submit">Opportunities</button>
+          {% else %}
+          <form method="post" action="/ui/projects/{{ project.id }}/curation/pause">
+            <button class="btn btn-sm btn-outline-secondary" type="submit">&#10074;&#10074; Pause</button>
           </form>
-          <form method="post" action="/ui/projects/{{ project.id }}/curate/polish_review">
-            <button class="btn btn-secondary w-100" type="submit">Polish review</button>
-          </form>
-          <form method="post" action="/ui/projects/{{ project.id }}/curate/stay_dry">
-            <button class="btn btn-secondary w-100" type="submit">Stay DRY</button>
-          </form>
-          <form method="post" action="/ui/projects/{{ project.id }}/curate/agents_md">
-            <button class="btn btn-secondary w-100" type="submit">Tend AGENTS.md</button>
-          </form>
+          {% endif %}
         </div>
+        {% for s in statuses %}
+        <div class="{% if not loop.first %}border-top pt-2 mt-2{% endif %}">
+          <div class="d-flex align-items-center gap-2">
+            <form method="post" action="/ui/projects/{{ project.id }}/curation/kinds/{{ s.kind }}" class="form-check form-switch mb-0 flex-grow-1">
+              <input class="form-check-input" type="checkbox" role="switch" id="curation-enabled-{{ s.kind }}" name="enabled" value="true" {% if s.enabled %}checked{% endif %} onchange="this.form.submit()">
+              <label class="form-check-label" for="curation-enabled-{{ s.kind }}">{{ s.label }}</label>
+            </form>
+            <form method="post" action="/ui/projects/{{ project.id }}/curate/{{ s.kind }}">
+              <button class="btn btn-sm btn-secondary" type="submit">Run now</button>
+            </form>
+          </div>
+          <div class="small text-body-secondary ps-4 text-truncate">
+            {% if not s.enabled %}off — not on the automatic schedule
+            {% elif s.running %}<span class="spinner-border spinner-border-sm" title="Running now"></span> {{ s.current_activity or "starting…" }}
+            {% elif s.last_run_at %}{{ s.last_run_at|timeago }}{% if s.summary %} — {{ s.summary }}{% endif %}
+            {% else %}never run yet
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
       </div>
     </div>
     <div class="dropdown">
@@ -76,8 +93,6 @@
     </div>
   </div>
 </div>
-
-{% include "_curation_status_fragment.html.j2" %}
 
 {% include "_board_fragment.html.j2" %}
 {% endblock %}

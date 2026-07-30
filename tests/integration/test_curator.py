@@ -397,6 +397,88 @@ async def test_run_curator_once_skips_a_paused_project(db_session, toy_repo_remo
         assert await project_service.get_activity_last_run(db_session, project.id, kind) is None
 
 
+async def test_run_curator_once_skips_curation_when_curation_paused(db_session, toy_repo_remote):
+    """pause_curation is a narrower switch than pause_project: it stops only the
+    curator's automatic scheduler, not the worker orchestrator or Reviver."""
+    project, _ = await _make_project(db_session, toy_repo_remote, _n="10b")
+    await project_service.pause_curation(db_session, project.id)
+    await db_session.commit()
+    assert project.paused_at is None
+
+    await curator.run_curator_once()
+
+    for kind in ActivityKind:
+        assert await project_service.get_activity_last_run(db_session, project.id, kind) is None
+
+
+async def test_run_curator_once_skips_a_disabled_kind_but_attempts_others(db_session, toy_repo_remote):
+    project, _ = await _make_project(db_session, toy_repo_remote, _n="10c")
+    await project_service.set_curation_kind_enabled(
+        db_session, project.id, ActivityKind.BUG_SWEEP, enabled=False
+    )
+    await db_session.commit()
+
+    prior_logs = get_logs()
+    cutoff = prior_logs[-1].seq if prior_logs else 0
+    await curator.run_curator_once()
+    new_logs = get_logs(since_seq=cutoff)
+
+    def _started(kind: ActivityKind) -> bool:
+        return any(
+            "starting" in e.message and kind.value in e.message and project.id in e.message
+            for e in new_logs
+        )
+
+    assert _started(ActivityKind.BUG_SWEEP) is False
+    assert _started(ActivityKind.OPPORTUNITY_BRAINSTORM) is True
+
+
+# --- Curation on/off state: project-wide pause + per-kind enable/disable ----------
+
+
+async def test_curation_state_absent_by_default(db_session, toy_repo_remote):
+    """No row == fully active, nothing paused or disabled — see
+    ProjectCurationState's docstring."""
+    project, _ = await _make_project(db_session, toy_repo_remote, _n="10a")
+    assert await project_service.get_curation_state(db_session, project.id) is None
+
+
+async def test_pause_curation_and_resume_curation_round_trip(db_session, toy_repo_remote):
+    project, _ = await _make_project(db_session, toy_repo_remote, _n="10d")
+
+    paused = await project_service.pause_curation(db_session, project.id)
+    assert paused.paused_at is not None
+    state = await project_service.get_curation_state(db_session, project.id)
+    assert state is not None and state.paused_at is not None
+
+    resumed = await project_service.resume_curation(db_session, project.id)
+    assert resumed.paused_at is None
+
+
+async def test_set_curation_kind_enabled_toggles_independently(db_session, toy_repo_remote):
+    """Disabling one kind never touches another's state, and re-enabling a kind
+    removes it from disabled_kinds rather than leaving a stale falsy entry."""
+    project, _ = await _make_project(db_session, toy_repo_remote, _n="10e")
+
+    await project_service.set_curation_kind_enabled(
+        db_session, project.id, ActivityKind.BUG_SWEEP, enabled=False
+    )
+    state = await project_service.get_curation_state(db_session, project.id)
+    assert state.disabled_kinds == ["bug_sweep"]
+
+    await project_service.set_curation_kind_enabled(
+        db_session, project.id, ActivityKind.POLISH_REVIEW, enabled=False
+    )
+    state = await project_service.get_curation_state(db_session, project.id)
+    assert set(state.disabled_kinds) == {"bug_sweep", "polish_review"}
+
+    await project_service.set_curation_kind_enabled(
+        db_session, project.id, ActivityKind.BUG_SWEEP, enabled=True
+    )
+    state = await project_service.get_curation_state(db_session, project.id)
+    assert state.disabled_kinds == ["polish_review"]
+
+
 async def test_in_progress_guard_blocks_same_kind_but_not_different_kind():
     """Unlike the old single-project discovery guard, this one is keyed by
     (project_id, kind) — a bug sweep and a polish review for the same project are
@@ -455,7 +537,7 @@ async def test_curation_releases_the_guard_even_on_setup_failure(db_session):
     )
 
 
-# --- list_activity_runs: what the board page's status panel reads -----------------
+# --- list_activity_runs: what the board page.s curation dropdown reads ------------
 
 
 async def test_list_activity_runs_keyed_by_kind_missing_kinds_absent(db_session, toy_repo_remote):
@@ -472,10 +554,10 @@ async def test_list_activity_runs_keyed_by_kind_missing_kinds_absent(db_session,
     assert runs[ActivityKind.BUG_SWEEP].last_result_summary == "created 1 card(s)"
 
 
-# --- Board page status panel --------------------------------------------------------
+# --- Curation dropdown: per-kind status readout, folded in alongside the toggles --
 
 
-async def test_board_page_shows_curation_status_panel(db_session, toy_repo_remote):
+async def test_curation_dropdown_shows_per_kind_status(db_session, toy_repo_remote):
     project, _ = await _make_project(db_session, toy_repo_remote, _n="13")
     await db_session.commit()
 
@@ -500,9 +582,9 @@ async def test_board_page_shows_curation_status_panel(db_session, toy_repo_remot
         curator._curation_in_progress.discard((project.id, ActivityKind.OPPORTUNITY_BRAINSTORM))
 
 
-async def test_board_page_shows_the_latest_curation_event_while_running(db_session, toy_repo_remote):
-    """The actual point of the status panel redesign: a running kind shows what it's
-    doing right now, not just a bare spinner."""
+async def test_curation_dropdown_shows_the_latest_event_while_running(db_session, toy_repo_remote):
+    """A running kind's readout in the dropdown shows what it's doing right now,
+    not just a bare spinner."""
     project, _ = await _make_project(db_session, toy_repo_remote, _n="14")
     await append_curation_event(
         db_session,
@@ -522,7 +604,54 @@ async def test_board_page_shows_the_latest_curation_event_while_running(db_sessi
         curator._curation_in_progress.discard((project.id, ActivityKind.BUG_SWEEP))
 
 
-# --- Event logging: what a pass writes for the status panel to read ---------------
+async def test_board_curation_pause_resume_and_kind_toggle_round_trip(db_session, toy_repo_remote):
+    project, _ = await _make_project(db_session, toy_repo_remote, _n="17")
+    await db_session.commit()
+
+    async with _client() as client:
+        before = await client.get(f"/ui/projects/{project.id}/board")
+        assert f'action="/ui/projects/{project.id}/curation/pause"' in before.text
+        assert f'action="/ui/projects/{project.id}/curation/kinds/bug_sweep"' in before.text
+
+        pause_resp = await client.post(f"/ui/projects/{project.id}/curation/pause", follow_redirects=False)
+        assert pause_resp.status_code == 303
+
+        after_pause = await client.get(f"/ui/projects/{project.id}/board")
+        assert "Automatic curation paused" in after_pause.text
+        assert f'action="/ui/projects/{project.id}/curation/resume"' in after_pause.text
+
+        resume_resp = await client.post(
+            f"/ui/projects/{project.id}/curation/resume", follow_redirects=False
+        )
+        assert resume_resp.status_code == 303
+
+        # Unchecking a checkbox omits its field entirely — an empty body, not "false".
+        uncheck_resp = await client.post(
+            f"/ui/projects/{project.id}/curation/kinds/bug_sweep", data={}, follow_redirects=False
+        )
+        assert uncheck_resp.status_code == 303
+
+        # Checked via the rendered page, not a direct DB read: db_session's identity
+        # map would otherwise happily hand back a stale ProjectCurationState object
+        # loaded before these client-session commits (see get_curation_state's
+        # session.get(), which checks the identity map before querying).
+        after_uncheck = await client.get(f"/ui/projects/{project.id}/board")
+        assert 'id="curation-enabled-bug_sweep" name="enabled" value="true" checked' not in after_uncheck.text
+        assert 'id="curation-enabled-bug_sweep"' in after_uncheck.text
+        assert "off — not on the automatic schedule" in after_uncheck.text
+
+        recheck_resp = await client.post(
+            f"/ui/projects/{project.id}/curation/kinds/bug_sweep",
+            data={"enabled": "true"},
+            follow_redirects=False,
+        )
+        assert recheck_resp.status_code == 303
+
+        after_recheck = await client.get(f"/ui/projects/{project.id}/board")
+        assert 'id="curation-enabled-bug_sweep" name="enabled" value="true" checked' in after_recheck.text
+
+
+# --- Event logging: what a pass writes for the curation dropdown to read ----------
 
 
 async def test_curation_pass_logs_events_for_llm_responses_and_tool_calls(db_session, toy_repo_remote):

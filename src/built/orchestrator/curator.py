@@ -139,14 +139,26 @@ async def run_curation_activity(
 
 async def run_curator_once() -> None:
     """One scheduler wake: for every non-paused project, run whichever kinds are
-    due. Meant to be called by the timer loop below."""
+    due. Meant to be called by the timer loop below.
+
+    Two independent, project-scoped pause switches gate this, neither of which
+    ever blocks a manual "run now" trigger (run_curation_activity): Project.paused_at
+    (also stops the worker orchestrator and Reviver) skips the project outright;
+    ProjectCurationState.paused_at skips just the curator for this project, and its
+    disabled_kinds skips individual ActivityKinds while the rest stay on schedule."""
     async with async_session_factory() as session:
         projects = await project_service.list_projects(session)
         due: list[tuple[str, ActivityKind, str | None]] = []
         for project in projects:
             if project.paused_at is not None:
                 continue
+            curation_state = await project_service.get_curation_state(session, project.id)
+            if curation_state is not None and curation_state.paused_at is not None:
+                continue
+            disabled_kinds = set(curation_state.disabled_kinds) if curation_state else set()
             for kind in ActivityKind:
+                if kind.value in disabled_kinds:
+                    continue
                 should_run, extra_context = await _needs_run(session, project, kind)
                 if should_run:
                     due.append((project.id, kind, extra_context))

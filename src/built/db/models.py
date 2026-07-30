@@ -160,6 +160,27 @@ class ProjectActivityRun(Base):
     last_result_summary: Mapped[str | None] = mapped_column(Text, default=None)
 
 
+class ProjectCurationState(Base):
+    """Curator on/off state for one project — a separate concern from
+    Project.paused_at, which also stops the worker orchestrator and Reviver.
+    paused_at here pauses only the curator's automatic scheduler (orchestrator/
+    curator.py's run_curator_once) for the whole project; disabled_kinds turns off
+    individual ActivityKinds while leaving the rest on the schedule. Neither ever
+    blocks a human's manual "run now" trigger (run_curation_activity) — only the
+    automatic scheduler loop reads this row. A project with no row here is fully
+    active, nothing paused or disabled — see project_service.get_curation_state.
+
+    A new table rather than new columns on Project deliberately: this app has no
+    migration framework (db/base.py's create_all() only creates missing tables), so
+    a new table needs no manual ALTER TABLE against an already-deployed database."""
+
+    __tablename__ = "project_curation_states"
+
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), primary_key=True)
+    paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    disabled_kinds: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+
 class CurationEvent(Base):
     """Append-only transcript for curation passes (agent/curation.py) — mirrors
     CardEvent's shape, but scoped to (project, kind) rather than card_id: a

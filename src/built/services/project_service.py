@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from built.config import settings
-from built.db.models import CurationEvent, DeployConfig, Project, ProjectActivityRun
+from built.db.models import CurationEvent, DeployConfig, Project, ProjectActivityRun, ProjectCurationState
 from built.domain.enums import ActivityKind, DeployKind, DeployMode
 
 
@@ -117,6 +117,57 @@ async def resume_project(session: AsyncSession, project_id: str) -> Project:
     project.paused_at = None
     await session.flush()
     return project
+
+
+async def get_curation_state(session: AsyncSession, project_id: str) -> ProjectCurationState | None:
+    """None means fully active — nothing paused, no kind disabled (see
+    ProjectCurationState's docstring). Callers that need concrete paused_at/
+    disabled_kinds values should treat a None row the same as one with both unset."""
+    return await session.get(ProjectCurationState, project_id)
+
+
+async def _get_or_create_curation_state(session: AsyncSession, project_id: str) -> ProjectCurationState:
+    state = await session.get(ProjectCurationState, project_id)
+    if state is None:
+        state = ProjectCurationState(project_id=project_id)
+        session.add(state)
+        await session.flush()
+    return state
+
+
+async def pause_curation(session: AsyncSession, project_id: str) -> ProjectCurationState:
+    """Pauses only the curator's automatic scheduler for this project — the worker
+    orchestrator and Reviver keep running, unlike pause_project. A human's manual
+    "run now" trigger still always fires (see ProjectCurationState's docstring)."""
+    state = await _get_or_create_curation_state(session, project_id)
+    state.paused_at = datetime.now(UTC)
+    await session.flush()
+    return state
+
+
+async def resume_curation(session: AsyncSession, project_id: str) -> ProjectCurationState:
+    state = await _get_or_create_curation_state(session, project_id)
+    state.paused_at = None
+    await session.flush()
+    return state
+
+
+async def set_curation_kind_enabled(
+    session: AsyncSession, project_id: str, kind: ActivityKind, *, enabled: bool
+) -> ProjectCurationState:
+    """Turns one ActivityKind on/off in the automatic scheduler for this project,
+    independent of the others and of pause_curation's project-wide switch. Always
+    reassigns a new list (rather than mutating disabled_kinds in place) — JSON
+    columns aren't change-tracked on in-place mutation, only on reassignment."""
+    state = await _get_or_create_curation_state(session, project_id)
+    disabled = set(state.disabled_kinds)
+    if enabled:
+        disabled.discard(kind.value)
+    else:
+        disabled.add(kind.value)
+    state.disabled_kinds = sorted(disabled)
+    await session.flush()
+    return state
 
 
 async def get_activity_last_run(

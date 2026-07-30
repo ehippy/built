@@ -41,6 +41,8 @@ def _describe_curation_event(event: CurationEvent) -> str:
 
 async def _curation_statuses(session: SessionDep, project_id: str) -> list[dict]:
     runs = await project_service.list_activity_runs(session, project_id)
+    curation_state = await project_service.get_curation_state(session, project_id)
+    disabled_kinds = set(curation_state.disabled_kinds) if curation_state else set()
     statuses = []
     for kind in ActivityKind:
         running = is_curation_running(project_id, kind)
@@ -53,6 +55,7 @@ async def _curation_statuses(session: SessionDep, project_id: str) -> list[dict]
             {
                 "kind": kind.value,
                 "label": _CURATION_LABELS[kind],
+                "enabled": kind.value not in disabled_kinds,
                 "running": running,
                 "current_activity": current_activity,
                 "last_run_at": runs[kind].last_run_at if kind in runs else None,
@@ -67,10 +70,17 @@ async def board(project_id: str, request: Request, session: SessionDep, show_arc
     project = await project_service.get_project(session, project_id)
     board = await card_service.get_board(session, project_id, include_archived=show_archived)
     statuses = await _curation_statuses(session, project_id)
+    curation_state = await project_service.get_curation_state(session, project_id)
     return templates.TemplateResponse(
         request,
         "board.html.j2",
-        {"project": project, "board": board, "show_archived": show_archived, "statuses": statuses},
+        {
+            "project": project,
+            "board": board,
+            "show_archived": show_archived,
+            "statuses": statuses,
+            "curation_paused_at": curation_state.paused_at if curation_state else None,
+        },
     )
 
 
@@ -82,15 +92,6 @@ async def board_fragment(project_id: str, request: Request, session: SessionDep,
         request,
         "_board_fragment.html.j2",
         {"project": project, "board": board, "show_archived": show_archived},
-    )
-
-
-@router.get("/projects/{project_id}/curation-status/fragment")
-async def curation_status_fragment(project_id: str, request: Request, session: SessionDep):
-    project = await project_service.get_project(session, project_id)
-    statuses = await _curation_statuses(session, project_id)
-    return templates.TemplateResponse(
-        request, "_curation_status_fragment.html.j2", {"project": project, "statuses": statuses}
     )
 
 
@@ -106,6 +107,39 @@ async def create_card(
         session, project_id, title=title, raw_request=raw_request, priority=Priority(priority)
     )
     return RedirectResponse(f"/ui/projects/{project_id}/board", status_code=303)
+
+
+@router.post("/projects/{project_id}/curation/pause")
+async def pause_curation(project_id: str, session: SessionDep, request: Request) -> RedirectResponse:
+    await project_service.pause_curation(session, project_id)
+    return RedirectResponse(
+        request.headers.get("referer") or f"/ui/projects/{project_id}/board", status_code=303
+    )
+
+
+@router.post("/projects/{project_id}/curation/resume")
+async def resume_curation(project_id: str, session: SessionDep, request: Request) -> RedirectResponse:
+    await project_service.resume_curation(session, project_id)
+    return RedirectResponse(
+        request.headers.get("referer") or f"/ui/projects/{project_id}/board", status_code=303
+    )
+
+
+@router.post("/projects/{project_id}/curation/kinds/{kind}")
+async def set_curation_kind_enabled(
+    project_id: str,
+    kind: ActivityKind,
+    session: SessionDep,
+    request: Request,
+    enabled: bool = Form(False),
+) -> RedirectResponse:
+    """Backs each kind's checkbox in the board's Curation panel. A checkbox omits
+    its form field entirely when unchecked (not "false"), which is exactly what
+    Form(False)'s default handles — no explicit off-value needed on the input."""
+    await project_service.set_curation_kind_enabled(session, project_id, kind, enabled=enabled)
+    return RedirectResponse(
+        request.headers.get("referer") or f"/ui/projects/{project_id}/board", status_code=303
+    )
 
 
 @router.post("/projects/{project_id}/curate/{kind}")

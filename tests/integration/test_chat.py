@@ -157,6 +157,120 @@ async def test_chat_update_ticket_missing_card_yields_error_tool_result_not_exce
     assert "no-such-card" in tool_result.content
 
 
+async def test_chat_search_tickets_finds_matching_card_by_keyword(db_session, toy_repo_remote):
+    project, wt_path = await _make_project(db_session, toy_repo_remote, _n="3a")
+    match = await card_service.create_card(
+        db_session, project.id, title="Fix login bug", raw_request="Users can't log in on mobile."
+    )
+    await card_service.create_card(db_session, project.id, title="Add dark mode", raw_request="unrelated")
+    await chat_service.append_user_message(db_session, project.id, content="what's up with that login bug?")
+    await db_session.commit()
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(id="call_1", name="search_tickets", arguments={"query": "login"})
+                ],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(content="Found it — still open.", tool_calls=[], endpoint_used="fake::model"),
+        ]
+    )
+
+    appended = await run_chat_turn(
+        db_session, project, llm_client=llm, dispatcher=_dispatcher(wt_path), max_tool_iterations=10
+    )
+
+    tool_result = next(m for m in appended if m.role == ChatRole.TOOL)
+    assert not tool_result.is_error
+    assert match.id in tool_result.content
+    assert "Add dark mode" not in tool_result.content
+
+
+async def test_chat_search_tickets_lists_recent_when_query_empty(db_session, toy_repo_remote):
+    project, wt_path = await _make_project(db_session, toy_repo_remote, _n="3b")
+    card = await card_service.create_card(db_session, project.id, title="Add dark mode", raw_request="r")
+    await chat_service.append_user_message(db_session, project.id, content="what's already on the board?")
+    await db_session.commit()
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[ToolCallRequest(id="call_1", name="search_tickets", arguments={})],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(content="Just one card so far.", tool_calls=[], endpoint_used="fake::model"),
+        ]
+    )
+
+    appended = await run_chat_turn(
+        db_session, project, llm_client=llm, dispatcher=_dispatcher(wt_path), max_tool_iterations=10
+    )
+
+    tool_result = next(m for m in appended if m.role == ChatRole.TOOL)
+    assert not tool_result.is_error
+    assert card.id in tool_result.content
+
+
+async def test_chat_get_ticket_returns_full_detail(db_session, toy_repo_remote):
+    project, wt_path = await _make_project(db_session, toy_repo_remote, _n="3c")
+    card = await card_service.create_card(
+        db_session, project.id, title="Fix login bug", raw_request="Users can't log in on mobile."
+    )
+    await chat_service.append_user_message(db_session, project.id, content="what does that card say exactly?")
+    await db_session.commit()
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[ToolCallRequest(id="call_1", name="get_ticket", arguments={"card_id": card.id})],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(content="Here's what it says.", tool_calls=[], endpoint_used="fake::model"),
+        ]
+    )
+
+    appended = await run_chat_turn(
+        db_session, project, llm_client=llm, dispatcher=_dispatcher(wt_path), max_tool_iterations=10
+    )
+
+    tool_result = next(m for m in appended if m.role == ChatRole.TOOL)
+    assert not tool_result.is_error
+    assert "Users can't log in on mobile." in tool_result.content
+    assert "pm" in tool_result.content
+
+
+async def test_chat_get_ticket_missing_card_yields_error_tool_result(db_session, toy_repo_remote):
+    project, wt_path = await _make_project(db_session, toy_repo_remote, _n="3d")
+    await chat_service.append_user_message(db_session, project.id, content="show me that other card")
+    await db_session.commit()
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(id="call_1", name="get_ticket", arguments={"card_id": "no-such-card"})
+                ],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(content="Couldn't find that one.", tool_calls=[], endpoint_used="fake::model"),
+        ]
+    )
+
+    appended = await run_chat_turn(
+        db_session, project, llm_client=llm, dispatcher=_dispatcher(wt_path), max_tool_iterations=10
+    )
+
+    tool_result = next(m for m in appended if m.role == ChatRole.TOOL)
+    assert tool_result.is_error
+    assert "no-such-card" in tool_result.content
+
+
 async def test_chat_no_op_guard_when_history_already_ends_on_assistant(db_session, toy_repo_remote):
     project, wt_path = await _make_project(db_session, toy_repo_remote, _n="4")
     await chat_service.append_user_message(db_session, project.id, content="hello")

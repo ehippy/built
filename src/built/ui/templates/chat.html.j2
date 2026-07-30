@@ -17,7 +17,7 @@
   </form>
 </div>
 
-<div class="card card-body mb-4">
+<div id="chat-scroll" class="card card-body mb-4" style="height: min(65vh, 640px); overflow-y: auto;">
   {% include "_chat_fragment.html.j2" %}
 </div>
 
@@ -27,4 +27,30 @@
   </div>
   <button class="btn btn-primary" type="submit">Send</button>
 </form>
+
+<script>
+  // The transcript scrolls inside #chat-scroll rather than the whole page — keep it
+  // pinned to the bottom on load and on every htmx poll, but only while the human
+  // hasn't scrolled up to read earlier messages (tracked via their own scrolling).
+  (function () {
+    var box = document.getElementById("chat-scroll");
+    var stickToBottom = true;
+
+    function nearBottom() {
+      return box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+    }
+
+    function scrollToBottom() {
+      box.scrollTop = box.scrollHeight;
+    }
+
+    box.addEventListener("scroll", function () {
+      stickToBottom = nearBottom();
+    });
+    document.body.addEventListener("htmx:afterSwap", function (evt) {
+      if (evt.target.id === "chat-transcript" && stickToBottom) scrollToBottom();
+    });
+    scrollToBottom();
+  })();
+</script>
 {% endblock %}

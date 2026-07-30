@@ -176,11 +176,43 @@ async def _dispatch(
     *,
     tickets_created: int,
 ) -> tuple[str, bool, str | None]:
-    """Read-only browsing tools go through the shared, DB-agnostic ToolDispatcher
-    (same as every other column); create_ticket/update_ticket are dispatched here
-    instead, inline, because they need `session` and card_service — the first case
-    in this codebase of one tool-call batch needing both a worktree-scoped
-    dispatcher AND direct DB access."""
+    """Repo-browsing tools go through the shared, DB-agnostic ToolDispatcher (same
+    as every other column); search_tickets/get_ticket/create_ticket/update_ticket
+    are dispatched here instead, inline, because they need `session` and
+    card_service — the first case in this codebase of one tool-call batch needing
+    both a worktree-scoped dispatcher AND direct DB access."""
+    if name == "search_tickets":
+        query = str(arguments.get("query", "")).strip()
+        include_archived = bool(arguments.get("include_archived", False))
+        cards = await card_service.search_cards(
+            session, project.id, query=query, include_archived=include_archived
+        )
+        if not cards:
+            return (f"No cards matched {query!r}." if query else "No cards yet."), False, None
+        lines = [
+            f"[{c.id}] {c.title!r} — column={c.column.value}, priority={c.priority.value}, "
+            f"status={c.lifecycle_state.value}"
+            for c in cards
+        ]
+        return "\n".join(lines), False, None
+    if name == "get_ticket":
+        card_id = str(arguments.get("card_id", "")).strip()
+        if not card_id:
+            return "card_id is required.", True, None
+        try:
+            card = await card_service.get_card(session, card_id)
+        except card_service.NotFoundError:
+            return f"no such card: {card_id!r}", True, None
+        criteria = "\n".join(f"- {c}" for c in card.acceptance_criteria) or "(none yet)"
+        output = (
+            f"Card {card.id}: {card.title!r}\n"
+            f"Column: {card.column.value} · Priority: {card.priority.value} · "
+            f"Status: {card.lifecycle_state.value}\n"
+            f"Request: {card.raw_request}\n"
+            f"Spec: {card.spec or '(no spec yet)'}\n"
+            f"Acceptance criteria:\n{criteria}"
+        )
+        return output, False, None
     if name == "create_ticket":
         if tickets_created >= MAX_TICKETS_PER_CHAT_TURN:
             return f"reached this turn's limit of {MAX_TICKETS_PER_CHAT_TURN} new tickets.", True, None

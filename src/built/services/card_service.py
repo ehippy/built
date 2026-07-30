@@ -2,7 +2,7 @@ import logging
 import re
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -101,6 +101,30 @@ async def list_cards(session: AsyncSession, project_id: str, *, include_archived
     stmt = select(Card).where(Card.project_id == project_id).order_by(Card.created_at)
     if not include_archived:
         stmt = stmt.where(Card.archived_at.is_(None))
+    return list((await session.scalars(stmt)).all())
+
+
+async def search_cards(
+    session: AsyncSession,
+    project_id: str,
+    *,
+    query: str = "",
+    include_archived: bool = False,
+    limit: int = 20,
+) -> list[Card]:
+    """Case-insensitive substring match over title and raw_request, newest first —
+    agent/chat.py's search_tickets tool, so the chat LLM can find a card a human
+    references by description rather than needing its id up front. Empty query
+    lists the most recent cards instead of searching, same idea as
+    list_recent_card_titles but returning full rows (with ids) capped much lower,
+    since chat renders each match as a line rather than just a title."""
+    stmt = select(Card).where(Card.project_id == project_id)
+    if not include_archived:
+        stmt = stmt.where(Card.archived_at.is_(None))
+    if query:
+        pattern = f"%{query}%"
+        stmt = stmt.where(or_(Card.title.ilike(pattern), Card.raw_request.ilike(pattern)))
+    stmt = stmt.order_by(Card.created_at.desc()).limit(limit)
     return list((await session.scalars(stmt)).all())
 
 

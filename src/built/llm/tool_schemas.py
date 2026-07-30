@@ -579,11 +579,66 @@ UPDATE_TICKET = {
     },
 }
 
-# Project chat (agent/chat.py) — read-only browsing plus create_ticket/update_ticket, which
-# are ordinary (non-terminal) tools here: a chat turn ends when the model replies with no
-# further tool calls, not by calling a designated "done" tool, so the conversation stays
-# open after a card is filed or edited.
-CHAT_TOOLS = [READ_FILE, LIST_FILES, GLOB_FILES, GREP_FILES, CREATE_TICKET, UPDATE_TICKET]
+SEARCH_TICKETS = {
+    "type": "function",
+    "function": {
+        "name": "search_tickets",
+        "description": (
+            "Search or list cards already on this project's board — use this to find the card a "
+            "human is referring to (by title or description keywords) before discussing or editing "
+            "it, rather than guessing its id. Matches against title and request text, "
+            "case-insensitive. Leave query empty to list the most recently created cards instead of "
+            "searching. Returns a short line per match (id, title, column, priority, status) — call "
+            "get_ticket with a specific id for the full request text before editing it."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search text to match against title/request, empty to list recent cards.",
+                },
+                "include_archived": {
+                    "type": "boolean",
+                    "description": "Include archived cards in results. Defaults to false.",
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
+GET_TICKET = {
+    "type": "function",
+    "function": {
+        "name": "get_ticket",
+        "description": (
+            "Fetch one card's full detail by id — title, request text, spec (if PM has already "
+            "written one), column, priority, and status. Use this after search_tickets to see "
+            "exactly what a card currently says before discussing or editing it."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {"card_id": {"type": "string", "description": "The card to fetch."}},
+            "required": ["card_id"],
+        },
+    },
+}
+
+# Project chat (agent/chat.py) — read-only browsing plus search_tickets/get_ticket/
+# create_ticket/update_ticket, all ordinary (non-terminal) tools: a chat turn ends when the
+# model replies with no further tool calls, not by calling a designated "done" tool, so the
+# conversation stays open after a card is looked up, filed, or edited.
+CHAT_TOOLS = [
+    READ_FILE,
+    LIST_FILES,
+    GLOB_FILES,
+    GREP_FILES,
+    SEARCH_TICKETS,
+    GET_TICKET,
+    CREATE_TICKET,
+    UPDATE_TICKET,
+]
 
 APPROVE = {
     "type": "function",

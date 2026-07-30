@@ -64,6 +64,20 @@ async def ensure_tool_worktree(project: Project, *, tool: str) -> Path:
         wt_path.parent.mkdir(parents=True, exist_ok=True)
         await run_git("worktree", "add", "-b", branch, str(wt_path), project.default_branch, cwd=bare_path)
     else:
+        # A prior visit may have left this worktree mid-merge and never finished it
+        # — deploy_runner.py deliberately leaves a conflict unresolved so the agent
+        # can fix it across tool calls within that same visit, and anything that cuts
+        # the visit short before that happens (a human cancelling the card, a crash)
+        # abandons it there instead. `git checkout` refuses to run at all while the
+        # index still has unresolved merge entries, even onto the branch already
+        # checked out ("you need to resolve your current index first") — confirmed
+        # live: one cancelled auto_main merge wedged every subsequent Deployer visit
+        # for every card in the project behind that one abandoned conflict. `reset
+        # --hard` + `clean -fd` clear MERGE_HEAD and any leftover index/working-tree/
+        # untracked state unconditionally — unlike checkout, neither refuses
+        # mid-merge — so run them first; they're a no-op when nothing was left stuck.
+        await run_git("reset", "--hard", cwd=wt_path)
+        await run_git("clean", "-fd", cwd=wt_path)
         # Bare-repo branches live under refs/heads/*, not refs/remotes/origin/* (see
         # module docstring) — ensure_managed_clone's fetch above already updated
         # refs/heads/<default_branch> directly, so reset targets the plain branch

@@ -104,3 +104,49 @@ async def test_tool_worktrees_are_independent_and_coexist(toy_repo_remote):
     # than erroring or re-creating it.
     deployer_path_again = await worktree.ensure_tool_worktree(project, tool="deployer")
     assert deployer_path_again == deployer_path
+
+
+async def test_ensure_tool_worktree_self_heals_after_abandoned_merge_conflict(toy_repo_remote):
+    """Regression: deploy_runner.py deliberately leaves a real merge conflict
+    unresolved in the tool worktree so the Deployer agent can fix it across tool
+    calls within one visit — but if that visit ends without finishing (a human
+    cancelling the card, a crash), nothing used to clean it up. Every subsequent
+    ensure_tool_worktree call for the project then failed at `git checkout`
+    ("you need to resolve your current index first"), wedging every card that
+    reached Deployer behind that one abandoned conflict. ensure_tool_worktree must
+    recover on its own, with no manual git intervention."""
+    project = Project(id="proj-wt-heal", repo_remote_url=str(toy_repo_remote), default_branch="main")
+
+    wt_path = await worktree.ensure_tool_worktree(project, tool="deployer")
+    bare_path = await worktree.ensure_managed_clone(project)
+
+    # A branch that conflicts with app.py's content on main.
+    conflict_wt = wt_path.parent / "conflict-source"
+    await git_tools.run_git(
+        "worktree", "add", "-b", "conflicting-branch", str(conflict_wt), "main", cwd=bare_path
+    )
+    (conflict_wt / "app.py").write_text("def greet():\n    return 'conflicting'\n")
+    await git_tools.commit_all(conflict_wt, message="conflicting change")
+
+    # Simulate the abandoned auto_main merge: start a merge that genuinely
+    # conflicts, and leave it exactly as a cancelled visit would — no abort, no
+    # resolution, nothing committed.
+    (wt_path / "app.py").write_text("def greet():\n    return 'unresolved local change'\n")
+    await git_tools.commit_all(wt_path, message="local change on tool branch")
+    try:
+        await git_tools.run_git(
+            "merge", "--no-ff", "-m", "merge attempt", "conflicting-branch", cwd=wt_path
+        )
+        raise AssertionError("expected this merge to conflict")
+    except git_tools.GitCommandError:
+        pass
+    assert await git_tools.merge_in_progress(wt_path)
+
+    # The next visit's setup call must not raise, and must leave the worktree clean
+    # and reset to the tip of default_branch — not still holding the conflict.
+    healed_path = await worktree.ensure_tool_worktree(project, tool="deployer")
+
+    assert healed_path == wt_path
+    assert not await git_tools.merge_in_progress(wt_path)
+    assert await git_tools.status(wt_path) == ""
+    assert (wt_path / "app.py").read_text() == "def greet():\n    return 'hi'\n"

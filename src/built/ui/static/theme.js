@@ -1,3 +1,8 @@
+// Bootstrap 5.3+ reads color mode off data-bs-theme (set on <html>, applied
+// before first paint in base.html.j2's inline script) rather than following
+// prefers-color-scheme on its own — so unlike a plain CSS media query, "no
+// explicit choice yet" still needs resolving to a concrete light/dark value
+// here, not just left unset.
 (function () {
   "use strict";
   var STORAGE_KEY = "built-theme";
@@ -19,14 +24,18 @@
   toggle.addEventListener("click", function () {
     var next = effectiveTheme() === "dark" ? "light" : "dark";
     localStorage.setItem(STORAGE_KEY, next);
-    document.documentElement.setAttribute("data-theme", next);
+    document.documentElement.setAttribute("data-bs-theme", next);
     render();
   });
 
-  // Live-update the icon (not the page, which already tracks the system via the
-  // CSS media query) if the OS theme changes while no explicit choice is stored.
+  // Live-update the icon and the page itself if the OS theme changes while no
+  // explicit choice is stored (Bootstrap won't do this on its own — it only
+  // reacts to data-bs-theme, not the media query).
   systemPrefersDark.addEventListener("change", function () {
-    if (!localStorage.getItem(STORAGE_KEY)) render();
+    if (!localStorage.getItem(STORAGE_KEY)) {
+      document.documentElement.setAttribute("data-bs-theme", effectiveTheme());
+      render();
+    }
   });
 
   render();

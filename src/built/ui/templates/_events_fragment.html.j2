@@ -1,60 +1,63 @@
-<div id="transcript" class="transcript" hx-get="/ui/cards/{{ card.id }}/events/fragment" hx-trigger="every 2s" hx-swap="outerHTML">
+{% set type_color = {"tool_call": "primary", "transition": "success", "error": "danger", "compaction": "secondary", "llm_response": "secondary", "system_note": "secondary"} %}
+<div id="transcript" class="d-flex flex-column gap-2" hx-get="/ui/cards/{{ card.id }}/events/fragment" hx-trigger="every 2s" hx-swap="outerHTML">
   {% for event in events %}
-  <div class="event type-{{ event.type }}" id="event-{{ event.seq }}" hx-preserve="true">
-    <div class="event-head">
+  <div class="event card border-{{ type_color.get(event.type, "secondary") }}" id="event-{{ event.seq }}" hx-preserve="true">
+    <div class="card-body py-2 px-3 small">
+    <div class="event-head d-flex justify-content-between text-body-secondary text-uppercase small mb-1">
       <span>#{{ event.seq }} · {{ event.type }}</span>
       <span>{{ event.created_at|timeago }}</span>
     </div>
     {% if event.type == "llm_response" %}
-      {% if event.payload.content %}<pre>{{ event.payload.content }}</pre>{% endif %}
-      {% if event.payload.tool_calls %}<div class="hint">tool calls: {{ event.payload.tool_calls|join(", ") }}</div>{% endif %}
+      {% if event.payload.content %}<pre class="mb-0">{{ event.payload.content }}</pre>{% endif %}
+      {% if event.payload.tool_calls %}<div class="text-body-secondary">tool calls: {{ event.payload.tool_calls|join(", ") }}</div>{% endif %}
     {% elif event.type == "tool_call" and event.payload.name == "update_plan" and event.payload.arguments.steps %}
-      <div class="hint"><strong>Plan updated</strong>{% if event.payload.is_error %} (error){% endif %}</div>
-      <ul class="plan-list">
+      <div class="mb-1"><strong>Plan updated</strong>{% if event.payload.is_error %} (error){% endif %}</div>
+      <ul class="list-group list-group-flush">
         {% for step in event.payload.arguments.steps %}
-        <li class="plan-step plan-status-{{ step.status }}">{{ step.step }}</li>
+        <li class="list-group-item plan-status-{{ step.status }} {% if step.status == 'done' %}list-group-item-success text-decoration-line-through{% elif step.status == 'in_progress' %}list-group-item-primary{% endif %}">{{ step.step }}</li>
         {% endfor %}
       </ul>
     {% elif event.type == "tool_call" and event.payload.name == "bash" %}
-      <div class="hint"><strong>bash</strong>{% if event.payload.is_error %} (error){% endif %}</div>
-      <pre class="bash-command">$ {{ event.payload.arguments.command }}</pre>
-      <details class="collapsible">
-        <summary>Output ({{ event.payload.result|length }} chars){% if event.payload.is_error %} ⚠{% endif %}</summary>
-        <pre>{{ event.payload.result }}</pre>
+      <div class="mb-1"><strong>bash</strong>{% if event.payload.is_error %} (error){% endif %}</div>
+      <pre class="bash-command bg-body-secondary p-2 rounded">$ {{ event.payload.arguments.command }}</pre>
+      <details>
+        <summary class="text-body-secondary">Output ({{ event.payload.result|length }} chars){% if event.payload.is_error %} ⚠{% endif %}</summary>
+        <pre class="mb-0">{{ event.payload.result }}</pre>
       </details>
     {% elif event.type == "tool_call" %}
       {% set descriptor = event.payload.arguments|tool_descriptor %}
-      <div class="hint"><strong>{{ event.payload.name }}({{ descriptor }})</strong>{% if event.payload.is_error %} (error){% endif %}</div>
-      <details class="collapsible">
-        <summary>Output ({{ event.payload.result|length }} chars){% if event.payload.is_error %} ⚠{% endif %}</summary>
-        <pre>{{ event.payload.result }}</pre>
+      <div class="mb-1"><strong>{{ event.payload.name }}({{ descriptor }})</strong>{% if event.payload.is_error %} (error){% endif %}</div>
+      <details>
+        <summary class="text-body-secondary">Output ({{ event.payload.result|length }} chars){% if event.payload.is_error %} ⚠{% endif %}</summary>
+        <pre class="mb-0">{{ event.payload.result }}</pre>
       </details>
     {% elif event.type == "transition" %}
-      <div class="hint">{{ event.payload.column }} &rarr; {{ event.payload.outcome }}</div>
-      <pre>{{ event.payload.summary }}</pre>
-      {% if event.payload.feedback %}<pre>{{ event.payload.feedback }}</pre>{% endif %}
+      <div class="mb-1">{{ event.payload.column }} &rarr; {{ event.payload.outcome }}</div>
+      <pre class="mb-0">{{ event.payload.summary }}</pre>
+      {% if event.payload.feedback %}<pre class="mb-0">{{ event.payload.feedback }}</pre>{% endif %}
     {% elif event.type == "compaction" %}
-      <div class="hint">
+      <div class="mb-1">
         <strong>Context compacted</strong>
         — {{ event.payload.messages_before }} &rarr; {{ event.payload.messages_after }} messages
         ({{ event.payload.tokens_before }} &rarr; {{ event.payload.tokens_after }} est. tokens)
       </div>
       {% if event.payload.summary %}
-      <details class="collapsible">
-        <summary>Summary of dropped turns ({{ event.payload.summary|length }} chars)</summary>
-        <pre>{{ event.payload.summary }}</pre>
+      <details>
+        <summary class="text-body-secondary">Summary of dropped turns ({{ event.payload.summary|length }} chars)</summary>
+        <pre class="mb-0">{{ event.payload.summary }}</pre>
       </details>
       {% else %}
-      <div class="hint">Older turns were dropped without a summary (too little to summarize, or summarization failed).</div>
+      <div class="text-body-secondary">Older turns were dropped without a summary (too little to summarize, or summarization failed).</div>
       {% endif %}
     {% else %}
-      <pre>{{ event.payload }}</pre>
+      <pre class="mb-0">{{ event.payload }}</pre>
     {% endif %}
+    </div>
   </div>
   {% else %}
-  <p class="subtitle">No activity yet.</p>
+  <p class="text-body-secondary">No activity yet.</p>
   {% endfor %}
   {% if card.is_being_worked %}
-  <div class="thinking"><span class="spinner"></span> Agent is working…</div>
+  <div class="text-body-secondary fst-italic d-flex align-items-center gap-2"><span class="spinner-border spinner-border-sm"></span> Agent is working…</div>
   {% endif %}
 </div>

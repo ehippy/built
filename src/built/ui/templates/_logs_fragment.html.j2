@@ -1,12 +1,17 @@
-<div id="logs" class="log-view" hx-get="/ui/logs/fragment" hx-trigger="every 2s" hx-swap="outerHTML">
-  {% for log in logs %}
-  <div class="log-line level-{{ log.level|lower }}" id="log-{{ log.seq }}">
-    <span class="log-time">{{ log.created_at|clocktime }}</span>
-    <span class="log-level">{{ log.level }}</span>
-    <span class="log-name">{{ log.logger_name }}</span>
-    <span class="log-message">{{ log.message }}</span>
-  </div>
-  {% else %}
-  <p class="subtitle">No log activity yet.</p>
-  {% endfor %}
+{% set level_variant = {"warning": "warning", "error": "danger", "critical": "danger"} %}
+<div id="logs" class="table-responsive" hx-get="/ui/logs/fragment" hx-trigger="every 2s" hx-swap="outerHTML">
+  <table class="table table-sm table-hover font-monospace small mb-0">
+    <tbody>
+    {% for log in logs %}
+    <tr id="log-{{ log.seq }}" class="{% if level_variant.get(log.level|lower) %}table-{{ level_variant[log.level|lower] }}{% endif %}">
+      <td class="text-body-secondary text-nowrap">{{ log.created_at|clocktime }}</td>
+      <td class="text-nowrap fw-bold">{{ log.level }}</td>
+      <td class="text-body-secondary text-nowrap">{{ log.logger_name }}</td>
+      <td class="w-100" style="white-space: pre-wrap;">{{ log.message }}</td>
+    </tr>
+    {% else %}
+    <tr><td class="text-body-secondary">No log activity yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
 </div>

@@ -1,11 +1,9 @@
 {% extends "base.html.j2" %}
 {% block title %}Logs{% endblock %}
 {% block content %}
-<div class="page-header">
-  <div>
-    <h1>Logs</h1>
-    <p class="subtitle">Background activity across every project — worker claims, Reviver/Curator/archiver passes, and crash recovery. In-memory only, so this clears on restart.</p>
-  </div>
+<div class="mb-4">
+  <h1>Logs</h1>
+  <p class="text-body-secondary">Background activity across every project — worker claims, Reviver/Curator/archiver passes, and crash recovery. In-memory only, so this clears on restart.</p>
 </div>
 {% include "_logs_fragment.html.j2" %}
 {% endblock %}

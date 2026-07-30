@@ -38,7 +38,7 @@ async def test_done_cards_are_collapsed_separately_from_in_flight_cards(db_sessi
     assert "1 done" in page.text
     assert "Still deploying" in page.text
     assert "Already shipped" in page.text
-    assert 'class="collapsible"' in page.text
+    assert 'data-column="deployer"' in page.text
     # The done card's tile sits after the "1 done" summary, inside the <details>.
     assert page.text.index("1 done") < page.text.index("Already shipped")
 

@@ -2,13 +2,14 @@
 {% block title %}Global Defaults{% endblock %}
 {% block content %}
 <h1>Global default endpoints</h1>
-<p class="subtitle">
+<p class="text-body-secondary">
   Used by any project (and role) that doesn't define its own endpoint chain. Lower priority number = tried first;
   if the first entry's request fails, the next one in the chain is tried automatically.
 </p>
 
 {% if endpoint_configs %}
-<table>
+<div class="table-responsive">
+<table class="table table-striped align-middle">
   <thead><tr><th>Role</th><th>Base URL</th><th>Model</th><th>Priority</th><th>Max concurrency</th><th>Context window</th><th>Enabled</th><th></th></tr></thead>
   <tbody>
   {% for ep in endpoint_configs %}
@@ -19,36 +20,37 @@
       <td>{{ ep.priority }}</td>
       <td>{{ ep.max_concurrency }}</td>
       <td>
-        <form class="inline" method="post" action="/ui/endpoint-configs/{{ ep.id }}/context-window?next=/ui/endpoint-configs">
-          <input type="number" name="context_window" min="1" value="{{ ep.context_window or default_max_tokens }}" class="context-window-input">
-          <button class="btn secondary small" type="submit">Save</button>
+        <form class="d-flex gap-1" method="post" action="/ui/endpoint-configs/{{ ep.id }}/context-window?next=/ui/endpoint-configs">
+          <input class="form-control form-control-sm" type="number" name="context_window" min="1" value="{{ ep.context_window or default_max_tokens }}" style="width: 8rem;">
+          <button class="btn btn-secondary btn-sm" type="submit">Save</button>
         </form>
-        {% if not ep.context_window %}<div class="hint">unset — using app default</div>{% endif %}
+        {% if not ep.context_window %}<div class="form-text">unset — using app default</div>{% endif %}
       </td>
       <td>{{ "yes" if ep.enabled else "no" }}</td>
       <td>
-        <form class="inline" method="post" action="/ui/endpoint-configs/{{ ep.id }}/toggle?next=/ui/endpoint-configs">
-          <button class="btn secondary small" type="submit">{{ "Disable" if ep.enabled else "Enable" }}</button>
+        <form class="d-inline" method="post" action="/ui/endpoint-configs/{{ ep.id }}/toggle?next=/ui/endpoint-configs">
+          <button class="btn btn-secondary btn-sm" type="submit">{{ "Disable" if ep.enabled else "Enable" }}</button>
         </form>
-        <form class="inline" method="post" action="/ui/endpoint-configs/{{ ep.id }}/delete?next=/ui/endpoint-configs">
-          <button class="btn danger small" type="submit">Delete</button>
+        <form class="d-inline" method="post" action="/ui/endpoint-configs/{{ ep.id }}/delete?next=/ui/endpoint-configs">
+          <button class="btn btn-danger btn-sm" type="submit">Delete</button>
         </form>
       </td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
-<p class="subtitle">No global endpoints configured yet.</p>
+<p class="text-body-secondary">No global endpoints configured yet.</p>
 {% endif %}
 
-<div class="panel">
-  <h2>Add global endpoint</h2>
+<div class="card card-body mb-4">
+  <h2 class="h5">Add global endpoint</h2>
   <form method="post" action="/ui/endpoint-configs">
-    <div class="field-row">
-      <div class="field">
-        <label for="role">Role</label>
-        <select id="role" name="role">
+    <div class="row g-2 mb-3">
+      <div class="col">
+        <label class="form-label" for="role">Role</label>
+        <select class="form-select" id="role" name="role">
           <option value="">All roles</option>
           <option value="pm">Product Manager</option>
           <option value="developer">Developer</option>
@@ -57,35 +59,35 @@
           <option value="deployer">Deployer</option>
         </select>
       </div>
-      <div class="field">
-        <label for="priority">Priority</label>
-        <input type="number" id="priority" name="priority" value="0">
+      <div class="col">
+        <label class="form-label" for="priority">Priority</label>
+        <input class="form-control" type="number" id="priority" name="priority" value="0">
       </div>
     </div>
-    <div class="field">
-      <label for="base_url">Base URL</label>
-      <input type="text" id="base_url" name="base_url" required placeholder="http://localhost:11434/v1">
+    <div class="mb-3">
+      <label class="form-label" for="base_url">Base URL</label>
+      <input class="form-control" type="text" id="base_url" name="base_url" required placeholder="http://localhost:11434/v1">
     </div>
-    <div class="field">
-      <label for="model">Model</label>
-      <input type="text" id="model" name="model" required placeholder="Qwen3.6-35B-A3B-GGUF">
+    <div class="mb-3">
+      <label class="form-label" for="model">Model</label>
+      <input class="form-control" type="text" id="model" name="model" required placeholder="Qwen3.6-35B-A3B-GGUF">
     </div>
-    <div class="field">
-      <label for="api_key_ref">API key env var (optional)</label>
-      <input type="text" id="api_key_ref" name="api_key_ref" placeholder="OPENAI_API_KEY">
-      <div class="hint">Name of an environment variable on the server — never the raw key.</div>
+    <div class="mb-3">
+      <label class="form-label" for="api_key_ref">API key env var (optional)</label>
+      <input class="form-control" type="text" id="api_key_ref" name="api_key_ref" placeholder="OPENAI_API_KEY">
+      <div class="form-text">Name of an environment variable on the server — never the raw key.</div>
     </div>
-    <div class="field">
-      <label for="max_concurrency">Max concurrency</label>
-      <input type="number" id="max_concurrency" name="max_concurrency" min="1" value="1">
-      <div class="hint">Max simultaneous requests this backend should ever receive from this app, shared across every project/role that resolves to it. A single local model instance can rarely usefully handle more than 1 at once; raise it for a hosted/scaled endpoint.</div>
+    <div class="mb-3">
+      <label class="form-label" for="max_concurrency">Max concurrency</label>
+      <input class="form-control" type="number" id="max_concurrency" name="max_concurrency" min="1" value="1">
+      <div class="form-text">Max simultaneous requests this backend should ever receive from this app, shared across every project/role that resolves to it. A single local model instance can rarely usefully handle more than 1 at once; raise it for a hosted/scaled endpoint.</div>
     </div>
-    <div class="field">
-      <label for="context_window">Context window (optional)</label>
-      <input type="number" id="context_window" name="context_window" min="1" placeholder="app default: {{ default_max_tokens }}">
-      <div class="hint">Total tokens this model actually supports. Left blank, projects resolving to this endpoint cap at the app default ({{ default_max_tokens }}) regardless of the model's real capacity.</div>
+    <div class="mb-3">
+      <label class="form-label" for="context_window">Context window (optional)</label>
+      <input class="form-control" type="number" id="context_window" name="context_window" min="1" placeholder="app default: {{ default_max_tokens }}">
+      <div class="form-text">Total tokens this model actually supports. Left blank, projects resolving to this endpoint cap at the app default ({{ default_max_tokens }}) regardless of the model's real capacity.</div>
     </div>
-    <button class="btn" type="submit">Add endpoint</button>
+    <button class="btn btn-primary" type="submit">Add endpoint</button>
   </form>
 </div>
 {% endblock %}

@@ -1,46 +1,47 @@
-<div id="projects-list" class="project-list" hx-get="/ui/projects/fragment" hx-trigger="every 3s" hx-swap="outerHTML">
+{% import "macros.html.j2" as m %}
+<div id="projects-list" hx-get="/ui/projects/fragment" hx-trigger="every 3s" hx-swap="outerHTML">
   {% for row in rows %}
   {% set project = row.project %}
   {% set activity = row.activity %}
-  <div class="project-card {% if project.paused_at %}paused-card{% elif activity.is_being_worked %}active-card{% endif %}">
-    <a class="project-card-link" href="/ui/projects/{{ project.id }}/board">
-      <div class="project-card-header">
+  <div class="card mb-3 {% if project.paused_at %}opacity-75{% endif %}">
+    <a class="text-decoration-none text-body card-body" href="/ui/projects/{{ project.id }}/board">
+      <div class="d-flex align-items-center gap-2">
         <strong>{{ project.name }}</strong>
-        {% if project.paused_at %}<span class="badge paused">paused</span>
-        {% elif activity.is_being_worked %}<span class="spinner" title="Something is actively being worked on right now"></span>{% endif %}
+        {% if project.paused_at %}{{ m.badge("paused") }}
+        {% elif activity.is_being_worked %}<span class="spinner-border spinner-border-sm" title="Something is actively being worked on right now"></span>{% endif %}
       </div>
-      <div class="goal">{{ project.overarching_goal }}</div>
-      <div class="project-stats">
+      <div class="text-body-secondary small">{{ project.overarching_goal }}</div>
+      <div class="d-flex flex-wrap gap-1 mt-2">
         {% if activity.total == 0 %}
-        <span class="hint">No cards yet</span>
+        <span class="text-body-secondary small">No cards yet</span>
         {% else %}
-        {% if activity.counts.active %}<span class="badge active">{{ activity.counts.active }} active</span>{% endif %}
-        {% if activity.counts.blocked %}<span class="badge blocked">{{ activity.counts.blocked }} blocked</span>{% endif %}
-        {% if activity.counts.done %}<span class="badge done">{{ activity.counts.done }} done</span>{% endif %}
-        {% if activity.counts.failed %}<span class="badge failed">{{ activity.counts.failed }} failed</span>{% endif %}
+        {% if activity.counts.active %}{{ m.badge("active", activity.counts.active ~ " active") }}{% endif %}
+        {% if activity.counts.blocked %}{{ m.badge("blocked", activity.counts.blocked ~ " blocked") }}{% endif %}
+        {% if activity.counts.done %}{{ m.badge("done", activity.counts.done ~ " done") }}{% endif %}
+        {% if activity.counts.failed %}{{ m.badge("failed", activity.counts.failed ~ " failed") }}{% endif %}
         {% endif %}
       </div>
       {% if activity.latest %}
-      <div class="project-commentary">
-        <span class="hint">{{ activity.latest.column }} &middot; {{ activity.latest.card_title }} &middot; {{ activity.latest.ended_at|timeago }}</span>
-        <p>{{ activity.latest.summary|truncate(180) }}</p>
+      <div class="border rounded p-2 mt-2">
+        <span class="text-body-secondary small">{{ activity.latest.column }} &middot; {{ activity.latest.card_title }} &middot; {{ activity.latest.ended_at|timeago }}</span>
+        <p class="mb-0 small">{{ activity.latest.summary|truncate(180) }}</p>
       </div>
       {% endif %}
-      <div class="project-meta">{{ project.updated_at|timeago }}</div>
+      <div class="text-body-secondary small mt-1">{{ project.updated_at|timeago }}</div>
     </a>
-    <div class="project-card-actions">
+    <div class="card-body pt-0 d-flex justify-content-end">
       {% if project.paused_at %}
       <form method="post" action="/ui/projects/{{ project.id }}/resume">
-        <button class="btn small secondary" type="submit">Resume</button>
+        <button class="btn btn-sm btn-secondary" type="submit">Resume</button>
       </form>
       {% else %}
       <form method="post" action="/ui/projects/{{ project.id }}/pause">
-        <button class="btn small secondary" type="submit">Pause</button>
+        <button class="btn btn-sm btn-secondary" type="submit">Pause</button>
       </form>
       {% endif %}
     </div>
   </div>
   {% else %}
-  <p class="subtitle">No projects yet — click "New project" above to create one.</p>
+  <p class="text-body-secondary">No projects yet — click "New project" above to create one.</p>
   {% endfor %}
 </div>

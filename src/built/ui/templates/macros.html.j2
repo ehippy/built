@@ -1,21 +1,25 @@
-{% macro badge(state) -%}
-<span class="badge {{ state }}">{{ state }}</span>
+{% set state_color = {"active": "primary", "blocked": "warning", "done": "success", "failed": "danger", "paused": "secondary", "watching-ci": "info", "priority-high": "danger", "priority-low": "secondary"} %}
+
+{% macro badge(state, label=none) -%}
+<span class="badge text-bg-{{ state_color.get(state, "secondary") }}">{{ label or state }}</span>
 {%- endmacro %}
 
 {% macro card_tile(card) -%}
-<a class="card-tile {{ card.lifecycle_state }} {% if card.is_being_worked %}active-card{% endif %} {% if card.archived_at %}archived-card{% endif %}" href="/ui/cards/{{ card.id }}">
-  <div class="title">
-    {{ card.title }}
-    {% if card.is_being_worked %}<span class="spinner" title="An agent is actively working on this card"></span>{% endif %}
+<a class="card mb-2 text-decoration-none border-{{ state_color.get(card.lifecycle_state, "secondary") }} {% if card.archived_at %}opacity-50{% endif %}" href="/ui/cards/{{ card.id }}">
+  <div class="card-body py-2 px-3">
+    <div class="d-flex align-items-center gap-2 fw-semibold">
+      {{ card.title }}
+      {% if card.is_being_worked %}<span class="spinner-border spinner-border-sm" title="An agent is actively working on this card"></span>{% endif %}
+    </div>
+    <div class="text-body-secondary small d-flex flex-wrap align-items-center gap-1 mt-1">
+      {% if card.priority != "normal" %}{{ badge("priority-" ~ card.priority, card.priority) }}{% endif %}
+      {{ badge(card.lifecycle_state) }}
+      {% if card.deploying_commit_sha %}{{ badge("watching-ci", "watching CI") }}{% endif %}
+      {% if card.archived_at %}{{ badge("paused", "archived") }}{% endif %}
+      {% if card.revision_count %}<span>· rev {{ card.revision_count }}</span>{% endif %}
+      {% if card.deploy_attempt_count %}<span>· deploy attempt {{ card.deploy_attempt_count }}</span>{% endif %}
+    </div>
+    <div class="text-body-secondary small mt-1">{{ card.last_activity_at|timeago }}</div>
   </div>
-  <div class="meta">
-    {% if card.priority != "normal" %}<span class="badge priority-{{ card.priority }}">{{ card.priority }}</span>{% endif %}
-    {{ badge(card.lifecycle_state) }}
-    {% if card.deploying_commit_sha %}<span class="badge watching-ci" title="Pushed to the default branch — waiting on CI to confirm before this card closes out">watching CI</span>{% endif %}
-    {% if card.archived_at %}<span class="badge paused">archived</span>{% endif %}
-    {% if card.revision_count %} · rev {{ card.revision_count }}{% endif %}
-    {% if card.deploy_attempt_count %} · deploy attempt {{ card.deploy_attempt_count }}{% endif %}
-  </div>
-  <div class="timestamp">{{ card.last_activity_at|timeago }}</div>
 </a>
 {%- endmacro %}

@@ -1,59 +1,59 @@
 {% extends "base.html.j2" %}
 {% block title %}{{ project.name }} · Board{% endblock %}
 {% block content %}
-<div class="tabs">
-  <a class="active" href="/ui/projects/{{ project.id }}/board">Board</a>
-  <a href="/ui/projects/{{ project.id }}/settings">Settings</a>
-  <a href="/ui/projects">&larr; All projects</a>
-</div>
+<ul class="nav nav-tabs mb-4">
+  <li class="nav-item"><a class="nav-link active" href="/ui/projects/{{ project.id }}/board">Board</a></li>
+  <li class="nav-item"><a class="nav-link" href="/ui/projects/{{ project.id }}/settings">Settings</a></li>
+  <li class="nav-item"><a class="nav-link" href="/ui/projects">&larr; All projects</a></li>
+</ul>
 
-<div class="page-header">
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
   <div>
     <h1>{{ project.name }}</h1>
-    <p class="subtitle">{{ project.overarching_goal }}</p>
+    <p class="text-body-secondary">{{ project.overarching_goal }}</p>
   </div>
-  <div class="page-header-actions">
-    <details class="action-disclosure">
-      <summary class="btn secondary">Curation</summary>
-      <div class="panel">
-        <p class="subtitle">Run a focused pass over the repo and propose cards for whatever it finds — nothing is ever edited directly, every kind only ever proposes new cards.</p>
-        <div class="curation-actions">
+  <div class="d-flex gap-2">
+    <details>
+      <summary class="btn btn-secondary">Curation</summary>
+      <div class="card card-body mt-2" style="min-width: 20rem;">
+        <p class="text-body-secondary">Run a focused pass over the repo and propose cards for whatever it finds — nothing is ever edited directly, every kind only ever proposes new cards.</p>
+        <div class="d-grid gap-2">
           <form method="post" action="/ui/projects/{{ project.id }}/curate/bug_sweep">
-            <button class="btn secondary" type="submit">Bug sweep</button>
+            <button class="btn btn-secondary w-100" type="submit">Bug sweep</button>
           </form>
           <form method="post" action="/ui/projects/{{ project.id }}/curate/opportunity_brainstorm">
-            <button class="btn secondary" type="submit">Opportunities</button>
+            <button class="btn btn-secondary w-100" type="submit">Opportunities</button>
           </form>
           <form method="post" action="/ui/projects/{{ project.id }}/curate/polish_review">
-            <button class="btn secondary" type="submit">Polish review</button>
+            <button class="btn btn-secondary w-100" type="submit">Polish review</button>
           </form>
           <form method="post" action="/ui/projects/{{ project.id }}/curate/agents_md">
-            <button class="btn secondary" type="submit">Tend AGENTS.md</button>
+            <button class="btn btn-secondary w-100" type="submit">Tend AGENTS.md</button>
           </form>
         </div>
       </div>
     </details>
-    <details class="action-disclosure">
-      <summary class="btn">New card</summary>
-      <div class="panel">
+    <details>
+      <summary class="btn btn-primary">New card</summary>
+      <div class="card card-body mt-2" style="min-width: 24rem;">
         <form method="post" action="/ui/projects/{{ project.id }}/cards">
-          <div class="field">
-            <label for="title">Title</label>
-            <input type="text" id="title" name="title" required placeholder="Add a health check endpoint">
+          <div class="mb-3">
+            <label class="form-label" for="title">Title</label>
+            <input class="form-control" type="text" id="title" name="title" required placeholder="Add a health check endpoint">
           </div>
-          <div class="field">
-            <label for="raw_request">Request</label>
-            <textarea id="raw_request" name="raw_request" required placeholder="Describe what you want built..."></textarea>
+          <div class="mb-3">
+            <label class="form-label" for="raw_request">Request</label>
+            <textarea class="form-control" id="raw_request" name="raw_request" required placeholder="Describe what you want built..."></textarea>
           </div>
-          <div class="field">
-            <label for="priority">Priority</label>
-            <select id="priority" name="priority">
+          <div class="mb-3">
+            <label class="form-label" for="priority">Priority</label>
+            <select class="form-select" id="priority" name="priority">
               <option value="high">High</option>
               <option value="normal" selected>Normal</option>
               <option value="low">Low</option>
             </select>
           </div>
-          <button class="btn" type="submit">Add to board</button>
+          <button class="btn btn-primary" type="submit">Add to board</button>
         </form>
       </div>
     </details>

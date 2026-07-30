@@ -117,9 +117,9 @@ async def test_update_plan_renders_as_a_checklist_not_a_generic_tool_result(db_s
     assert "Add _config.yml" in fragment.text
     assert "Convert games/index.html to use the games-index layout" in fragment.text
     assert "Update CI to build via Jekyll" in fragment.text
-    assert 'class="plan-step plan-status-done"' in fragment.text
-    assert 'class="plan-step plan-status-in_progress"' in fragment.text
-    assert 'class="plan-step plan-status-pending"' in fragment.text
+    assert "plan-status-done" in fragment.text
+    assert "plan-status-in_progress" in fragment.text
+    assert "plan-status-pending" in fragment.text
 
 
 async def test_bash_tool_call_shows_the_command_alongside_its_output(db_session):
@@ -146,7 +146,7 @@ async def test_bash_tool_call_shows_the_command_alongside_its_output(db_session)
         fragment = await client.get(f"/ui/cards/{card.id}/events/fragment")
 
     assert "bundle exec jekyll build --destination _site" in fragment.text
-    assert 'class="bash-command"' in fragment.text
+    assert "bash-command" in fragment.text
     # The output is still there too, just no longer the only thing shown.
     assert "Configuration file: /workspace/_config.yml" in fragment.text
 

@@ -1,36 +1,38 @@
 {% import "macros.html.j2" as m %}
 <div id="board-wrap" hx-get="/ui/projects/{{ project.id }}/board/fragment?show_archived={{ 'true' if show_archived else 'false' }}" hx-trigger="every 3s" hx-swap="outerHTML">
-  <p class="hint show-archived-toggle">
+  <p class="mb-3">
     {% if show_archived %}
     <a href="/ui/projects/{{ project.id }}/board">Hide archived cards</a>
     {% else %}
     <a href="/ui/projects/{{ project.id }}/board?show_archived=true">Show archived cards</a>
     {% endif %}
   </p>
-  <div id="board" class="board">
+  <div id="board" class="row row-cols-1 row-cols-md-3 row-cols-lg-5 g-3">
     {% for column, label in [("pm", "Product Manager"), ("developer", "Developer"), ("tester", "Tester"), ("reviewer", "Reviewer"), ("deployer", "Deployer")] %}
     {% set in_flight = board[column]|rejectattr("lifecycle_state", "equalto", "done")|list %}
     {% set done = board[column]|selectattr("lifecycle_state", "equalto", "done")|list %}
-    <div class="column">
-      <div class="column-header">
-        <span>{{ label }}</span>
-        <span>{{ board[column]|length }}</span>
+    <div class="col">
+      <div class="bg-body-tertiary rounded p-2 h-100">
+        <div class="d-flex justify-content-between align-items-baseline fw-bold text-uppercase small text-body-secondary px-1 pb-2">
+          <span>{{ label }}</span>
+          <span>{{ board[column]|length }}</span>
+        </div>
+        {% if in_flight %}
+          {% for card in in_flight %}
+            {{ m.card_tile(card) }}
+          {% endfor %}
+        {% elif not done %}
+          <div class="text-body-secondary small px-1 py-2">No cards</div>
+        {% endif %}
+        {% if done %}
+        <details data-column="{{ column }}">
+          <summary class="text-body-secondary small">{{ done|length }} done</summary>
+          {% for card in done %}
+            {{ m.card_tile(card) }}
+          {% endfor %}
+        </details>
+        {% endif %}
       </div>
-      {% if in_flight %}
-        {% for card in in_flight %}
-          {{ m.card_tile(card) }}
-        {% endfor %}
-      {% elif not done %}
-        <div class="empty-column">No cards</div>
-      {% endif %}
-      {% if done %}
-      <details class="collapsible" data-column="{{ column }}">
-        <summary>{{ done|length }} done</summary>
-        {% for card in done %}
-          {{ m.card_tile(card) }}
-        {% endfor %}
-      </details>
-      {% endif %}
     </div>
     {% endfor %}
   </div>

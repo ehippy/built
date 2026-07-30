@@ -30,6 +30,10 @@ def _tool(content: str, tool_call_id: str = "tc1") -> dict:
     return {"role": "tool", "tool_call_id": tool_call_id, "content": content}
 
 
+def _tool_call(name: str, arguments: str, tool_call_id: str = "tc1") -> dict:
+    return {"id": tool_call_id, "type": "function", "function": {"name": name, "arguments": arguments}}
+
+
 class StubLLMClient:
     def __init__(self, summary: str = "summarized"):
         self._summary = summary
@@ -212,29 +216,72 @@ class TestCompactSummarization:
 
 class TestCompactToolResultTrimming:
     @pytest.mark.asyncio
-    async def test_trims_oversized_tool_args(self):
+    async def test_trims_an_oversized_tool_result_without_summarizing(self):
+        """Regression: this trim pass used to only ever inspect assistant
+        tool_calls' *arguments* (what a model sent as input to a tool, e.g.
+        review_diff's `{}` — essentially never large) instead of `tool`-role
+        messages' *content* (an actual tool result — a diff, a file read, bash
+        output — which is where real bloat lives). Confirmed in production: a
+        ~13k-token request was rejected by the model server as needing 8.4M
+        tokens, and this no-op trim step was silently never engaging on the
+        20KB diff result that was the only large thing in the conversation."""
         config = ContextWindowConfig(
             max_tokens=64_000,
-            keep_messages=4,
+            keep_messages=1,
             max_tool_result_chars=100,
         )
-        msgs = [_system("system"), _user("user"), _assistant("ok"), _tool("ok")]
-        big_args = '{"command": "' + "a" * 19_980 + '"}'
-        msgs.append(
-            _assistant(
-                "thinking...",
-                tool_calls=[
-                    {
-                        "id": "tc1",
-                        "type": "function",
-                        "function": {"name": "bash", "arguments": big_args},
-                    }
-                ],
-            )
-        )
+        big_result = "x" * 250_000  # ~62.5k estimated tokens on its own
+        msgs = [
+            _system("system"),
+            _user("user"),
+            _assistant("thinking...", tool_calls=[_tool_call("bash", "{}")]),
+            _tool(big_result, tool_call_id="tc1"),
+            _assistant("ok"),
+        ]
 
         client = StubLLMClient()
-        client._summary = "summary"
-        result, _event = await compact(msgs, client, config, "test-model")
-        # Should not crash; result may be trimmed or summarized
-        assert len(result) <= len(msgs)
+        result, event = await compact(msgs, client, config, "test-model")
+
+        # Trimmed cheaply — the summarizer (an extra real LLM call) was never
+        # needed, and never invoked.
+        assert client.calls == []
+        assert event is not None
+        assert event.summary is None
+        trimmed_tool_msg = next(m for m in result if m.get("role") == "tool")
+        assert len(trimmed_tool_msg["content"]) < len(big_result)
+        assert "truncated from 250000 chars" in trimmed_tool_msg["content"]
+        # Pinned prefix and the tail both survive untouched.
+        assert result[0] == msgs[0]
+        assert result[1] == msgs[1]
+        assert result[-1] == msgs[-1]
+
+    @pytest.mark.asyncio
+    async def test_does_not_trim_large_tool_call_arguments(self):
+        """The inverse of the regression above: large assistant tool_call
+        *arguments* are deliberately left alone by this trim pass — they're
+        rarely the source of real bloat, and conflating them with tool results
+        was the original bug. A conversation whose only bloat is oversized
+        arguments should fall through to full summarization instead."""
+        config = ContextWindowConfig(
+            max_tokens=64_000,
+            keep_messages=1,
+            max_tool_result_chars=100,
+        )
+        big_args = '{"content": "' + "a" * 250_000 + '"}'
+        msgs = [
+            _system("system"),
+            _user("user"),
+            _assistant("thinking...", tool_calls=[_tool_call("write_file", big_args)]),
+            _tool("ok", tool_call_id="tc1"),
+            _assistant("ok"),
+        ]
+
+        client = StubLLMClient(summary="summary")
+        result, event = await compact(msgs, client, config, "test-model")
+
+        # Not trimmed (arguments are never touched) — fell through to the
+        # summarizer instead, which is why this call actually happened.
+        assert len(client.calls) == 1
+        assert event is not None
+        assert event.summary == "summary"
+        assert len(result) < len(msgs)

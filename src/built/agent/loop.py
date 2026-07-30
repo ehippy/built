@@ -198,7 +198,14 @@ async def run_column_visit(
             messages.append(
                 {
                     "role": "assistant",
-                    "content": result.content,
+                    # None, not "" — the OpenAI spec's own shape for a pure
+                    # tool-call turn is content: null. Confirmed in production:
+                    # a self-hosted GGUF model's chat template treated an empty
+                    # *string* here (which is what the endpoint itself often
+                    # returns for a tool-only response, not None) pathologically —
+                    # a ~13k-token request came back rejected as needing 8.4M
+                    # tokens, consistently, only on turns shaped exactly like this.
+                    "content": result.content or None,
                     "tool_calls": [
                         {
                             "id": tc.id,

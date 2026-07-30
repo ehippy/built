@@ -215,17 +215,23 @@ async def compact(
             summary=summary,
         )
 
-    # If tool results in the middle segment are very large, try trimming them first.
+    # If any tool RESULT in the middle segment is very large, try trimming it
+    # first — cheaper than a full LLM summarization pass below, and often
+    # enough on its own. Targets role == "tool" messages' `content`, which is
+    # where actual tool output lives (a read_file/bash/review_diff result) —
+    # confirmed this previously targeted assistant tool_calls' *arguments*
+    # instead (what a model sent as *input* to a tool, e.g. review_diff's
+    # `{}` — essentially never large), making this trim step a no-op for the
+    # actual common case of a large tool result.
     trimmed = False
     for msg in middle:
-        if msg["role"] == "assistant":
-            for tc in msg.get("tool_calls") or []:
-                args = tc.get("function", {}).get("arguments", "{}")
-                if len(args) > config.max_tool_result_chars:
-                    tc["function"]["arguments"] = (
-                        args[: config.max_tool_result_chars] + f"... [truncated from {len(args)} chars]"
-                    )
-                    trimmed = True
+        if msg["role"] == "tool":
+            content = msg.get("content") or ""
+            if len(content) > config.max_tool_result_chars:
+                msg["content"] = (
+                    content[: config.max_tool_result_chars] + f"... [truncated from {len(content)} chars]"
+                )
+                trimmed = True
     if trimmed:
         trimmed_token_count = estimate_tokens(pinned + middle + tail)
         if trimmed_token_count <= budget * 0.85 + 1000:

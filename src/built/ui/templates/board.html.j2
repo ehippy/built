@@ -33,11 +33,34 @@
       <button class="btn btn-outline-secondary" type="submit" title="Pause to stop the orchestrator from claiming new cards for this project"><i class="bi bi-pause-fill"></i> Pause</button>
     </form>
     {% endif %}
-    <div class="dropdown">
-      <button class="btn btn-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
-        Curation
-      </button>
-      <div class="dropdown-menu p-3" style="min-width: 27rem;">
+    <button class="btn {{ 'btn-secondary' if curation_paused_at else 'btn-success' }} d-flex align-items-center gap-2" type="button" data-bs-toggle="modal" data-bs-target="#curation-modal">
+      Curation
+      <span id="curation-button-spinner">
+        {% if curation_running %}
+        <span class="spinner-border spinner-border-sm" role="status">
+          <span class="visually-hidden">Running…</span>
+        </span>
+        {% endif %}
+      </span>
+    </button>
+    <button class="btn btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#new-card-modal">
+      New card
+    </button>
+  </div>
+</div>
+
+{% include "_epics_fragment.html.j2" %}
+
+{% include "_board_fragment.html.j2" %}
+
+<div class="modal fade" id="curation-modal" tabindex="-1" aria-labelledby="curation-modal-label" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="curation-modal-label">Curation</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
         <p class="text-body-secondary">Run a focused pass over the repo and propose cards for whatever it finds — nothing is ever edited directly, every kind only ever proposes new cards. Uncheck a kind to take it off the automatic schedule; "Run now" always works regardless.</p>
         <div class="d-flex align-items-center justify-content-between border rounded p-2 mb-2">
           <span class="small">
@@ -79,12 +102,18 @@
         {% endfor %}
       </div>
     </div>
-    <div class="dropdown">
-      <button class="btn btn-primary dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
-        New card
-      </button>
-      <div class="dropdown-menu dropdown-menu-end p-3" style="min-width: 24rem;">
-        <form method="post" action="/ui/projects/{{ project.id }}/cards">
+  </div>
+</div>
+
+<div class="modal fade" id="new-card-modal" tabindex="-1" aria-labelledby="new-card-modal-label" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="new-card-modal-label">New card</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <form method="post" action="/ui/projects/{{ project.id }}/cards">
+        <div class="modal-body">
           <div class="mb-3">
             <label class="form-label" for="title">Title</label>
             <input class="form-control" type="text" id="title" name="title" required placeholder="Add a health check endpoint">
@@ -101,16 +130,15 @@
               <option value="low">Low</option>
             </select>
           </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" type="button" data-bs-dismiss="modal">Cancel</button>
           <button class="btn btn-primary" type="submit">Add to board</button>
-        </form>
-      </div>
+        </div>
+      </form>
     </div>
   </div>
 </div>
-
-{% include "_epics_fragment.html.j2" %}
-
-{% include "_board_fragment.html.j2" %}
 
 <div class="offcanvas offcanvas-end" tabindex="-1" id="card-offcanvas" style="width: min(48rem, 100vw);">
   <div class="offcanvas-header border-bottom">

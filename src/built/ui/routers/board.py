@@ -42,6 +42,13 @@ def _describe_curation_event(event: CurationEvent) -> str:
     return "thinking…"
 
 
+def _any_curation_running(project_id: str) -> bool:
+    """Cheap, in-memory-only check (is_curation_running just tests set membership,
+    no DB query) — used to drive the Curation button's spinner on the board's
+    existing 3s poll without adding a DB round trip to that cadence."""
+    return any(is_curation_running(project_id, kind) for kind in ActivityKind)
+
+
 async def _curation_statuses(session: SessionDep, project_id: str) -> list[dict]:
     runs = await project_service.list_activity_runs(session, project_id)
     curation_state = await project_service.get_curation_state(session, project_id)
@@ -83,6 +90,7 @@ async def board(project_id: str, request: Request, session: SessionDep, show_arc
             "board": board,
             "show_archived": show_archived,
             "statuses": statuses,
+            "curation_running": _any_curation_running(project_id),
             "curation_paused_at": curation_state.paused_at if curation_state else None,
             "epics": epics,
             "current_epic_id": project.current_epic_id,
@@ -97,7 +105,13 @@ async def board_fragment(project_id: str, request: Request, session: SessionDep,
     return templates.TemplateResponse(
         request,
         "_board_fragment.html.j2",
-        {"project": project, "board": board, "show_archived": show_archived},
+        {
+            "project": project,
+            "board": board,
+            "show_archived": show_archived,
+            "curation_running": _any_curation_running(project_id),
+            "is_polling_fragment": True,
+        },
     )
 
 

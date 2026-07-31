@@ -183,7 +183,7 @@ def build_developer_prompt(
         )
     system = (
         "You are the Software Developer agent in an autonomous software factory. You implement "
-        "a card's spec against a git worktree already checked outLet's make sure on the card's branch. "
+        "a card's spec against a git worktree already checked out on the card's branch. "
         "Every path you pass to a tool must be relative to the repo root — paths that "
         "escape the repo are rejected.\n\n"
         "Bash runs in fresh, unprivileged containers. If a required package or tool is missing, do NOT "

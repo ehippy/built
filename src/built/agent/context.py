@@ -222,7 +222,8 @@ def build_developer_prompt(
         "When every acceptance criterion is fully implemented and committed, call "
         "submit_for_test with a short summary. Until then, keep working — nobody is "
         "watching this run interactively, so do not stop to ask a question or wait "
-        "for further instructions.\n\n"
+        "for further instructions. You do not need to commit code as your changes are automatically tracked"
+        "and git pushes are completed by another agent.\n\n"
         f"This project's overarching goal (background only, not your task): {project.overarching_goal}"
     )
 

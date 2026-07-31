@@ -237,7 +237,11 @@ BUILD_SANDBOX = {
     "type": "function",
     "function": {
         "name": "build_sandbox",
-        "description": "Build and select Dockerfile.built-sandbox from the repository root for later bash calls.",
+        "description": (
+            "Build and select Dockerfile.built-sandbox from the repository root for later bash calls. "
+            "Use it after a missing package/tool error or after changing that Dockerfile; rerun the "
+            "failed command after this tool succeeds."
+        ),
         "parameters": {"type": "object", "properties": {}},
     },
 }

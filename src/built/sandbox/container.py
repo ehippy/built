@@ -58,6 +58,7 @@ class DockerCommandExecutor:
     def __init__(self, image: str = DEFAULT_IMAGE, *, network_disabled: bool = False):
         self.image = image
         self.network_disabled = network_disabled
+        self._built_sandbox_fingerprint: tuple[str, str] | None = None
 
     async def run(
         self, *, worktree: Path, command: str, timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
@@ -84,7 +85,20 @@ class DockerCommandExecutor:
         except docker.errors.DockerException as exc:
             raise DockerDaemonAccessError(f"Unable to build Dockerfile.built-sandbox: {exc}") from exc
         self.image = tag
+        self._built_sandbox_fingerprint = (
+            str(worktree.resolve()),
+            hashlib.sha256(dockerfile.read_bytes()).hexdigest(),
+        )
         return tag
+
+    def _ensure_worktree_sandbox(self, worktree: Path) -> None:
+        """Prefer a repository's opt-in sandbox image over the configured default."""
+        dockerfile = worktree / "Dockerfile.built-sandbox"
+        if not dockerfile.is_file():
+            return
+        fingerprint = (str(worktree.resolve()), hashlib.sha256(dockerfile.read_bytes()).hexdigest())
+        if fingerprint != self._built_sandbox_fingerprint:
+            self._build_sandbox_sync(worktree)
 
     def _run_sync(self, worktree: Path, command: str, timeout_seconds: int) -> CommandResult:
         import docker
@@ -98,6 +112,7 @@ class DockerCommandExecutor:
                 "restart the service after changing its group membership. "
                 f"Docker reported: {exc}"
             ) from exc
+        self._ensure_worktree_sandbox(worktree)
         container = None
         try:
             container = client.containers.run(

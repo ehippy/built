@@ -9,10 +9,10 @@ from built.ui.templates import templates
 router = APIRouter(prefix="/ui", tags=["ui"])
 
 
-@router.get("/cards/{card_id}")
-async def card_detail(card_id: str, request: Request, session: SessionDep):
+async def _card_detail_context(session: SessionDep, card_id: str) -> dict:
+    """Shared by the full-page card_detail view and the board's slide-over panel —
+    both render the same _card_detail_body.html.j2 partial off the same data."""
     card = await card_service.get_card(session, card_id, with_last_activity=True)
-    project = await project_service.get_project(session, card.project_id)
     visits = await card_service.list_column_visits(session, card_id)
     events = await card_service.list_recent_events(session, card_id, limit=200)
     is_epic = await card_service.is_epic(session, card_id)
@@ -22,28 +22,38 @@ async def card_detail(card_id: str, request: Request, session: SessionDep):
     )
     dependencies = await card_service.list_dependencies(session, card_id)
     dependents = await card_service.list_dependents(session, card_id)
-    return templates.TemplateResponse(
-        request,
-        "card_detail.html.j2",
-        {
-            "card": card,
-            "project": project,
-            "visits": visits,
-            "events": events,
-            "is_epic": is_epic,
-            "epic_parent": epic_parent,
-            "epic_children": epic_children,
-            "dependencies": dependencies,
-            "dependents": dependents,
-        },
-    )
+    return {
+        "card": card,
+        "visits": visits,
+        "events": events,
+        "is_epic": is_epic,
+        "epic_parent": epic_parent,
+        "epic_children": epic_children,
+        "dependencies": dependencies,
+        "dependents": dependents,
+    }
+
+
+@router.get("/cards/{card_id}")
+async def card_detail(card_id: str, request: Request, session: SessionDep):
+    context = await _card_detail_context(session, card_id)
+    project = await project_service.get_project(session, context["card"].project_id)
+    return templates.TemplateResponse(request, "card_detail.html.j2", {**context, "project": project})
+
+
+@router.get("/cards/{card_id}/panel")
+async def card_detail_panel(card_id: str, request: Request, session: SessionDep):
+    context = await _card_detail_context(session, card_id)
+    return templates.TemplateResponse(request, "_card_detail_panel.html.j2", context)
 
 
 @router.get("/cards/{card_id}/events/fragment")
 async def card_events_fragment(card_id: str, request: Request, session: SessionDep):
     card = await card_service.get_card(session, card_id)
     events = await card_service.list_recent_events(session, card_id, limit=200)
-    return templates.TemplateResponse(request, "_events_fragment.html.j2", {"card": card, "events": events})
+    return templates.TemplateResponse(
+        request, "_events_fragment.html.j2", {"card": card, "events": events, "is_polling_fragment": True}
+    )
 
 
 @router.post("/cards/{card_id}/retry")

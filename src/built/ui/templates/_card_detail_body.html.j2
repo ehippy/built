@@ -1,0 +1,263 @@
+{% import "macros.html.j2" as m %}
+<div class="mb-3">
+  <p class="d-flex flex-wrap align-items-center gap-1">
+    {{ m.badge(card.lifecycle_state) }}
+    <span class="badge text-bg-secondary">{{ card.column }}</span>
+    {% if card.priority != "normal" %}{{ m.badge("priority-" ~ card.priority, card.priority ~ " priority") }}{% endif %}
+    {% if card.archived_at %}{{ m.badge("paused", "archived") }}{% endif %}
+    {% if card.branch_name %}· <code>{{ card.branch_name }}</code>{% endif %}
+  </p>
+  <p class="text-body-secondary small">Last updated {{ card.last_activity_at|timeago }}</p>
+</div>
+
+<!-- Every action this page offers lives here, in one place, instead of scattered
+     next to whatever section happens to relate to it. -->
+<div class="d-flex flex-wrap align-items-center gap-2 mb-4">
+  <form method="post" action="/ui/cards/{{ card.id }}/priority">
+    <select class="form-select form-select-sm" name="priority" onchange="this.form.submit()">
+      <option value="high" {% if card.priority == "high" %}selected{% endif %}>High priority</option>
+      <option value="normal" {% if card.priority == "normal" %}selected{% endif %}>Normal priority</option>
+      <option value="low" {% if card.priority == "low" %}selected{% endif %}>Low priority</option>
+    </select>
+  </form>
+
+  {% if card.lifecycle_state in ("blocked", "failed") %}
+  <details>
+    <summary class="btn btn-primary btn-sm">Retry</summary>
+    <div class="card card-body mt-2" style="min-width: 24rem;">
+      <form method="post" action="/ui/cards/{{ card.id }}/retry">
+        <div class="mb-3">
+          <label class="form-label" for="note">Note for the next attempt (optional)</label>
+          <textarea class="form-control" id="note" name="note" placeholder="e.g. rebase onto main and resolve the conflict in index.html"></textarea>
+          <div class="form-text">Surfaced to whichever column runs next, then cleared — a one-shot instruction, not a standing rule.</div>
+        </div>
+        <button class="btn btn-primary" type="submit">Retry</button>
+      </form>
+      <p class="form-text mb-0">Resets the revision/deploy-attempt counters and makes the card claimable again — the one human touchpoint outside the autonomous pipeline.</p>
+    </div>
+  </details>
+  {% elif card.lifecycle_state == "active" %}
+  <details>
+    <summary class="btn btn-outline-secondary btn-sm">Nudge</summary>
+    <div class="card card-body mt-2" style="min-width: 24rem;">
+      <form method="post" action="/ui/cards/{{ card.id }}/nudge">
+        <div class="mb-3">
+          <label class="form-label" for="nudge-note">Note for the agent</label>
+          <textarea class="form-control" id="nudge-note" name="note" required placeholder="e.g. don't touch the payments module, that's handled elsewhere"></textarea>
+          <div class="form-text">Reaches the agent within one iteration if it's actively working this card right now, or at the start of its next visit otherwise — then it's cleared. Doesn't pause or reset anything.</div>
+        </div>
+        <button class="btn btn-outline-secondary" type="submit">Send nudge</button>
+      </form>
+    </div>
+  </details>
+  <form method="post" action="/ui/cards/{{ card.id }}/cancel" onsubmit="return confirm('Cancel this card?');">
+    <button class="btn btn-outline-danger btn-sm" type="submit">Cancel</button>
+  </form>
+  {% endif %}
+
+  <details>
+    <summary class="btn btn-secondary btn-sm">Edit</summary>
+    <div class="card card-body mt-2" style="min-width: 24rem;">
+      <form method="post" action="/ui/cards/{{ card.id }}/edit">
+        <div class="mb-3">
+          <label class="form-label" for="title">Title</label>
+          <input class="form-control" type="text" id="title" name="title" required value="{{ card.title }}">
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="raw_request">Request</label>
+          <textarea class="form-control" id="raw_request" name="raw_request" required>{{ card.raw_request }}</textarea>
+        </div>
+        <button class="btn btn-primary" type="submit">Save</button>
+      </form>
+    </div>
+  </details>
+
+  {% if card.archived_at %}
+  <form method="post" action="/ui/cards/{{ card.id }}/unarchive">
+    <button class="btn btn-secondary btn-sm" type="submit">Unarchive</button>
+  </form>
+  {% else %}
+  <form method="post" action="/ui/cards/{{ card.id }}/archive" onsubmit="return confirm('Archive this card? It will drop off the board until unarchived.');">
+    <button class="btn btn-secondary btn-sm" type="submit">Archive</button>
+  </form>
+  {% endif %}
+</div>
+
+<ul class="nav nav-tabs mb-3" id="card-detail-tabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="task-tab" data-bs-toggle="tab" data-bs-target="#task-pane" type="button" role="tab" aria-controls="task-pane" aria-selected="true">Task</button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="visits-tab" data-bs-toggle="tab" data-bs-target="#visits-pane" type="button" role="tab" aria-controls="visits-pane" aria-selected="false">Stages and Timing</button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link d-flex align-items-center gap-2" id="transcript-tab" data-bs-toggle="tab" data-bs-target="#transcript-pane" type="button" role="tab" aria-controls="transcript-pane" aria-selected="false">
+      Transcript
+      <span id="transcript-tab-spinner">
+        {% if card.is_being_worked %}
+        <span class="spinner-border spinner-border-sm" role="status">
+          <span class="visually-hidden">Working…</span>
+        </span>
+        {% endif %}
+      </span>
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content mb-4">
+  <div class="tab-pane fade show active" id="task-pane" role="tabpanel" aria-labelledby="task-tab" tabindex="0">
+    <div class="card card-body">
+      <h2 class="h5">Request</h2>
+      <div>{{ card.raw_request|markdown }}</div>
+
+      {% if card.spec %}
+      <h2 class="h5">Spec</h2>
+      <div>{{ card.spec|markdown }}</div>
+      <h2 class="h5">Acceptance criteria</h2>
+      <ul>
+        {% for c in card.acceptance_criteria %}<li>{{ c }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+
+      {% if card.latest_feedback %}
+      <h2 class="h5">Latest Tester feedback</h2>
+      <p>{{ card.latest_feedback }}</p>
+      {% endif %}
+
+      {% if card.retry_note %}
+      <h2 class="h5">Pending retry note</h2>
+      <p>{{ card.retry_note }}</p>
+      <p class="form-text">Will be shown to the agent on its next visit, then cleared.</p>
+      {% endif %}
+
+      {% if card.pending_nudge %}
+      <h2 class="h5">Pending nudge</h2>
+      <p>{{ card.pending_nudge }}</p>
+      <p class="form-text">Will reach the agent within one iteration if it's working now, or at the start of its next visit — then cleared.</p>
+      {% endif %}
+
+      <p class="form-text">Revision {{ card.revision_count }} · Deploy attempts {{ card.deploy_attempt_count }}</p>
+      {% if card.deploy_url %}
+      <p><a href="{{ card.deploy_url }}" target="_blank" rel="noopener">Deploy link &rarr;</a></p>
+      {% endif %}
+      {% if card.deploying_commit_sha %}
+      <p class="mb-0">
+        {{ m.badge("watching-ci", "watching CI") }}
+        Pushed as <code>{{ card.deploying_commit_sha[:8] }}</code> {{ card.deploying_since|timeago }} —
+        waiting on CI before this card closes out. Green advances it to done; red bounces it back to
+        Developer with the failure.
+      </p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="tab-pane fade" id="visits-pane" role="tabpanel" aria-labelledby="visits-tab" tabindex="0">
+    <div class="card card-body mb-3">
+      <div class="d-flex justify-content-between align-items-baseline flex-wrap gap-2">
+        <h2 class="h5 mb-0">Column visits</h2>
+        {% if visits %}
+        <span class="text-body-secondary small">
+          <i class="bi bi-stopwatch"></i> Wall clock {{ visits[0].started_at|duration(visits[-1].ended_at) }}
+          <span class="mx-2">·</span>
+          <i class="bi bi-cpu"></i> Working {{ visits|working_duration }}
+        </span>
+        {% endif %}
+      </div>
+      {% if visits %}
+      {% set column_order = {"pm": 0, "developer": 1, "tester": 2, "reviewer": 3, "deployer": 4} %}
+      {% set outcome_color = {"submitted": "primary", "split": "info", "epic_defined": "info", "approved": "success", "changes_requested": "warning", "done": "success", "deployed_pending_ci": "info", "failed": "danger", "deploy_conflict": "warning", "error": "danger", "interrupted": "secondary", "cancelled": "secondary"} %}
+      <div class="d-flex flex-wrap align-items-center gap-2 pb-2">
+        {% for v in visits %}
+        {% if not loop.first %}
+        {% set backward = column_order.get(v.column, 0) < column_order.get(loop.previtem.column, 0) %}
+        <div class="d-flex flex-column align-items-center justify-content-center flex-shrink-0" style="min-width: 2.5rem;">
+          <i class="bi {{ 'bi-arrow-return-left text-warning' if backward else 'bi-arrow-right text-body-secondary' }} fs-4"></i>
+          {% if backward %}<span class="text-warning small text-nowrap">sent back</span>{% endif %}
+        </div>
+        {% endif %}
+        <div class="card flex-shrink-0 border-{{ outcome_color.get(v.outcome, 'primary') }}" style="width: 18rem;">
+          <div class="card-body p-3 text-center">
+            <div class="fw-semibold text-capitalize">{{ v.column }}</div>
+            <div class="text-body-secondary small">attempt {{ v.attempt_number }}</div>
+            <div class="mt-1">
+              {% if v.outcome %}
+              <span class="badge text-bg-{{ outcome_color.get(v.outcome, 'secondary') }}">{{ v.outcome.replace("_", " ") }}</span>
+              {% else %}
+              <span class="badge text-bg-primary d-inline-flex align-items-center gap-1">
+                <span class="spinner-border spinner-border-sm" style="width: .55rem; height: .55rem; border-width: .15em;" role="status"></span>
+                in progress
+              </span>
+              {% endif %}
+            </div>
+            {% if v.summary %}<div class="text-body-secondary small clamp-3 mt-2 text-start" title="{{ v.summary }}">{{ v.summary }}</div>{% endif %}
+            <div class="text-body-secondary small mt-2">
+              {{ v.started_at|timeago }}
+              <span class="mx-1">·</span>
+              <i class="bi bi-stopwatch"></i> {{ v.started_at|duration(v.ended_at) }}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="text-body-secondary mb-0">This card hasn't been picked up by an agent yet.</p>
+      {% endif %}
+    </div>
+
+      {% if epic_parent or is_epic or dependencies or dependents %}
+        <div class="card card-body">
+          {% if epic_parent %}
+          <h2 class="h5">Epic</h2>
+          <p>Part of <a href="/ui/cards/{{ epic_parent.id }}">{{ epic_parent.title }}</a></p>
+          {% endif %}
+
+          {% if is_epic %}
+          <h2 class="h5">Epic</h2>
+          <p class="text-body-secondary small mb-1">
+            {{ epic_children|selectattr("lifecycle_state", "equalto", "done")|list|length }}/{{ epic_children|length }}
+            child cards done
+            {% if card.lifecycle_state == "active" %}— completes automatically once every child does{% endif %}
+          </p>
+          <ul class="list-group list-group-flush mb-0">
+            {% for child in epic_children %}
+            <li class="list-group-item px-0 d-flex justify-content-between align-items-center gap-2">
+              <a href="/ui/cards/{{ child.id }}" class="text-truncate">{{ child.title }}</a>
+              {{ m.badge(child.lifecycle_state) }}
+            </li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+
+          {% if dependencies %}
+          <h2 class="h5 mt-3">Depends on</h2>
+          <ul class="list-group list-group-flush mb-0">
+            {% for dep in dependencies %}
+            <li class="list-group-item px-0 d-flex justify-content-between align-items-center gap-2">
+              <a href="/ui/cards/{{ dep.id }}" class="text-truncate">{{ dep.title }}</a>
+              {% if dep.lifecycle_state == "done" or dep.archived_at %}{{ m.badge("done") }}
+              {% elif dep.lifecycle_state in ("blocked", "failed") %}{{ m.badge(dep.lifecycle_state) }}
+              {% else %}{{ m.badge("waiting") }}
+              {% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+
+          {% if dependents %}
+          <h2 class="h5 mt-3">Blocks</h2>
+          <ul class="list-group list-group-flush mb-0">
+            {% for dep in dependents %}
+            <li class="list-group-item px-0"><a href="/ui/cards/{{ dep.id }}">{{ dep.title }}</a></li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+        </div>
+      {% endif %}
+  </div>
+
+  <div class="tab-pane fade" id="transcript-pane" role="tabpanel" aria-labelledby="transcript-tab" tabindex="0">
+    <div class="card card-body">
+      {% include "_events_fragment.html.j2" %}
+    </div>
+  </div>
+</div>

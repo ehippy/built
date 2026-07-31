@@ -1,0 +1,5 @@
+<h5 class="offcanvas-title text-truncate" id="card-offcanvas-title" hx-swap-oob="true">{{ card.title }}</h5>
+<a id="card-offcanvas-open-link" href="/ui/cards/{{ card.id }}" hx-swap-oob="true" class="btn btn-sm btn-outline-secondary">
+  <i class="bi bi-box-arrow-up-right"></i>
+</a>
+{% include "_card_detail_body.html.j2" %}

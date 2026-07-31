@@ -111,4 +111,17 @@
 {% include "_epics_fragment.html.j2" %}
 
 {% include "_board_fragment.html.j2" %}
+
+<div class="offcanvas offcanvas-end" tabindex="-1" id="card-offcanvas" style="width: min(48rem, 100vw);">
+  <div class="offcanvas-header border-bottom">
+    <h5 class="offcanvas-title text-truncate" id="card-offcanvas-title">Card</h5>
+    <div class="d-flex align-items-center gap-2 flex-shrink-0 ms-auto">
+      <a href="/ui/cards/" id="card-offcanvas-open-link" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-box-arrow-up-right"></i>
+      </a>
+      <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+    </div>
+  </div>
+  <div class="offcanvas-body" id="card-offcanvas-body"></div>
+</div>
 {% endblock %}

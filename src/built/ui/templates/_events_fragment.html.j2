@@ -1,4 +1,13 @@
 {% set type_color = {"tool_call": "primary", "transition": "success", "error": "danger", "compaction": "secondary", "llm_response": "secondary", "system_note": "secondary"} %}
+{% if is_polling_fragment %}
+<span id="transcript-tab-spinner" hx-swap-oob="true">
+  {% if card.is_being_worked %}
+  <span class="spinner-border spinner-border-sm" role="status">
+    <span class="visually-hidden">Working…</span>
+  </span>
+  {% endif %}
+</span>
+{% endif %}
 <div id="transcript" class="d-flex flex-column gap-2" hx-get="/ui/cards/{{ card.id }}/events/fragment" hx-trigger="every 2s" hx-swap="outerHTML">
   {% if card.is_being_worked %}
   <div class="text-body-secondary fst-italic d-flex align-items-center gap-2">

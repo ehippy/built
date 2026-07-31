@@ -22,7 +22,6 @@ async def card_detail(card_id: str, request: Request, session: SessionDep):
     )
     dependencies = await card_service.list_dependencies(session, card_id)
     dependents = await card_service.list_dependents(session, card_id)
-    all_projects = await project_service.list_projects(session)
     return templates.TemplateResponse(
         request,
         "card_detail.html.j2",
@@ -36,7 +35,6 @@ async def card_detail(card_id: str, request: Request, session: SessionDep):
             "epic_children": epic_children,
             "dependencies": dependencies,
             "dependents": dependents,
-            "all_projects": all_projects,
         },
     )
 

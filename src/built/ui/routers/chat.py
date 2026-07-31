@@ -18,16 +18,10 @@ async def chat_page(project_id: str, request: Request, session: SessionDep):
     messages = await chat_service.list_recent_messages(
         session, project_id, cleared_before_seq=project.chat_cleared_before_seq or 0
     )
-    all_projects = await project_service.list_projects(session)
     return templates.TemplateResponse(
         request,
         "chat.html.j2",
-        {
-            "project": project,
-            "messages": messages,
-            "is_turn_running": is_chat_turn_running(project_id),
-            "all_projects": all_projects,
-        },
+        {"project": project, "messages": messages, "is_turn_running": is_chat_turn_running(project_id)},
     )
 
 

@@ -37,16 +37,24 @@ async def index() -> RedirectResponse:
 @router.get("/projects")
 async def list_projects(request: Request, session: SessionDep):
     rows = await _projects_with_activity(session)
-    all_projects = [row["project"] for row in rows]
-    return templates.TemplateResponse(
-        request, "projects_list.html.j2", {"rows": rows, "all_projects": all_projects}
-    )
+    return templates.TemplateResponse(request, "projects_list.html.j2", {"rows": rows})
 
 
 @router.get("/projects/fragment")
 async def projects_list_fragment(request: Request, session: SessionDep):
     rows = await _projects_with_activity(session)
     return templates.TemplateResponse(request, "_projects_list_fragment.html.j2", {"rows": rows})
+
+
+@router.get("/projects/nav-fragment")
+async def projects_nav_fragment(request: Request, session: SessionDep):
+    """The nav bar's Projects dropdown fetches this itself (see base.html.j2) —
+    it's the same list on every page regardless of which route rendered it, so
+    it has no business being plumbed through every UI route's context by hand."""
+    all_projects = await project_service.list_projects(session)
+    return templates.TemplateResponse(
+        request, "_projects_nav_fragment.html.j2", {"all_projects": all_projects}
+    )
 
 
 @router.post("/projects")
@@ -108,7 +116,6 @@ async def project_ci_status(project_id: str, request: Request, session: SessionD
 async def project_settings(project_id: str, request: Request, session: SessionDep):
     project = await project_service.get_project(session, project_id)
     endpoint_configs = await endpoint_service.list_endpoint_configs(session, project_id=project_id)
-    all_projects = await project_service.list_projects(session)
     return templates.TemplateResponse(
         request,
         "project_settings.html.j2",
@@ -117,7 +124,6 @@ async def project_settings(project_id: str, request: Request, session: SessionDe
             "endpoint_configs": endpoint_configs,
             "deploy_config": project.deploy_config,
             "default_max_tokens": settings.default_max_tokens,
-            "all_projects": all_projects,
         },
     )
 

@@ -75,7 +75,6 @@ async def board(project_id: str, request: Request, session: SessionDep, show_arc
     statuses = await _curation_statuses(session, project_id)
     curation_state = await project_service.get_curation_state(session, project_id)
     epics = await card_service.list_epics(session, project_id)
-    all_projects = await project_service.list_projects(session)
     return templates.TemplateResponse(
         request,
         "board.html.j2",
@@ -87,7 +86,6 @@ async def board(project_id: str, request: Request, session: SessionDep, show_arc
             "curation_paused_at": curation_state.paused_at if curation_state else None,
             "epics": epics,
             "current_epic_id": project.current_epic_id,
-            "all_projects": all_projects,
         },
     )
 

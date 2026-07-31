@@ -37,10 +37,8 @@
       <a class="navbar-brand" href="/ui/projects">built</a>
       <div class="navbar-nav">
         <div class="nav-item dropdown dropdown-hover">
-          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Projects</a>
-          <ul id="projects-nav-menu" class="dropdown-menu dropdown-menu-dark" hx-get="/ui/projects/nav-fragment" hx-trigger="load" hx-swap="outerHTML">
-            <li><a class="dropdown-item" href="/ui/projects">All projects</a></li>
-          </ul>
+          <a class="nav-link dropdown-toggle" href="/ui/projects">Projects</a>
+          <ul id="projects-nav-menu" class="dropdown-menu dropdown-menu-dark" hx-get="/ui/projects/nav-fragment" hx-trigger="load" hx-swap="outerHTML"></ul>
         </div>
       </div>
       {% block breadcrumb %}

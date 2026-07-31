@@ -105,6 +105,28 @@ GREP_FILES = {
     },
 }
 
+FETCH_DOCS = {
+    "type": "function",
+    "function": {
+        "name": "fetch_docs",
+        "description": (
+            "Fetch a page from the public internet and return its text content — use this to check "
+            "the real, current documentation for a third-party API, library, or framework before "
+            "writing or judging code against it, instead of relying on memory of its shape, which "
+            "can be outdated or wrong. Only http/https URLs that resolve to a public address are "
+            "allowed; internal, private, and loopback addresses are rejected, as are more than a "
+            "handful of redirects. Large pages are truncated."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "The full URL to fetch, including scheme."}
+            },
+            "required": ["url"],
+        },
+    },
+}
+
 WRITE_FILE = {
     "type": "function",
     "function": {
@@ -305,6 +327,7 @@ DEVELOPER_TOOLS = [
     LIST_FILES,
     GLOB_FILES,
     GREP_FILES,
+    FETCH_DOCS,
     WRITE_FILE,
     EDIT_FILE,
     BASH,
@@ -686,7 +709,7 @@ REQUEST_CHANGES = {
     },
 }
 
-TESTER_TOOLS = [READ_FILE, GREP_FILES, BASH, WRITE_FILE, EDIT_FILE, APPROVE, REQUEST_CHANGES]
+TESTER_TOOLS = [READ_FILE, GREP_FILES, FETCH_DOCS, BASH, WRITE_FILE, EDIT_FILE, APPROVE, REQUEST_CHANGES]
 TESTER_TERMINAL_TOOLS = ("approve", "request_changes")
 
 REVIEW_DIFF = {
@@ -749,11 +772,14 @@ REVIEWER_REQUEST_CHANGES = {
 # cannot edit anything or run commands — unlike Tester (which can strengthen tests)
 # its whole job is to judge the diff as it stands, not to fix it. That's what makes
 # it a genuine independent check rather than the same actor wearing a different hat.
+# FETCH_DOCS doesn't break that: it can't touch the repo, only ground a judgment
+# (e.g. "this doesn't match the real API contract") in the actual current docs.
 REVIEWER_TOOLS = [
     READ_FILE,
     LIST_FILES,
     GLOB_FILES,
     GREP_FILES,
+    FETCH_DOCS,
     REVIEW_DIFF,
     REVIEWER_APPROVE,
     REVIEWER_REQUEST_CHANGES,

@@ -7,7 +7,7 @@ back to the model."""
 from dataclasses import dataclass
 
 from built.sandbox.container import CommandExecutor, CommandResult
-from built.tools import git_tools, read_tools, write_tools
+from built.tools import git_tools, read_tools, web_tools, write_tools
 from built.tools.base import ToolContext, ToolResult
 from built.tools.bash_tool import DEFAULT_TIMEOUT_SECONDS, format_bash_result
 
@@ -85,6 +85,8 @@ class ToolDispatcher:
             assert self.ctx.base_ref is not None, "review_diff requires ToolContext.base_ref"
             diff = await git_tools.diff_against_ref(self.ctx.worktree_root, self.ctx.base_ref)
             return ToolResult.ok(diff), None
+        if name == "fetch_docs":
+            return await web_tools.fetch_docs(arguments["url"]), None
         if name == "update_plan":
             # Pure bookkeeping — no worktree/git access, nothing to auto-commit. The
             # steps themselves are recorded as this TOOL_CALL event's `arguments` by

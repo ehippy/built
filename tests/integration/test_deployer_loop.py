@@ -301,7 +301,13 @@ async def test_deployer_loop_pr_to_operator_happy_path_opens_pr(db_session, toy_
     monkeypatch.setenv("TEST_GH_TOKEN", "fake-token")
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(201, json={"html_url": "https://github.com/owner/repo/pull/7"})
+        if request.method == "GET":
+            # existing-PR lookup: no open PR for this branch yet
+            return httpx.Response(200, json=[])
+        return httpx.Response(
+            201,
+            json={"html_url": "https://github.com/owner/repo/pull/7", "number": 7},
+        )
 
     _mock_github(monkeypatch, handler)
 
@@ -330,9 +336,13 @@ async def test_deployer_loop_pr_to_operator_happy_path_opens_pr(db_session, toy_
         mode=DeployMode.PR_TO_OPERATOR,
     )
 
-    assert result.lifecycle_state == LifecycleState.DONE
+    # Opening the PR is the Deployer's job, but the card's completion isn't — it
+    # stays ACTIVE (excluded from claiming via pr_number) for the pr_watcher to
+    # confirm the PR is reviewed and merged, exactly like auto_main + CI.
+    assert result.lifecycle_state == LifecycleState.ACTIVE
     assert result.deploy_url == "https://github.com/owner/repo/pull/7"
-    assert visit.outcome == VisitOutcome.DONE
+    assert result.pr_number == 7
+    assert visit.outcome == VisitOutcome.DEPLOYED_PENDING_PR
 
 
 async def test_deployer_loop_auto_main_deploy_failure_stays_active_under_cap(db_session, toy_repo_remote):

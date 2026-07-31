@@ -21,6 +21,7 @@
       {% if card.priority != "normal" %}{{ badge("priority-" ~ card.priority, card.priority) }}{% endif %}
       {{ badge(card.lifecycle_state) }}
       {% if card.deploying_commit_sha %}{{ badge("watching-ci", "watching CI") }}{% endif %}
+      {% if card.pr_number %}{{ badge("watching-ci", "waiting on PR review") }}{% endif %}
       {% if card.archived_at %}{{ badge("paused", "archived") }}{% endif %}
       {% if card.revision_count %}<span>· rev {{ card.revision_count }}</span>{% endif %}
       {% if card.deploy_attempt_count %}<span>· deploy attempt {{ card.deploy_attempt_count }}</span>{% endif %}

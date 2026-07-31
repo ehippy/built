@@ -129,6 +129,18 @@ class Settings(BaseSettings):
     # giving up and blocking the card for a human.
     ci_watcher_timeout_seconds: int = 3600
 
+    # PR watcher: a deterministic sweep (no LLM) that polls GitHub for cards whose
+    # pr_to_operator deploy opened a PR but hasn't had it reviewed/merged yet
+    # (Card.pr_number) — see orchestrator/pr_watcher.py. An approving review gets
+    # the PR merged (and the card marked done); a "changes requested" review bounces
+    # the card back to Developer; no review within the timeout blocks the card.
+    pr_watcher_enabled: bool = True
+    pr_watcher_poll_interval_seconds: float = 60
+    # How long to keep polling a PR that no one has reviewed before giving up and
+    # blocking the card for a human. Defaults to a week — human review can take
+    # days, unlike CI resolution.
+    pr_watcher_timeout_seconds: int = 604800
+
     @model_validator(mode="after")
     def _default_database_url(self) -> "Settings":
         """Only fills in database_url when it wasn't explicitly provided (env var

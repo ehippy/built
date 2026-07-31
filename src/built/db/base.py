@@ -36,6 +36,10 @@ ADDITIVE_COLUMNS = [
     ("run_attempts", "card_event_seq", "INTEGER"),
     ("cards", "deploying_commit_sha", "TEXT"),
     ("cards", "deploying_since", "DATETIME"),
+    # Nullable, no DEFAULT needed — only pr_to_operator cards waiting on a PR
+    # review ever set these (see db/models.py's Card.pr_number).
+    ("cards", "pr_number", "INTEGER"),
+    ("cards", "pr_waiting_since", "DATETIME"),
     # DEFAULT applies to existing rows too (unlike the ORM-side mapped_column
     # default, which only fires on new inserts) — without it, every pre-existing
     # card would read back as priority=NULL instead of Priority.NORMAL. Must be

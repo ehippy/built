@@ -359,9 +359,18 @@ class Card(Base):
     # While set, the card stays ACTIVE but isn't reclaimed by the worker pool (the
     # Deployer's own job — the git-level push — is genuinely done; the card's
     # overall completion isn't, until CI actually confirms it). NULL for
-    # pr_to_operator deploys, which have a human in the loop before anything merges.
+    # pr_to_operator deploys, which track a pending PR via pr_number instead.
     deploying_commit_sha: Mapped[str | None] = mapped_column(default=None)
     deploying_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+    # Set the moment a pr_to_operator deploy opens (or re-uses) a GitHub PR;
+    # cleared once that PR merges, or the card bounces back to Developer on a
+    # "changes requested" review, or the wait times out — see
+    # orchestrator/pr_watcher.py. Mirrors deploying_commit_sha's
+    # wait-for-external-confirmation shape: while set, the card stays ACTIVE in
+    # Deployer but isn't reclaimed by the worker pool. NULL for auto_main deploys.
+    pr_number: Mapped[int | None] = mapped_column(default=None)
+    pr_waiting_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     # Orchestrator claim/lease — see orchestrator/worker.py (Phase 4).
     claimed_by_worker_id: Mapped[str | None] = mapped_column(default=None)

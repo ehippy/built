@@ -3,6 +3,8 @@ Phase 2 verification called for in the plan: a card pushed through all five colu
 a revision loop that trips the cap, a deploy that exhausts its retries, and a run
 error, asserting CardColumnVisit/CardEvent bookkeeping at each step."""
 
+from datetime import UTC, datetime
+
 from built.db.models import Project
 from built.domain import transitions
 from built.domain.enums import Column, LifecycleState, VisitOutcome
@@ -242,6 +244,95 @@ async def test_run_error_blocks_card_regardless_of_column(db_session):
     assert card.lifecycle_state == LifecycleState.BLOCKED
     visits = await card_service.list_column_visits(db_session, card.id)
     assert visits[-1].outcome == VisitOutcome.ERROR
+
+
+async def test_pr_deploy_stays_active_until_the_pr_merges(db_session):
+    """pr_to_operator: opening the PR is not the end of the card — it stays ACTIVE
+    (tracked via pr_number, excluded from claiming) until confirm_pr_merged, the
+    same way auto_main waits on CI. request_pr_changes bounces it back to Developer
+    and shares the revision cap; the other wait outcomes block for a human."""
+    project = await _make_project(db_session, name="pr-lifecycle", max_revisions=1)
+    card = await card_service.create_card(db_session, project.id, title="Ship via PR", raw_request="do it")
+    card.column = Column.DEPLOYER
+    await db_session.flush()
+
+    visit = await transitions.start_visit(db_session, card)
+    await transitions.complete_deployer_visit(
+        db_session,
+        card,
+        visit,
+        success=True,
+        summary="PR opened",
+        deploy_url="https://github.com/o/r/pull/3",
+        pending_pr_number=3,
+    )
+    assert card.lifecycle_state == LifecycleState.ACTIVE
+    assert card.pr_number == 3
+    assert card.pr_waiting_since is not None
+    assert visit.outcome == VisitOutcome.DEPLOYED_PENDING_PR
+
+    # A reviewer requesting changes bounces back to Developer with the feedback —
+    # pr_number cleared so the card is claimable again, revision cap shared.
+    await transitions.request_pr_changes(
+        db_session, card, feedback="rename the variable", note="review on PR #3"
+    )
+    assert card.lifecycle_state == LifecycleState.ACTIVE
+    assert card.column == Column.DEVELOPER
+    assert card.pr_number is None
+    assert card.pr_waiting_since is None
+    assert card.latest_feedback == "rename the variable"
+    assert card.revision_count == 1
+
+    # ...flowing back through Deployer opens/re-uses the PR again.
+    visit = await transitions.start_visit(db_session, card)
+    await transitions.complete_deployer_visit(
+        db_session, card, visit, success=True, summary="PR updated", pending_pr_number=3
+    )
+    assert card.pr_number == 3
+
+    # Eventually the PR merges — that's where DONE actually happens.
+    await transitions.confirm_pr_merged(db_session, card, note="PR #3 merged")
+    assert card.lifecycle_state == LifecycleState.DONE
+    assert card.pr_number is None
+    assert card.pr_waiting_since is None
+
+
+async def test_pr_wait_outcomes_block_for_a_human(db_session):
+    project = await _make_project(db_session, name="pr-blocked")
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    card.column = Column.DEPLOYER
+    card.pr_number = 5
+    card.pr_waiting_since = datetime.now(UTC)
+    await db_session.flush()
+
+    await transitions.mark_pr_wait_timed_out(db_session, card, note="never reviewed")
+    assert card.lifecycle_state == LifecycleState.BLOCKED
+    assert card.pr_number is None
+
+    await card_service.retry_card(db_session, card.id)
+    card.pr_number = 6
+    await db_session.flush()
+    await transitions.mark_pr_closed_unmerged(db_session, card, note="closed without merging")
+    assert card.lifecycle_state == LifecycleState.BLOCKED
+
+    await card_service.retry_card(db_session, card.id)
+    card.pr_number = 7
+    await db_session.flush()
+    await transitions.mark_pr_merge_conflicted(db_session, card, note="not mergeable")
+    assert card.lifecycle_state == LifecycleState.BLOCKED
+
+
+async def test_pr_changes_requested_over_the_revision_cap_blocks(db_session):
+    project = await _make_project(db_session, name="pr-revision-cap", max_revisions=1)
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    card.column = Column.DEPLOYER
+    card.revision_count = 1  # one prior bounce already consumed the budget
+    await db_session.flush()
+
+    await transitions.request_pr_changes(db_session, card, feedback="more issues", note="PR #1")
+    assert card.lifecycle_state == LifecycleState.BLOCKED
+    assert card.revision_count == 2
+    assert card.column == Column.DEVELOPER
 
 
 async def test_cannot_retry_an_active_card_or_cancel_a_done_card(db_session):

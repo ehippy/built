@@ -453,8 +453,11 @@ def build_deployer_prompt(
             intro + "Do a quick sanity check of the repository (e.g. that the branch actually "
             "contains the expected changes) using the read-only tools, then call open_pull_request "
             "with a summary of the change. This pushes your branch and opens a GitHub PR against the "
-            "default branch — a human reviews and merges it from there. Nothing merges or deploys "
-            f"automatically.\n\n"
+            "default branch. Nothing merges or deploys from your side — the pipeline watches the PR "
+            "from here: an approving review gets it merged automatically and the card is marked done; "
+            "a review requesting changes bounces the card back to Developer to address the feedback, "
+            "and when it flows back to Deployer, open_pull_request re-uses the still-open PR rather "
+            f"than opening a duplicate.\n\n"
             f"Project goal: {project.overarching_goal}\n\n"
             "Nobody is watching this run interactively — do not stop to ask a question."
         )

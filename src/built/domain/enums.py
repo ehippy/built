@@ -61,8 +61,9 @@ class VisitOutcome(StrEnum):
     EPIC_DEFINED = "epic_defined"  # PM's define_epic — card stays alive, tracks its new child cards
     APPROVED = "approved"  # Tester's approve
     CHANGES_REQUESTED = "changes_requested"  # Tester's request_changes
-    DONE = "done"  # Deployer's run_deploy succeeded (pr_to_operator, or auto_main with no CI to watch)
+    DONE = "done"  # auto_main run_deploy succeeded (no CI to watch), or this card's PR merged
     DEPLOYED_PENDING_CI = "deployed_pending_ci"  # auto_main run_deploy succeeded; CI still has to confirm
+    DEPLOYED_PENDING_PR = "deployed_pending_pr"  # pr_to_operator PR opened; review must approve and merge
     FAILED = "failed"  # Deployer's run_deploy failed (this attempt, or terminally over cap)
     DEPLOY_CONFLICT = "deploy_conflict"  # run_deploy hit a merge conflict — bounced back to Developer,
     # not counted against max_deploy_attempts (see domain/transitions.complete_deployer_visit_conflict)
@@ -100,8 +101,11 @@ class DeployKind(StrEnum):
 class DeployMode(StrEnum):
     """How Deployer ships an approved card. auto_main merges to default_branch,
     pushes, and runs the project's configured deploy command — zero human gate.
-    pr_to_operator pushes the card's branch as-is and opens a GitHub PR for a human to
-    review and merge; no merge and no deploy command run automatically."""
+    pr_to_operator pushes the card's branch as-is and opens a GitHub PR. The card
+    then stays ACTIVE while orchestrator/pr_watcher.py waits on that PR: an
+    approving review gets it merged (and the card marked done), a "changes
+    requested" review bounces it back to Developer to address the feedback, and no
+    deploy command runs automatically."""
 
     AUTO_MAIN = "auto_main"
     PR_TO_OPERATOR = "pr_to_operator"

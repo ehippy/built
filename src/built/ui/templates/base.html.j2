@@ -21,6 +21,13 @@
        formatting, but long unbroken lines (stack traces, paths, hashes) shouldn't
        force horizontal overflow of the column. */
     pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+    /* Projects nav dropdown opens on hover, not click — a nav-level menu that
+       just links elsewhere doesn't need a click to commit to opening it. */
+    .dropdown-hover:hover > .dropdown-menu { display: block; margin-top: 0; }
+    /* CI status dot next to the breadcrumb's GitHub icon — pulses while a check
+       run is still in progress, steady once it settles on pass/fail. */
+    .ci-dot-pulse { animation: ci-dot-pulse 1.4s ease-in-out infinite; }
+    @keyframes ci-dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
   </style>
   <script src="/ui/static/htmx.min.js"></script>
 </head>
@@ -28,13 +35,36 @@
   <nav class="navbar navbar-expand navbar-dark bg-dark mb-4 sticky-top">
     <div class="container-fluid">
       <a class="navbar-brand" href="/ui/projects">built</a>
-      {% block breadcrumb %}{% endblock %}
-      <div class="navbar-nav me-auto">
-        <a class="nav-link" href="/ui/projects">Projects</a>
-        <a class="nav-link" href="/ui/logs">Logs</a>
-        <a class="nav-link" href="/ui/endpoint-configs">Global Defaults</a>
+      <div class="navbar-nav">
+        <div class="nav-item dropdown dropdown-hover">
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Projects</a>
+          <ul class="dropdown-menu dropdown-menu-dark">
+            <li><a class="dropdown-item" href="/ui/projects">All projects</a></li>
+            {% if all_projects %}
+            <li><hr class="dropdown-divider"></li>
+            {% for p in all_projects %}
+            <li><a class="dropdown-item" href="/ui/projects/{{ p.id }}/board">{{ p.name }}</a></li>
+            {% endfor %}
+            {% endif %}
+          </ul>
+        </div>
       </div>
-      <button id="theme-toggle" class="btn btn-outline-light btn-sm" type="button" aria-label="Toggle color theme" title="Toggle light/dark theme"></button>
+      {% block breadcrumb %}
+      {% if project %}
+      <span class="navbar-text text-white-50 px-1">/</span>
+      <a class="navbar-brand py-0 fs-6" href="/ui/projects/{{ project.id }}/board">{{ project.name }}</a>
+      {% set gh_url = project.repo_remote_url|github_url %}
+      {% if gh_url %}
+      <a class="navbar-text py-0 px-1" href="{{ gh_url }}" target="_blank" rel="noopener" title="Open on GitHub"><i class="bi bi-github"></i></a>
+      <span id="ci-dot-{{ project.id }}" hx-get="/ui/projects/{{ project.id }}/ci-status" hx-trigger="load" hx-swap="outerHTML"></span>
+      {% endif %}
+      {% endif %}
+      {% endblock %}
+      <div class="navbar-nav ms-auto">
+        <a class="nav-link" href="/ui/logs">Logs</a>
+        <a class="nav-link" href="/ui/endpoint-configs">LLMs</a>
+      </div>
+      <button id="theme-toggle" class="btn btn-outline-light btn-sm ms-2" type="button" aria-label="Toggle color theme" title="Toggle light/dark theme"></button>
     </div>
   </nav>
   <main class="container-fluid px-4">

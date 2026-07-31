@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from built.api.deps import SessionDep
 from built.config import settings
 from built.domain.enums import Column, DeployKind, DeployMode
+from built.sandbox import deploy_runner
 from built.services import card_service, endpoint_service, project_service
 from built.ui.templates import templates
 
@@ -36,7 +37,10 @@ async def index() -> RedirectResponse:
 @router.get("/projects")
 async def list_projects(request: Request, session: SessionDep):
     rows = await _projects_with_activity(session)
-    return templates.TemplateResponse(request, "projects_list.html.j2", {"rows": rows})
+    all_projects = [row["project"] for row in rows]
+    return templates.TemplateResponse(
+        request, "projects_list.html.j2", {"rows": rows, "all_projects": all_projects}
+    )
 
 
 @router.get("/projects/fragment")
@@ -73,10 +77,38 @@ async def create_project(
     return RedirectResponse(f"/ui/projects/{project.id}/board", status_code=303)
 
 
+@router.get("/projects/{project_id}/ci-status")
+async def project_ci_status(project_id: str, request: Request, session: SessionDep):
+    """The nav bar's GitHub-icon status dot — polled by htmx, not computed on the
+    initial page render, so an external GitHub round-trip never blocks a normal
+    page load. Checked against the tip of default_branch (GitHub's check-runs
+    endpoint accepts a branch name as well as a sha), not any particular card's
+    deploying_commit_sha — this is "is the repo green right now", independent of
+    whether `built` itself is mid-deploy on anything."""
+    project = await project_service.get_project(session, project_id)
+    try:
+        check_runs = await deploy_runner.fetch_check_runs(project, project.default_branch)
+    except deploy_runner.CIStatusUnavailableError:
+        state = "unknown"
+    else:
+        if not check_runs:
+            state = "none"
+        elif any(run.status != "completed" for run in check_runs):
+            state = "pending"
+        elif any(run.conclusion in deploy_runner.FAILING_CONCLUSIONS for run in check_runs):
+            state = "failure"
+        else:
+            state = "success"
+    return templates.TemplateResponse(
+        request, "_ci_status_fragment.html.j2", {"project": project, "ci_state": state}
+    )
+
+
 @router.get("/projects/{project_id}/settings")
 async def project_settings(project_id: str, request: Request, session: SessionDep):
     project = await project_service.get_project(session, project_id)
     endpoint_configs = await endpoint_service.list_endpoint_configs(session, project_id=project_id)
+    all_projects = await project_service.list_projects(session)
     return templates.TemplateResponse(
         request,
         "project_settings.html.j2",
@@ -85,6 +117,7 @@ async def project_settings(project_id: str, request: Request, session: SessionDe
             "endpoint_configs": endpoint_configs,
             "deploy_config": project.deploy_config,
             "default_max_tokens": settings.default_max_tokens,
+            "all_projects": all_projects,
         },
     )
 

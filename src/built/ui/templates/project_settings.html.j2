@@ -8,8 +8,8 @@
   <li class="nav-item"><a class="nav-link active" href="/ui/projects/{{ project.id }}/settings">Settings</a></li>
 </ul>
 
-<h1>{{ project.name }} {% if project.paused_at %}<span class="fs-6">{{ m.badge("paused") }}</span>{% endif %}</h1>
-<p class="text-body-secondary">{{ project.slug }}</p>
+{% if project.paused_at %}<p class="mb-1">{{ m.badge("paused") }}</p>{% endif %}
+<p class="text-body-secondary mb-0">{{ project.slug }}</p>
 <p class="text-body-secondary small">Created {{ project.created_at|timeago }} · Last modified {{ project.updated_at|timeago }}</p>
 
 {% if flash %}<div class="alert alert-success">{{ flash }}</div>{% endif %}

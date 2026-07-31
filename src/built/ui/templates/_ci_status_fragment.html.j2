@@ -1,0 +1,15 @@
+{% set ci_dot_color = {"success": "success", "failure": "danger", "pending": "warning", "unknown": "secondary"}.get(ci_state) %}
+{% set ci_dot_title = {"success": "CI passing on " ~ project.default_branch, "failure": "CI failing on " ~ project.default_branch, "pending": "CI running on " ~ project.default_branch, "unknown": "CI status unavailable"}.get(ci_state, "") %}
+{% if ci_dot_color %}
+<a id="ci-dot-{{ project.id }}"
+   href="{{ project.repo_remote_url|github_url }}/actions"
+   target="_blank" rel="noopener"
+   class="d-inline-block"
+   title="{{ ci_dot_title }}"
+   hx-get="/ui/projects/{{ project.id }}/ci-status"
+   hx-trigger="every 60s"
+   hx-swap="outerHTML"
+><span class="d-inline-block rounded-circle bg-{{ ci_dot_color }} {% if ci_state == 'pending' %}ci-dot-pulse{% endif %}" style="width:.5rem;height:.5rem;"></span></a>
+{% else %}
+<span id="ci-dot-{{ project.id }}"></span>
+{% endif %}

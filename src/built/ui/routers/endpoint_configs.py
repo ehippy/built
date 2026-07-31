@@ -4,7 +4,7 @@ from fastapi.responses import RedirectResponse
 from built.api.deps import SessionDep
 from built.config import settings
 from built.domain.enums import Column
-from built.services import endpoint_service
+from built.services import endpoint_service, project_service
 from built.ui.templates import templates
 
 router = APIRouter(prefix="/ui", tags=["ui"])
@@ -13,10 +13,15 @@ router = APIRouter(prefix="/ui", tags=["ui"])
 @router.get("/endpoint-configs")
 async def list_global_endpoint_configs(request: Request, session: SessionDep):
     endpoint_configs = await endpoint_service.list_endpoint_configs(session, only_global=True)
+    all_projects = await project_service.list_projects(session)
     return templates.TemplateResponse(
         request,
         "endpoint_configs.html.j2",
-        {"endpoint_configs": endpoint_configs, "default_max_tokens": settings.default_max_tokens},
+        {
+            "endpoint_configs": endpoint_configs,
+            "default_max_tokens": settings.default_max_tokens,
+            "all_projects": all_projects,
+        },
     )
 
 

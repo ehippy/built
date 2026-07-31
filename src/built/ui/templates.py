@@ -1,6 +1,7 @@
 """Jinja2 templates for the dashboard. UI routers call the same services/ layer as
 the REST API directly — no self-HTTP-calling."""
 
+import re
 from pathlib import Path
 
 import mistune
@@ -8,6 +9,14 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+
+# Same shapes sandbox/deploy_runner.py's parse_github_owner_repo matches, kept as
+# its own copy so the UI layer doesn't reach into the deploy trust boundary just
+# for a plain string transform.
+_GITHUB_URL_PATTERNS = [
+    re.compile(r"^https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+?)(\.git)?/?$"),
+    re.compile(r"^git@github\.com:(?P<owner>[^/]+)/(?P<repo>[^/]+?)(\.git)?$"),
+]
 
 
 class _CardMarkdownRenderer(mistune.HTMLRenderer):
@@ -77,7 +86,20 @@ def tool_descriptor(arguments: dict | None) -> str:
     return args.get("path") or args.get("pattern") or args.get("command") or ""
 
 
+def _github_url(remote_url: str | None) -> str | None:
+    """A project's repo_remote_url as a browsable https://github.com/owner/repo
+    link, or None if it isn't a GitHub remote (a local path, GitLab, ...)."""
+    if not remote_url:
+        return None
+    for pattern in _GITHUB_URL_PATTERNS:
+        match = pattern.match(remote_url.strip())
+        if match:
+            return f"https://github.com/{match.group('owner')}/{match.group('repo')}"
+    return None
+
+
 templates.env.filters["timeago"] = _timeago
 templates.env.filters["markdown"] = _render_markdown
 templates.env.filters["clocktime"] = _clocktime
 templates.env.filters["tool_descriptor"] = tool_descriptor
+templates.env.filters["github_url"] = _github_url

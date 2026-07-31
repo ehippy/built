@@ -23,6 +23,13 @@ DEFAULT_MEM_LIMIT = "1g"
 DEFAULT_CPU_PERIOD = 100_000
 DEFAULT_CPU_QUOTA = 100_000  # 1 CPU
 DEFAULT_PIDS_LIMIT = 256
+# Docker's tmpfs default is "rw,noexec,nosuid,nodev,size=65536k" — fine for package
+# managers that only cache files there, but toolchains that compile-and-execute a
+# helper into a temp dir (e.g. Swift Package Manager's manifest compiler) fail with
+# "posix_spawn: Permission denied" under noexec. "exec" opts back into execution; the
+# larger size gives those toolchains room to actually build, still well under
+# DEFAULT_MEM_LIMIT since tmpfs usage counts against the container's memory cgroup.
+TMPFS_MOUNT_OPTIONS = "exec,size=512m"
 
 
 @dataclass
@@ -81,7 +88,7 @@ class DockerCommandExecutor:
                 cap_drop=["ALL"],
                 network_disabled=self.network_disabled,
                 read_only=True,
-                tmpfs={"/tmp": ""},
+                tmpfs={"/tmp": TMPFS_MOUNT_OPTIONS},
                 user="1000:1000",
                 detach=True,
             )

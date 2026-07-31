@@ -750,6 +750,19 @@ async def set_priority(session: AsyncSession, card_id: str, priority: Priority) 
     return card
 
 
+async def add_nudge(session: AsyncSession, card_id: str, *, note: str) -> Card:
+    """Drop a note in for the agent regardless of what it's doing right now —
+    unlike retry_card, this needs no blocked/failed state and doesn't touch
+    lifecycle_state, column, or any safety-valve counter. A single slot, not a
+    queue: a second nudge before the first is seen overwrites it, same as
+    retry_note. See agent/loop.py's run_column_visit for where it's consumed."""
+    card = await get_card(session, card_id)
+    card.pending_nudge = note
+    await session.flush()
+    logger.info("card %s (%r) nudged: %r", card.id, card.title, note)
+    return card
+
+
 async def archive_card(session: AsyncSession, card_id: str) -> Card:
     """Hides the card from the board and stops the orchestrator from ever claiming
     it again — doesn't touch lifecycle_state or an in-flight claim, so a visit

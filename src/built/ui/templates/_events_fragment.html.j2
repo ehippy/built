@@ -39,6 +39,9 @@
         <summary class="text-body-secondary">Output ({{ event.payload.result|length }} chars){% if event.payload.is_error %} <i class="bi bi-exclamation-triangle-fill text-danger"></i>{% endif %}</summary>
         <pre class="mb-0">{{ event.payload.result }}</pre>
       </details>
+    {% elif event.type == "system_note" and event.payload.action == "nudge" %}
+      <div class="mb-1"><i class="bi bi-chat-left-text"></i> <strong>Nudge from a human</strong></div>
+      <pre class="mb-0">{{ event.payload.note }}</pre>
     {% elif event.type == "transition" %}
       <div class="mb-1">{{ event.payload.column }} &rarr; {{ event.payload.outcome }}</div>
       <pre class="mb-0">{{ event.payload.summary }}</pre>

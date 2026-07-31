@@ -93,6 +93,20 @@ class Project(Base):
     # Added via ADDITIVE_COLUMNS, same precedent as current_epic_id above.
     chat_cleared_before_seq: Mapped[int | None] = mapped_column(Integer, default=None)
 
+    # Per-role custom instructions, set via project settings (services/project_service.py)
+    # and appended to that role's system prompt by agent/context.py's
+    # _with_role_guidance. Distinct from AGENTS.md (_with_agents_doc): AGENTS.md is a
+    # convention the repo itself documents and every role reads identically, kept
+    # current by curation; these are a human's direct, role-targeted instructions,
+    # entered here rather than committed to the repo. pm_guidance also applies to
+    # curation passes and project chat (agent/curation.py, agent/chat.py) since both
+    # are PM-role activities, not just the PM column visit on a card.
+    pm_guidance: Mapped[str | None] = mapped_column(Text, default=None)
+    developer_guidance: Mapped[str | None] = mapped_column(Text, default=None)
+    tester_guidance: Mapped[str | None] = mapped_column(Text, default=None)
+    reviewer_guidance: Mapped[str | None] = mapped_column(Text, default=None)
+    deployer_guidance: Mapped[str | None] = mapped_column(Text, default=None)
+
     # selectin: async SQLAlchemy has no implicit lazy-load, and this relationship is
     # read unconditionally by ProjectOut serialization — selectin issues its own
     # awaited follow-up query at load time instead of an attribute-access-time one.
@@ -294,6 +308,13 @@ class Card(Base):
     # autonomous pipeline) — surfaced to whichever column runs next, then cleared
     # after that one visit so it doesn't linger across later, unrelated retries.
     retry_note: Mapped[str | None] = mapped_column(Text, default=None)
+    # A human note dropped in while the card is active, regardless of whether a
+    # visit is running right now — unlike retry_note it needs no blocked/failed
+    # state and no retry. run_column_visit checks this every iteration (it already
+    # refreshes the card every iteration for the cancellation check) and, once
+    # seen, injects it as a message and clears it — surfaced within one iteration
+    # of a running visit, or at the start of the next one if the card is idle.
+    pending_nudge: Mapped[str | None] = mapped_column(Text, default=None)
     # How many times the autonomous Reviver (agent/reviver.py) has retried this card,
     # capped at settings.reviver_max_auto_revives — once reached, the Reviver leaves
     # it alone permanently and it waits for a human. Not touched by a human-initiated

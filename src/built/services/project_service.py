@@ -49,6 +49,11 @@ async def create_project(
     max_deploy_attempts: int | None = None,
     max_iterations_per_run: int | None = None,
     max_tokens: int | None = None,
+    pm_guidance: str | None = None,
+    developer_guidance: str | None = None,
+    tester_guidance: str | None = None,
+    reviewer_guidance: str | None = None,
+    deployer_guidance: str | None = None,
 ) -> Project:
     project = Project(
         name=name,
@@ -68,6 +73,11 @@ async def create_project(
             else settings.default_max_iterations_per_run
         ),
         max_tokens=max_tokens if max_tokens is not None else None,
+        pm_guidance=pm_guidance,
+        developer_guidance=developer_guidance,
+        tester_guidance=tester_guidance,
+        reviewer_guidance=reviewer_guidance,
+        deployer_guidance=deployer_guidance,
     )
     # A brand-new object was never loaded via a query, so the selectin strategy on
     # Project.deploy_config never fires for it — set it directly (we know it's None,

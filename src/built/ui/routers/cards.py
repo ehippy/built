@@ -52,6 +52,12 @@ async def retry_card(card_id: str, session: SessionDep, note: str = Form("")) ->
     return RedirectResponse(f"/ui/cards/{card_id}", status_code=303)
 
 
+@router.post("/cards/{card_id}/nudge")
+async def nudge_card(card_id: str, session: SessionDep, note: str = Form(...)) -> RedirectResponse:
+    await card_service.add_nudge(session, card_id, note=note)
+    return RedirectResponse(f"/ui/cards/{card_id}", status_code=303)
+
+
 @router.post("/cards/{card_id}/cancel")
 async def cancel_card(card_id: str, session: SessionDep) -> RedirectResponse:
     await card_service.cancel_card(session, card_id)

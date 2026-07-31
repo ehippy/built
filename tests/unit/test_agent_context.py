@@ -4,19 +4,23 @@ prompt entirely when there isn't one."""
 
 from built.agent.context import (
     build_chat_prompt,
+    build_curation_prompt,
     build_deployer_prompt,
     build_developer_prompt,
     build_pm_prompt,
+    build_reviewer_prompt,
     build_tester_prompt,
 )
 from built.db.models import Card, Project
-from built.domain.enums import DeployMode
+from built.domain.enums import ActivityKind, DeployMode
 
 
-def _project() -> Project:
-    return Project(
-        name="p", slug="p", overarching_goal="goal", repo_remote_url="https://example.invalid/r.git"
-    )
+def _project(**overrides) -> Project:
+    defaults = {
+        "name": "p", "slug": "p", "overarching_goal": "goal", "repo_remote_url": "https://example.invalid/r.git"
+    }
+    defaults.update(overrides)
+    return Project(**defaults)
 
 
 def _card(**overrides) -> Card:
@@ -126,3 +130,82 @@ def test_chat_prompt_includes_current_epic_when_set():
     epic = _card(title="Ship v2 onboarding", spec="Redesign the onboarding flow.")
     system = build_chat_prompt(_project(), [], current_epic=epic)
     assert "Ship v2 onboarding" in system
+
+
+# --- Per-role guidance (Project.pm_guidance/developer_guidance/etc, set via project
+# settings — services/project_service.py) — distinct from agents_doc: a human
+# instruction targeted at one specific role, not a repo-documented convention. ---
+
+
+def test_pm_prompt_includes_pm_guidance_when_set():
+    system, _ = build_pm_prompt(_project(pm_guidance="Always prefer feature flags over branches."), _card())
+    assert "Always prefer feature flags over branches." in system
+
+
+def test_pm_prompt_omits_guidance_section_when_unset():
+    system, _ = build_pm_prompt(_project(), _card())
+    assert "Additional project-specific instructions for this role" not in system
+
+
+def test_developer_prompt_includes_developer_guidance_when_set():
+    system, _ = build_developer_prompt(
+        _project(developer_guidance="Never touch the legacy billing module."), _card()
+    )
+    assert "Never touch the legacy billing module." in system
+
+
+def test_developer_prompt_ignores_other_roles_guidance():
+    project = _project(pm_guidance="PM-only note", tester_guidance="tester-only")
+    system, _ = build_developer_prompt(project, _card())
+    assert "PM-only note" not in system
+    assert "tester-only" not in system
+
+
+def test_tester_prompt_includes_tester_guidance_when_set():
+    system, _ = build_tester_prompt(
+        _project(tester_guidance="Always test against Safari, not just Chrome."),
+        _card(),
+        developer_summary=None,
+    )
+    assert "Always test against Safari, not just Chrome." in system
+
+
+def test_reviewer_prompt_includes_reviewer_guidance_when_set():
+    system, _ = build_reviewer_prompt(
+        _project(reviewer_guidance="Reject anything that adds a new npm dependency."),
+        _card(),
+        tester_summary=None,
+    )
+    assert "Reject anything that adds a new npm dependency." in system
+
+
+def test_deployer_prompt_includes_deployer_guidance_when_set():
+    system, _ = build_deployer_prompt(
+        _project(deployer_guidance="Deploys should never run on Fridays."),
+        _card(branch_name="card/x"),
+        mode=DeployMode.AUTO_MAIN,
+    )
+    assert "Deploys should never run on Fridays." in system
+
+
+def test_chat_prompt_includes_pm_guidance_when_set():
+    system = build_chat_prompt(_project(pm_guidance="Keep tickets under 500 words."), [])
+    assert "Keep tickets under 500 words." in system
+
+
+def test_curation_prompt_includes_pm_guidance_for_normal_kind():
+    system, _ = build_curation_prompt(
+        _project(pm_guidance="Skip anything touching the payments module."),
+        ActivityKind.BUG_SWEEP,
+        [],
+    )
+    assert "Skip anything touching the payments module." in system
+
+
+def test_curation_prompt_includes_pm_guidance_for_agents_md_kind():
+    system, _ = build_curation_prompt(
+        _project(pm_guidance="Skip anything touching the payments module."),
+        ActivityKind.AGENTS_MD,
+        [],
+    )
+    assert "Skip anything touching the payments module." in system

@@ -51,6 +51,16 @@ ADDITIVE_COLUMNS = [
     # Nullable, no DEFAULT needed — every existing project has never had its chat
     # cleared (see db/models.py's Project.chat_cleared_before_seq).
     ("projects", "chat_cleared_before_seq", "INTEGER"),
+    # Nullable, no DEFAULT needed — every existing card simply has no pending nudge
+    # until a human leaves one (see db/models.py's Card.pending_nudge).
+    ("cards", "pending_nudge", "TEXT"),
+    # Nullable, no DEFAULT needed — every existing project simply has no per-role
+    # guidance until a human sets it (see db/models.py's Project.pm_guidance etc).
+    ("projects", "pm_guidance", "TEXT"),
+    ("projects", "developer_guidance", "TEXT"),
+    ("projects", "tester_guidance", "TEXT"),
+    ("projects", "reviewer_guidance", "TEXT"),
+    ("projects", "deployer_guidance", "TEXT"),
 ]
 
 

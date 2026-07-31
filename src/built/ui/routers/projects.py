@@ -156,6 +156,28 @@ async def update_project_settings(
     return RedirectResponse(f"/ui/projects/{project_id}/settings#details-pane", status_code=303)
 
 
+@router.post("/projects/{project_id}/prompts")
+async def update_project_prompts(
+    project_id: str,
+    session: SessionDep,
+    pm_guidance: str = Form(""),
+    developer_guidance: str = Form(""),
+    tester_guidance: str = Form(""),
+    reviewer_guidance: str = Form(""),
+    deployer_guidance: str = Form(""),
+) -> RedirectResponse:
+    await project_service.update_project(
+        session,
+        project_id,
+        pm_guidance=pm_guidance or None,
+        developer_guidance=developer_guidance or None,
+        tester_guidance=tester_guidance or None,
+        reviewer_guidance=reviewer_guidance or None,
+        deployer_guidance=deployer_guidance or None,
+    )
+    return RedirectResponse(f"/ui/projects/{project_id}/settings#prompts-pane", status_code=303)
+
+
 @router.post("/projects/{project_id}/archive")
 async def archive_project(project_id: str, session: SessionDep) -> RedirectResponse:
     await project_service.archive_project(session, project_id)

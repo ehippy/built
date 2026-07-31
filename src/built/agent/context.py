@@ -16,6 +16,17 @@ def _with_agents_doc(system: str, agents_doc: str | None) -> str:
     return f"{system}\n\nProject practices (from this repo's AGENTS.md):\n{agents_doc}"
 
 
+def _with_role_guidance(system: str, guidance: str | None) -> str:
+    """Appends this role's custom instructions (Project.pm_guidance/developer_guidance/
+    etc, set via project settings — services/project_service.py). Distinct from
+    _with_agents_doc: AGENTS.md is a convention the repo itself documents and every
+    role reads identically; this is a human's direct instruction targeted at one
+    specific role, entered in settings rather than committed to the repo."""
+    if not guidance:
+        return system
+    return f"{system}\n\nAdditional project-specific instructions for this role:\n{guidance}"
+
+
 def _with_current_epic(system: str, current_epic: Card | None) -> str:
     """A hint alongside Project.overarching_goal, never a replacement for it — and
     never consulted by orchestrator/worker.py's claim_next_card, which decides what
@@ -128,7 +139,8 @@ def build_curation_prompt(
         )
         user = f"Recently closed work since the last pass:\n{extra_context or '(nothing new)'}"
         system = _with_current_epic(system, current_epic)
-        return _with_agents_doc(system, agents_doc), user
+        system = _with_agents_doc(system, agents_doc)
+        return _with_role_guidance(system, project.pm_guidance), user
 
     focus = _CURATION_FOCUS[kind]
     system = (
@@ -152,7 +164,8 @@ def build_curation_prompt(
     existing = "\n".join(f"- {t}" for t in existing_titles) or "(none yet)"
     user = f"Existing/recent card titles in this project — don't propose duplicates of these:\n{existing}"
     system = _with_current_epic(system, current_epic)
-    return _with_agents_doc(system, agents_doc), user
+    system = _with_agents_doc(system, agents_doc)
+    return _with_role_guidance(system, project.pm_guidance), user
 
 
 def build_chat_prompt(
@@ -185,7 +198,8 @@ def build_chat_prompt(
         f"Existing/recent card titles — check before proposing a duplicate:\n{existing}"
     )
     system = _with_current_epic(system, current_epic)
-    return _with_agents_doc(system, agents_doc)
+    system = _with_agents_doc(system, agents_doc)
+    return _with_role_guidance(system, project.pm_guidance)
 
 
 def build_developer_prompt(
@@ -306,6 +320,7 @@ def build_developer_prompt(
     if retry_note:
         user += f"\n\nA human left this instruction for this attempt:\n{retry_note}"
     system = _with_agents_doc(system, agents_doc)
+    system = _with_role_guidance(system, project.developer_guidance)
     return system, user
 
 
@@ -363,6 +378,7 @@ def build_pm_prompt(
         user += f"\n\nA human left this instruction for this attempt:\n{retry_note}"
     system = _with_current_epic(system, current_epic)
     system = _with_agents_doc(system, agents_doc)
+    system = _with_role_guidance(system, project.pm_guidance)
     return system, user
 
 
@@ -412,6 +428,7 @@ def build_deployer_prompt(
     if retry_note:
         user += f"\n\nA human left this instruction for this attempt:\n{retry_note}"
     system = _with_agents_doc(system, agents_doc)
+    system = _with_role_guidance(system, project.deployer_guidance)
     return system, user
 
 
@@ -474,6 +491,7 @@ def build_reviewer_prompt(
     if retry_note:
         user += f"\n\nA human left this instruction for this attempt:\n{retry_note}"
     system = _with_agents_doc(system, agents_doc)
+    system = _with_role_guidance(system, project.reviewer_guidance)
     return system, user
 
 
@@ -575,4 +593,5 @@ def build_tester_prompt(
     if retry_note:
         user += f"\n\nA human left this instruction for this attempt:\n{retry_note}"
     system = _with_agents_doc(system, agents_doc)
+    system = _with_role_guidance(system, project.tester_guidance)
     return system, user

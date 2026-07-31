@@ -20,6 +20,7 @@
       <button class="nav-link active text-start" id="details-tab" data-bs-toggle="pill" data-bs-target="#details-pane" type="button" role="tab" aria-controls="details-pane" aria-selected="true">Project details</button>
       <button class="nav-link text-start" id="endpoints-tab" data-bs-toggle="pill" data-bs-target="#endpoints-pane" type="button" role="tab" aria-controls="endpoints-pane" aria-selected="false">LLM endpoints</button>
       <button class="nav-link text-start" id="deploy-tab" data-bs-toggle="pill" data-bs-target="#deploy-pane" type="button" role="tab" aria-controls="deploy-pane" aria-selected="false">Deploy configuration</button>
+      <button class="nav-link text-start" id="prompts-tab" data-bs-toggle="pill" data-bs-target="#prompts-pane" type="button" role="tab" aria-controls="prompts-pane" aria-selected="false">Role prompts</button>
       <button class="nav-link text-start text-danger" id="danger-tab" data-bs-toggle="pill" data-bs-target="#danger-pane" type="button" role="tab" aria-controls="danger-pane" aria-selected="false">Danger zone</button>
     </div>
   </div>
@@ -230,6 +231,42 @@
               <input class="form-control" type="number" id="timeout_seconds" name="timeout_seconds" value="{{ deploy_config.timeout_seconds if deploy_config else 600 }}">
             </div>
             <button class="btn btn-primary" type="submit">Save deploy config</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="tab-pane fade" id="prompts-pane" role="tabpanel" aria-labelledby="prompts-tab" tabindex="0">
+        <div class="card card-body">
+          <h2 class="h5">Role prompts</h2>
+          <p class="text-body-secondary">
+            Free-text instructions appended to each role's system prompt for this project only — on top of, not
+            instead of, this repo's <code>AGENTS.md</code> (which every role already reads and which the Curator
+            keeps current). Use these for things specific to how <em>this</em> project should be worked, not
+            general practices worth committing to the repo. Leave any field blank to add nothing for that role.
+          </p>
+          <form method="post" action="/ui/projects/{{ project.id }}/prompts">
+            <div class="mb-3">
+              <label class="form-label" for="pm_guidance">Product Manager</label>
+              <textarea class="form-control" id="pm_guidance" name="pm_guidance" rows="4">{{ project.pm_guidance or '' }}</textarea>
+              <div class="form-text">Also applies to curation passes and this project's chat — both run as PM-role work.</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="developer_guidance">Developer</label>
+              <textarea class="form-control" id="developer_guidance" name="developer_guidance" rows="4">{{ project.developer_guidance or '' }}</textarea>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="tester_guidance">Tester</label>
+              <textarea class="form-control" id="tester_guidance" name="tester_guidance" rows="4">{{ project.tester_guidance or '' }}</textarea>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="reviewer_guidance">Reviewer</label>
+              <textarea class="form-control" id="reviewer_guidance" name="reviewer_guidance" rows="4">{{ project.reviewer_guidance or '' }}</textarea>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="deployer_guidance">Deployer</label>
+              <textarea class="form-control" id="deployer_guidance" name="deployer_guidance" rows="4">{{ project.deployer_guidance or '' }}</textarea>
+            </div>
+            <button class="btn btn-primary" type="submit">Save prompts</button>
           </form>
         </div>
       </div>

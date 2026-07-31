@@ -41,6 +41,19 @@
     </div>
   </details>
   {% elif card.lifecycle_state == "active" %}
+  <details>
+    <summary class="btn btn-outline-secondary btn-sm">Nudge</summary>
+    <div class="card card-body mt-2" style="min-width: 24rem;">
+      <form method="post" action="/ui/cards/{{ card.id }}/nudge">
+        <div class="mb-3">
+          <label class="form-label" for="nudge-note">Note for the agent</label>
+          <textarea class="form-control" id="nudge-note" name="note" required placeholder="e.g. don't touch the payments module, that's handled elsewhere"></textarea>
+          <div class="form-text">Reaches the agent within one iteration if it's actively working this card right now, or at the start of its next visit otherwise — then it's cleared. Doesn't pause or reset anything.</div>
+        </div>
+        <button class="btn btn-outline-secondary" type="submit">Send nudge</button>
+      </form>
+    </div>
+  </details>
   <form method="post" action="/ui/cards/{{ card.id }}/cancel" onsubmit="return confirm('Cancel this card?');">
     <button class="btn btn-outline-danger btn-sm" type="submit">Cancel</button>
   </form>
@@ -98,6 +111,12 @@
       <h2 class="h5">Pending retry note</h2>
       <p>{{ card.retry_note }}</p>
       <p class="form-text">Will be shown to the agent on its next visit, then cleared.</p>
+      {% endif %}
+
+      {% if card.pending_nudge %}
+      <h2 class="h5">Pending nudge</h2>
+      <p>{{ card.pending_nudge }}</p>
+      <p class="form-text">Will reach the agent within one iteration if it's working now, or at the start of its next visit — then cleared.</p>
       {% endif %}
 
       <p class="form-text">Revision {{ card.revision_count }} · Deploy attempts {{ card.deploy_attempt_count }}</p>

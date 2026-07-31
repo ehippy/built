@@ -137,6 +137,30 @@ async def run_column_visit(
                 await session.commit()
                 return card
 
+            # A human can drop a note in at any time via the UI/API, independent of
+            # whatever this loop is doing — piggybacks on the refresh() above, the
+            # same way the cancellation check does, so a nudge reaches the model
+            # within one iteration of a running visit instead of waiting for the
+            # next column. Single slot, not a queue: cleared the moment it's seen.
+            if card.pending_nudge:
+                nudge_text = card.pending_nudge
+                card.pending_nudge = None
+                await append_event(
+                    session,
+                    card_id=card.id,
+                    column_visit_id=visit.id,
+                    type=EventType.SYSTEM_NOTE,
+                    payload={"action": "nudge", "note": nudge_text},
+                )
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": "A human just left this note — read it and factor it into what "
+                        f"you do next:\n\n{nudge_text}",
+                    }
+                )
+                await session.commit()
+
             # Renew the claim lease every iteration, piggybacking on whichever commit
             # this iteration makes first (below) rather than committing separately.
             # Card.is_being_worked (the dashboard spinner) and claim_next_card's

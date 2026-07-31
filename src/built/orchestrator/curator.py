@@ -8,6 +8,7 @@ old Tender this replaces, its worktree needs no git identity, no commit, no push
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 
 from built.agent.context_window import ContextWindowConfig
 from built.agent.curation import run_curation_pass
@@ -32,6 +33,24 @@ logger = logging.getLogger(__name__)
 # concurrently; only two triggers of the *same* kind for the *same* project collide.
 _curation_in_progress: set[tuple[str, ActivityKind]] = set()
 
+# How often each kind is allowed to fire automatically (scheduler path only — a
+# manual "run now" via run_curation_activity never checks this). Falls back to
+# settings.curator_poll_interval_seconds for any kind not listed here.
+# security_sweep/bug_sweep are the urgent, cost-of-silence-is-high kinds and stay at
+# the global default; the backlog-grooming kinds (each capped to "file the single
+# best candidate" by agent/curation.py's _CURATION_FILE_POLICY) run far less often.
+_CURATION_INTERVALS: dict[ActivityKind, float] = {
+    ActivityKind.SECURITY_SWEEP: 1800,  # = global default; most urgent alongside bug_sweep
+    ActivityKind.BUG_SWEEP: 1800,  # = global default
+    ActivityKind.OPPORTUNITY_BRAINSTORM: 21600,  # 6h — backlog-grooming kind, prone to flooding
+    ActivityKind.POLISH_REVIEW: 21600,
+    ActivityKind.STAY_DRY: 21600,
+    ActivityKind.REFACTOR_SWEEP: 21600,
+    ActivityKind.COVERAGE_SWEEP: 21600,
+    # agents_md: no entry — falls back to curator_poll_interval_seconds as a floor;
+    # its own closed-work gate below is the stricter, real throttle in practice.
+}
+
 
 def is_curation_running(project_id: str, kind: ActivityKind) -> bool:
     return (project_id, kind) in _curation_in_progress
@@ -42,27 +61,32 @@ def _format_recent_outcomes(outcomes: list[dict]) -> str:
     return "\n".join(lines) or "(nothing new)"
 
 
-async def _needs_run(session, project: Project, kind: ActivityKind) -> tuple[bool, str | None]:
-    """Returns (should_run, extra_context). Every kind is WIP-limited by the PM
-    column's backlog first — with no per-kind cooldown, curation could otherwise
-    pile up cards far faster than a concurrency-capped orchestrator can ever work
-    through. This only gates the *automatic* scheduler loop below; a human
-    explicitly clicking "run now" (run_curation_activity called directly from the
-    UI) still always fires.
+def _as_utc(dt: datetime) -> datetime:
+    # Same SQLite naive-datetime round-trip gotcha as services/card_service.py's _as_utc.
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
-    Past that: agents_md is gated by "has anything closed since last run" (its
-    extra_context is that closed work, formatted) — the natural throttle for a
-    sparse-signal activity. The other three have no cooldown at all: every
-    scheduler wake is another chance to find new work, so
-    curator_poll_interval_seconds is the only pacing — keep proposing as long as
-    there's room in the backlog."""
+
+async def _needs_run(session, project: Project, kind: ActivityKind) -> tuple[bool, str | None]:
+    """Returns (should_run, extra_context). Gated in order: (1) the PM column's
+    backlog WIP limit, checked first for every kind — cheapest, and there's no
+    point computing cadence for a kind that can't propose anywhere useful anyway;
+    (2) a uniform per-kind interval (_CURATION_INTERVALS, falling back to
+    curator_poll_interval_seconds) since this kind's last run; (3) agents_md only,
+    an *additional* "anything closed since last run" gate stacked on top of (2) —
+    the natural throttle for its sparse-signal activity. None of this gates a
+    human's manual "run now" (run_curation_activity called directly) — only the
+    automatic scheduler loop below reads this."""
     pm_backlog = await card_service.count_column_backlog(session, project.id, Column.PM)
     if pm_backlog >= settings.curator_max_pm_backlog:
         return False, None
 
+    last_run = await project_service.get_activity_last_run(session, project.id, kind)
+    interval = _CURATION_INTERVALS.get(kind, settings.curator_poll_interval_seconds)
+    if last_run is not None and (datetime.now(UTC) - _as_utc(last_run)).total_seconds() < interval:
+        return False, None
+
     if kind != ActivityKind.AGENTS_MD:
         return True, None
-    last_run = await project_service.get_activity_last_run(session, project.id, kind)
     outcomes = await card_service.list_recent_visit_outcomes(session, project.id, since=last_run)
     if not outcomes:
         return False, None

@@ -1,6 +1,6 @@
 """OpenAI-compatible function-calling tool schemas, one list per column role."""
 
-from built.domain.enums import DeployMode
+from built.domain.enums import DeployMode, Severity
 
 READ_FILE = {
     "type": "function",
@@ -521,6 +521,19 @@ PROPOSE_TASKS = {
                         "type": "object",
                         "properties": {
                             "title": {"type": "string", "description": "A short title for the card."},
+                            "severity": {
+                                "type": "string",
+                                "enum": [s.value for s in Severity],
+                                "description": (
+                                    "How much this matters if left unaddressed — rate honestly, not "
+                                    "inflated. critical: actively broken/exploitable/data-loss risk. "
+                                    "high: clearly worth doing soon. medium: real but not urgent. "
+                                    "low: minor/cosmetic. A server-side policy uses this to decide "
+                                    "which candidates actually become cards, so an inflated rating "
+                                    "doesn't help this one get filed and just makes future ratings "
+                                    "less trustworthy."
+                                ),
+                            },
                             "raw_request": {
                                 "type": "string",
                                 "description": (
@@ -531,7 +544,7 @@ PROPOSE_TASKS = {
                                 ),
                             },
                         },
-                        "required": ["title", "raw_request"],
+                        "required": ["title", "severity", "raw_request"],
                     },
                 }
             },
@@ -541,11 +554,53 @@ PROPOSE_TASKS = {
 }
 
 # Shared by every curation kind (agent/curation.py) — bug_sweep, opportunity_brainstorm,
-# polish_review, and agents_md all explore read-only and end with propose_tasks. None
-# of them can write to the repo; the only thing any curation pass can do is create
-# new cards, exactly like a human PM filing a ticket.
+# polish_review, stay_dry, security_sweep, coverage_sweep, refactor_sweep, and agents_md
+# all explore read-only and end with propose_tasks. None of them can write to the repo;
+# the only thing any curation pass can do is create new cards, exactly like a human PM
+# filing a ticket.
 CURATION_TOOLS = [READ_FILE, LIST_FILES, GLOB_FILES, GREP_FILES, PROPOSE_TASKS]
 CURATION_TERMINAL_TOOL = "propose_tasks"
+
+# A separate, narrow tool for agent/curation.py's live-DB duplicate check — deliberately
+# not part of CURATION_TOOLS/the explore-then-propose loop above: this is a single
+# judgment call made server-side, after propose_tasks has already returned, comparing
+# severity-surviving candidates against the project's live open cards.
+REPORT_DUPLICATE_CANDIDATES = {
+    "type": "function",
+    "function": {
+        "name": "report_duplicate_candidates",
+        "description": (
+            "Report which numbered candidates duplicate an already-open card on the board — the "
+            "same underlying request, not just a similar topic. Call this exactly once; omit a "
+            "candidate entirely if it's genuinely new."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "duplicates": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "candidate_index": {
+                                "type": "integer",
+                                "description": "0-based index of the duplicate candidate, as numbered above.",
+                            },
+                            "duplicate_of_card_id": {
+                                "type": "string",
+                                "description": "id of the existing open card it duplicates.",
+                            },
+                        },
+                        "required": ["candidate_index", "duplicate_of_card_id"],
+                    },
+                }
+            },
+            "required": ["duplicates"],
+        },
+    },
+}
+CURATION_DEDUP_TOOLS = [REPORT_DUPLICATE_CANDIDATES]
+CURATION_DEDUP_TERMINAL_TOOL = "report_duplicate_candidates"
 
 MAX_TICKETS_PER_CHAT_TURN = 5
 

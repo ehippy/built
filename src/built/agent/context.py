@@ -64,8 +64,34 @@ _CURATION_FOCUS: dict[ActivityKind, str] = {
         "copy-pasted blocks, parallel implementations of the same idea living in different files or "
         "functions. Name the specific files/functions involved and propose a concrete refactor that "
         "extracts or consolidates the shared code. Skip incidental similarity that isn't actually the "
-        "same concept, and skip pure style inconsistency (that's polish-review's job) — this is about "
-        "logic that's actually repeated."
+        "same concept; skip pure style inconsistency (polish-review's job) and skip structural/boundary "
+        "problems that aren't about repeated logic (refactor-sweep's job) — this is about logic that's "
+        "actually repeated."
+    ),
+    ActivityKind.SECURITY_SWEEP: (
+        "working in security-sweep mode: hunt for authorization gaps (a route or tool that skips a "
+        "check an equivalent one performs), injection risk (unsanitized input reaching a shell/SQL/"
+        "template sink), secrets or credentials leaking into code, logs, or config, and known-"
+        "vulnerable dependencies. Each finding needs the exact file and the exploitable condition, not "
+        "a generic 'could be more secure.' Leave general correctness bugs that carry no security "
+        "implication to bug-sweep."
+    ),
+    ActivityKind.COVERAGE_SWEEP: (
+        "working in coverage-sweep mode: find a code path, branch, or documented behavior with no test "
+        "that would catch it breaking — an error path never exercised, a public function with zero "
+        "tests, a documented edge case nothing asserts. Name the specific file/function and what a test "
+        "should verify. This is about missing verification, not missing correctness — if you notice an "
+        "actual bug while exploring, leave filing it to bug-sweep; propose a test-coverage card, not a "
+        "fix."
+    ),
+    ActivityKind.REFACTOR_SWEEP: (
+        "working in refactor-sweep mode: find structural decay — an overgrown function or module that "
+        "should split, a layering or boundary violation (e.g. a router doing DB queries directly, "
+        "logic that should live in services/ living elsewhere), dead code, or a convention that's "
+        "drifted (an enum or pattern applied at one call site but not its counterpart). Name the "
+        "specific files and the concrete restructuring, not a vague 'this could be cleaner.' Leave "
+        "textual/logic duplication to stay-DRY and purely cosmetic naming/formatting to polish-review "
+        "— this is about shape and boundaries, not what's repeated or how it reads."
     ),
 }
 
@@ -96,7 +122,8 @@ def build_curation_prompt(
             "valuable one rather than folding them all into one sprawling update — the rest can "
             "surface on a future pass. propose_tasks requires at least one task, so if nothing feels "
             "truly worth flagging, propose the single most real (if marginal) observation rather than "
-            "forcing something contrived.\n\n"
+            "forcing something contrived. The propose_tasks schema requires a severity rating; use "
+            "\"medium\" — it isn't used for this kind.\n\n"
             f"Project goal: {project.overarching_goal}"
         )
         user = f"Recently closed work since the last pass:\n{extra_context or '(nothing new)'}"
@@ -113,11 +140,14 @@ def build_curation_prompt(
         "issues, that's several tasks, not one task whose raw_request lists them all; never bundle "
         "unrelated findings together just to stay under the task limit below.\n\n"
         f"Project goal: {project.overarching_goal}\n\n"
-        f"When ready, call propose_tasks with 1 to {MAX_PROPOSED_TASKS} concrete, well-scoped tasks. "
-        "Each becomes a new card that flows through the same PM -> Developer -> Tester -> Deployer "
-        "pipeline as a human-submitted request. If you don't find anything worth proposing, call "
-        "propose_tasks with your single best idea rather than nothing — nobody is watching this run "
-        "interactively, so do not stop to ask a question."
+        f"When ready, call propose_tasks with 1 to {MAX_PROPOSED_TASKS} concrete, well-scoped tasks, "
+        "each rated with an honest severity (critical/high/medium/low) reflecting real-world impact if "
+        "left unaddressed — don't inflate every finding to critical just to avoid it being dropped; a "
+        "dishonest rating just means a genuinely urgent finding on a future pass gets lost in the "
+        "noise. Each becomes a new card that flows through the same PM -> Developer -> Tester -> "
+        "Deployer pipeline as a human-submitted request. If you don't find anything worth proposing, "
+        "call propose_tasks with your single best idea rather than nothing — nobody is watching this "
+        "run interactively, so do not stop to ask a question."
     )
     existing = "\n".join(f"- {t}" for t in existing_titles) or "(none yet)"
     user = f"Existing/recent card titles in this project — don't propose duplicates of these:\n{existing}"

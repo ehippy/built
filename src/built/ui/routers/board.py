@@ -16,7 +16,10 @@ _CURATION_LABELS: dict[ActivityKind, str] = {
     ActivityKind.BUG_SWEEP: "Bug sweep",
     ActivityKind.OPPORTUNITY_BRAINSTORM: "Opportunities",
     ActivityKind.POLISH_REVIEW: "Polish review",
-    ActivityKind.STAY_DRY: "Stay DRY",
+    ActivityKind.STAY_DRY: "Duplication sweep",
+    ActivityKind.SECURITY_SWEEP: "Security sweep",
+    ActivityKind.COVERAGE_SWEEP: "Coverage sweep",
+    ActivityKind.REFACTOR_SWEEP: "Refactor sweep",
     ActivityKind.AGENTS_MD: "Tend AGENTS.md",
 }
 

@@ -83,6 +83,26 @@ async def list_recent_card_titles(session: AsyncSession, project_id: str, *, lim
     return list((await session.scalars(stmt)).all())
 
 
+async def list_open_cards(session: AsyncSession, project_id: str, *, limit: int = 50) -> list[Card]:
+    """Genuinely open cards — not archived and not in a terminal lifecycle_state —
+    newest first. Unlike list_recent_card_titles (last-N by creation date,
+    unfiltered by status, used by chat.py), this is what agent/curation.py's
+    duplicate-detection needs: a window that can't mix done/failed noise into
+    what's actually still live on the board. Returns full Card rows, not just
+    titles, since the dedup check needs raw_request too."""
+    stmt = (
+        select(Card)
+        .where(
+            Card.project_id == project_id,
+            Card.archived_at.is_(None),
+            Card.lifecycle_state.not_in([LifecycleState.DONE, LifecycleState.FAILED]),
+        )
+        .order_by(Card.created_at.desc())
+        .limit(limit)
+    )
+    return list((await session.scalars(stmt)).all())
+
+
 async def get_card(
     session: AsyncSession, card_id: str, *, with_visits: bool = False, with_last_activity: bool = False
 ) -> Card:

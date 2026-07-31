@@ -75,10 +75,17 @@ toggleable via `BUILT_*_ENABLED` (`config.py`):
   project that end in `propose_tasks`, filing new cards exactly like a human PM. The category
   registry is `domain/enums.py`'s `ActivityKind`; adding a new curation category means touching
   four places: the enum member (`enums.py`), its focus prompt (`agent/context.py`'s
-  `_CURATION_FOCUS`), its UI label (`ui/routers/board.py`'s `_CURATION_LABELS`), and its button
-  (`ui/templates/board.html.j2`). The shared prompt template and the `propose_tasks` tool schema
-  both enforce that each proposed card is one atomic, independently-workable unit — never a
-  bundle of unrelated findings.
+  `_CURATION_FOCUS`), its UI label (`ui/routers/board.py`'s `_CURATION_LABELS`), and — if it
+  should run on a different cadence or file-volume policy than the defaults — an entry in
+  `orchestrator/curator.py`'s `_CURATION_INTERVALS` and/or `agent/curation.py`'s
+  `_CURATION_FILE_POLICY`; the board template itself needs no edit, since it renders whatever
+  `_curation_statuses` computes generically. The shared prompt template and the `propose_tasks`
+  tool schema both enforce that each proposed card is one atomic, independently-workable unit —
+  never a bundle of unrelated findings, and each is self-rated with a severity the file-policy
+  uses to decide how many candidates actually become cards. A second, code-level check
+  (`agent/curation.py`'s `_whittle_tasks`) re-verifies proposed candidates against the live board
+  right before creating cards — the model's own read of "existing/recent titles" earlier in its
+  context is a steering hint, never the enforcement.
 - **Reviver** (`agent/reviver.py`) — decides whether to retry blocked/failed cards or leave them
   for a human, with its own bounded retry budget.
 - **CI watcher** — polls GitHub's Checks API for `auto_main` deploys that pushed but haven't been

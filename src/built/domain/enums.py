@@ -31,6 +31,19 @@ class Priority(StrEnum):
     LOW = "low"
 
 
+class Severity(StrEnum):
+    """A curation candidate's self-rated importance (llm/tool_schemas.py's
+    PROPOSE_TASKS) — never confused with Priority: Priority is a human's manual
+    signal on a Card, never touched by any agent. Severity is the model's own
+    rating of a not-yet-filed candidate, consumed only by agent/curation.py's
+    server-side file-policy whittling, then discarded — never written to a Card."""
+
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
 class LifecycleState(StrEnum):
     """Whether a card is currently claimable by the orchestrator."""
 
@@ -119,4 +132,7 @@ class ActivityKind(StrEnum):
     OPPORTUNITY_BRAINSTORM = "opportunity_brainstorm"
     POLISH_REVIEW = "polish_review"
     STAY_DRY = "stay_dry"  # looks for duplicated code and proposes shared-code refactors
+    SECURITY_SWEEP = "security_sweep"  # authz gaps, injection, secrets in code/logs/config, vuln deps
+    COVERAGE_SWEEP = "coverage_sweep"  # code paths/behaviors with no test verifying them; files, doesn't fix
+    REFACTOR_SWEEP = "refactor_sweep"  # decomposition candidates, layering violations, dead code, drift
     AGENTS_MD = "agents_md"  # proposes an AGENTS.md-update card; replaces the old Tender

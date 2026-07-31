@@ -1,9 +1,13 @@
 {% extends "base.html.j2" %}
 {% import "macros.html.j2" as m %}
 {% block title %}{{ card.title }}{% endblock %}
+{% block breadcrumb %}
+{{ super() }}
+<span class="navbar-text text-white-50 px-1">/</span>
+<span class="navbar-text py-0 fs-6 text-truncate" style="max-width: 40vw;">{{ card.title }}</span>
+{% endblock %}
 {% block content %}
 <div class="mb-3">
-  <h1>{{ card.title }}</h1>
   <p class="d-flex flex-wrap align-items-center gap-1">
     {{ m.badge(card.lifecycle_state) }}
     <span class="badge text-bg-secondary">{{ card.column }}</span>

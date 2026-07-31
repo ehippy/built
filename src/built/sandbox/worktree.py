@@ -8,6 +8,7 @@ from pathlib import Path
 
 from built.config import settings
 from built.db.models import Card, Project
+from built.tools import git_tools
 from built.tools.git_tools import GitCommandError, run_git
 
 
@@ -114,6 +115,26 @@ async def create_card_worktree(project: Project, card: Card) -> Path:
         "worktree", "add", "-b", card.branch_name, str(wt_path), project.default_branch, cwd=bare_path
     )
     return wt_path
+
+
+async def sync_card_branch_with_default(project: Project, wt_path: Path) -> list[str]:
+    """Merges the current tip of default_branch into the card's branch. Called once
+    at the start of every Developer visit (orchestrator/worker.py) — otherwise a
+    card's worktree is branched off default_branch exactly once, at creation
+    (create_card_worktree above), and never touches it again until Deployer's own
+    merge attempt, however long that takes and however much else lands on
+    default_branch in the meantime. This keeps Developer working against
+    near-current main, so Tester/Reviewer see and verify the merged result too,
+    instead of Deployer being the only place — and the last possible moment,
+    with no bash/test tools — a conflict can surface.
+
+    Returns the conflicted paths if the merge produced a genuine conflict — left
+    in place with markers still in the files for Developer's own read_file/
+    write_file/edit_file to resolve (tools/dispatcher.py's auto-commit is
+    merge-aware, so a partial fix across several tool calls can't bake a
+    still-conflicted file into a commit). Returns an empty list on a clean merge,
+    including a no-op when the branch is already up to date."""
+    return await git_tools.attempt_merge(wt_path, project.default_branch, abort_on_conflict=False)
 
 
 async def remove_card_worktree(project: Project, card: Card) -> None:

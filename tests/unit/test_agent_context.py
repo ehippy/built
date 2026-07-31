@@ -65,6 +65,26 @@ def test_developer_prompt_tells_the_plan_to_cover_every_feedback_item():
     assert "step for every item in that feedback" in system
 
 
+def test_developer_prompt_leads_with_sync_conflict_before_feedback():
+    """A merge conflict from the pre-visit branch sync (orchestrator/worker.py +
+    sandbox/worktree.sync_card_branch_with_default) is a blocking prerequisite —
+    it must come before even the revision feedback block, since nothing else this
+    visit does will actually get committed until it's resolved."""
+    card = _card(latest_feedback="tests/test_whats_new.js fails: expected 5 entries, found 4")
+    _, user = build_developer_prompt(_project(), card, sync_conflict_paths=["app.py", "gameStore.js"])
+
+    assert "app.py" in user
+    assert "gameStore.js" in user
+    conflict_pos = user.index("BEFORE ANYTHING ELSE")
+    revision_pos = user.index("THIS IS A REVISION")
+    assert conflict_pos < revision_pos
+
+
+def test_developer_prompt_omits_sync_conflict_note_when_none():
+    _, user = build_developer_prompt(_project(), _card())
+    assert "BEFORE ANYTHING ELSE" not in user
+
+
 def test_tester_prompt_includes_retry_note_when_present():
     _, user = build_tester_prompt(
         _project(), _card(), developer_summary="did stuff", retry_note="re-run flaky test"

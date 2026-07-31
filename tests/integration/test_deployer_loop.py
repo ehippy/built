@@ -173,10 +173,13 @@ async def test_deployer_loop_auto_main_happy_path_merges_and_deploys(db_session,
     assert card.deploying_commit_sha is None
 
 
-async def test_deployer_loop_auto_main_resolves_conflict_via_file_tools(db_session, toy_repo_remote):
-    """The actual point of this feature: run_deploy() hits a real merge conflict,
-    the agent uses write_file to fix it directly in the shared deployer worktree,
-    then calls run_deploy() again to complete the merge — no human involved."""
+async def test_deployer_loop_auto_main_conflict_bounces_card_back_to_developer(db_session, toy_repo_remote):
+    """The actual point of this feature: run_deploy() hitting a real merge conflict
+    is no longer something the Deployer agent resolves itself (it has no bash/test
+    tools to re-verify a fix). One run_deploy call is enough to end the visit —
+    the card goes straight back to Developer with feedback explaining why, and the
+    conflicted merge worktree is left clean, not sitting there waiting for a second
+    run_deploy call that will never come."""
     _allow_push_to_checked_out_branch(toy_repo_remote)
     project, card_b, wt_path = await _make_conflict_setup(db_session, toy_repo_remote)
     visit = await transitions.start_visit(db_session, card_b)
@@ -188,25 +191,6 @@ async def test_deployer_loop_auto_main_resolves_conflict_via_file_tools(db_sessi
                 tool_calls=[ToolCallRequest(id="call_1", name="run_deploy", arguments={})],
                 endpoint_used="fake::model",
             ),
-            LLMResult(
-                content=None,
-                tool_calls=[
-                    ToolCallRequest(
-                        id="call_2",
-                        name="write_file",
-                        arguments={
-                            "path": "app.py",
-                            "content": "def greet():\n    return 'hello from a and b'\n",
-                        },
-                    )
-                ],
-                endpoint_used="fake::model",
-            ),
-            LLMResult(
-                content=None,
-                tool_calls=[ToolCallRequest(id="call_3", name="run_deploy", arguments={})],
-                endpoint_used="fake::model",
-            ),
         ]
     )
 
@@ -216,46 +200,36 @@ async def test_deployer_loop_auto_main_resolves_conflict_via_file_tools(db_sessi
         card_b,
         visit,
         llm_client=llm,
-        dispatcher=_dispatcher(card_b.id, wt_path, auto_commit=False),
+        dispatcher=_dispatcher(card_b.id, wt_path),
         max_iterations=10,
         mode=DeployMode.AUTO_MAIN,
     )
 
+    assert result.column == Column.DEVELOPER
     assert result.lifecycle_state == LifecycleState.ACTIVE
-    assert result.deploying_commit_sha is not None
-    assert visit.outcome == VisitOutcome.DEPLOYED_PENDING_CI
-    assert "hello from a and b" in (toy_repo_remote / "app.py").read_text()
-    log = subprocess.run(
-        ["git", "log", "--oneline", "main"], cwd=toy_repo_remote, check=True, capture_output=True, text=True
-    ).stdout
-    assert "Merge" in log
-
-    counts = await run_ci_watcher_once()
-    assert counts["confirmed"] == 1
-    await db_session.refresh(card_b)
-    assert card_b.lifecycle_state == LifecycleState.DONE
-    assert card_b.deploying_commit_sha is None
+    assert result.revision_count == 1
+    assert result.deploy_attempt_count == 0
+    assert visit.outcome == VisitOutcome.DEPLOY_CONFLICT
+    assert result.latest_feedback is not None
+    assert "app.py" in result.latest_feedback
+    assert not await git_tools.merge_in_progress(wt_path)
+    assert await git_tools.status(wt_path) == ""
 
 
-async def test_deployer_loop_auto_main_abandon_deploy_on_unresolvable_conflict(db_session, toy_repo_remote):
+async def test_deployer_loop_auto_main_abandon_deploy(db_session, toy_repo_remote):
     _allow_push_to_checked_out_branch(toy_repo_remote)
-    project, card_b, wt_path = await _make_conflict_setup(db_session, toy_repo_remote)
-    visit = await transitions.start_visit(db_session, card_b)
+    project, card, wt_path = await _make_deployer_card(db_session, toy_repo_remote, mode=DeployMode.AUTO_MAIN)
+    visit = await transitions.start_visit(db_session, card)
 
     llm = ScriptedLLMClient(
         [
             LLMResult(
                 content=None,
-                tool_calls=[ToolCallRequest(id="call_1", name="run_deploy", arguments={})],
-                endpoint_used="fake::model",
-            ),
-            LLMResult(
-                content=None,
                 tool_calls=[
                     ToolCallRequest(
-                        id="call_2",
+                        id="call_1",
                         name="abandon_deploy",
-                        arguments={"reason": "conflicting product intent, needs a human"},
+                        arguments={"reason": "deploy config looks wrong, needs a human"},
                     )
                 ],
                 endpoint_used="fake::model",
@@ -266,10 +240,10 @@ async def test_deployer_loop_auto_main_abandon_deploy_on_unresolvable_conflict(d
     result = await run_deployer_visit(
         db_session,
         project,
-        card_b,
+        card,
         visit,
         llm_client=llm,
-        dispatcher=_dispatcher(card_b.id, wt_path, auto_commit=False),
+        dispatcher=_dispatcher(card.id, wt_path),
         max_iterations=10,
         mode=DeployMode.AUTO_MAIN,
     )
@@ -280,7 +254,7 @@ async def test_deployer_loop_auto_main_abandon_deploy_on_unresolvable_conflict(d
     assert result.lifecycle_state == LifecycleState.ACTIVE
     assert result.deploy_attempt_count == 1
     assert visit.outcome == VisitOutcome.FAILED
-    assert "abandoned: conflicting product intent" in visit.summary
+    assert "abandoned: deploy config looks wrong" in visit.summary
 
 
 async def test_deployer_loop_pr_to_operator_happy_path_opens_pr(db_session, toy_repo_remote, monkeypatch):

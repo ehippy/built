@@ -38,10 +38,26 @@ class ToolDispatcher:
 
         commit_sha = None
         if name in MUTATING_TOOLS and self.ctx.auto_commit and not result.is_error:
-            commit_sha = await git_tools.commit_all(
+            commit_sha = await self._auto_commit(name, arguments)
+        return DispatchOutcome(result=result, commit_sha=commit_sha, command_result=command_result)
+
+    async def _auto_commit(self, name: str, arguments: dict) -> str | None:
+        # sandbox/worktree.sync_card_branch_with_default can leave a card's own
+        # worktree mid-merge (MERGE_HEAD set, conflict markers in files) at the
+        # start of a Developer visit. A plain commit_all here would `git add -A`
+        # and commit on every single mutating tool call — including files nobody
+        # has touched yet — which would bake still-conflicted markers from an
+        # untouched file into the merge commit the moment the *first* conflicted
+        # file gets fixed. Hold off committing anything until every conflicted
+        # path is actually clean, then finish the merge commit in one shot,
+        # mirroring how sandbox/deploy_runner.py used to guard the same thing.
+        if await git_tools.merge_in_progress(self.ctx.worktree_root):
+            if await git_tools.conflicted_paths(self.ctx.worktree_root):
+                return None
+            return await git_tools.complete_merge(
                 self.ctx.worktree_root, message=_commit_message(name, arguments)
             )
-        return DispatchOutcome(result=result, commit_sha=commit_sha, command_result=command_result)
+        return await git_tools.commit_all(self.ctx.worktree_root, message=_commit_message(name, arguments))
 
     async def _call(self, name: str, arguments: dict) -> tuple[ToolResult, CommandResult | None]:
         if name == "read_file":

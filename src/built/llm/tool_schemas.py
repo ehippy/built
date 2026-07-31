@@ -793,11 +793,10 @@ RUN_DEPLOY = {
         "description": (
             "Merge this card's branch into the default branch, push it, and run the project's "
             "configured deploy command. Takes no arguments — the merge, push, and deploy command are "
-            "fixed by project configuration, not by you. If it reports a merge conflict, this does "
-            "NOT end your turn: resolve the listed files with read_file/write_file/edit_file, then "
-            "call run_deploy() again to pick up where it left off and complete the merge. Only ends "
-            "your turn on an actual outcome — success, a non-conflict failure, or you completing the "
-            "merge — there is no confirmation step after a real completion."
+            "fixed by project configuration, not by you. This always ends your turn: on success, on "
+            "an ordinary failure (push rejected, deploy command failed), and on a merge conflict too "
+            "— a conflict is not yours to resolve, the card is automatically sent back to Developer "
+            "to reconcile against the current default branch."
         ),
         "parameters": {"type": "object", "properties": {}},
     },
@@ -809,10 +808,10 @@ ABANDON_DEPLOY = {
     "function": {
         "name": "abandon_deploy",
         "description": (
-            "Give up on this deploy attempt and leave it for a human, instead of guessing. Use this "
-            "for a merge conflict you can't reasonably resolve yourself — e.g. the two sides make "
-            "genuinely conflicting product decisions about the same content, not just an overlapping "
-            "file — or any other situation your tools can't fix. This ends your turn."
+            "Give up on this deploy attempt and leave it for a human, instead of guessing — e.g. the "
+            "project's deploy configuration itself looks wrong, or something about this specific "
+            "deploy genuinely shouldn't be attempted unsupervised. (A merge conflict is handled for "
+            "you automatically — you don't need this tool for that.) This ends your turn."
         ),
         "parameters": {
             "type": "object",
@@ -852,19 +851,16 @@ OPEN_PULL_REQUEST = {
 DEPLOYER_PR_TERMINAL_TOOL = "open_pull_request"
 
 _DEPLOYER_READ_TOOLS = [READ_FILE, LIST_FILES, GLOB_FILES, GREP_FILES]
-# auto_main only: real editing tools, scoped by the caller to the Deployer's merge
-# worktree (not the card's own worktree) — this is what actually lets the agent fix
-# a merge conflict instead of just detecting and reporting one.
-_DEPLOYER_CONFLICT_TOOLS = [WRITE_FILE, EDIT_FILE, GIT_STATUS, GIT_DIFF]
 
 
 def deployer_tools(mode: DeployMode) -> list[dict]:
-    """auto_main gets read tools, conflict-resolution editing tools, and both
-    terminal tools (run_deploy, abandon_deploy). pr_to_operator never merges, so it
-    only needs read tools plus its own single terminal tool — the model never sees a
-    tool it can't use."""
+    """auto_main gets read tools and both terminal tools (run_deploy, abandon_deploy)
+    — no editing tools, since a merge conflict is no longer resolved in-place here
+    (see sandbox/deploy_runner.py). pr_to_operator never merges, so it only needs
+    read tools plus its own single terminal tool — the model never sees a tool it
+    can't use."""
     if mode == DeployMode.AUTO_MAIN:
-        return [*_DEPLOYER_READ_TOOLS, *_DEPLOYER_CONFLICT_TOOLS, RUN_DEPLOY, ABANDON_DEPLOY]
+        return [*_DEPLOYER_READ_TOOLS, RUN_DEPLOY, ABANDON_DEPLOY]
     return [*_DEPLOYER_READ_TOOLS, OPEN_PULL_REQUEST]
 
 

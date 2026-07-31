@@ -30,6 +30,7 @@ from built.sandbox.worktree import (
     create_card_worktree,
     ensure_tool_worktree,
     read_default_branch_file,
+    sync_card_branch_with_default,
 )
 from built.services import card_service, endpoint_service
 from built.tools.base import ToolContext
@@ -219,10 +220,15 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
         # auto_main deploys operate in the Deployer's own dedicated worktree, not the
         # card's — that's where a merge (and any conflict) actually happens, so the
         # agent's file tools need to be scoped there instead of the card's branch.
+        sync_conflict_paths: list[str] = []
         if is_deployer_auto_main:
             worktree_path = await ensure_tool_worktree(project, tool="deployer")
         else:
             worktree_path = await create_card_worktree(project, card)
+            if card.column == Column.DEVELOPER:
+                # Otherwise this worktree only ever sees default_branch's tip once,
+                # at creation — see sandbox/worktree.sync_card_branch_with_default.
+                sync_conflict_paths = await sync_card_branch_with_default(project, worktree_path)
     except Exception as exc:  # noqa: BLE001 — deliberate: setup failures block the card, not the worker
         visit = await transitions.start_visit(session, card)
         # str(), not repr() — see agent/loop.py's identical comment on the same fix.
@@ -315,6 +321,7 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
             retry_recap=retry_recap,
             retry_note=retry_note,
             agents_doc=agents_doc,
+            sync_conflict_paths=sync_conflict_paths,
         )
     elif card.column == Column.TESTER:
         developer_summary = await card_service.get_latest_visit_summary(session, card.id, Column.DEVELOPER)

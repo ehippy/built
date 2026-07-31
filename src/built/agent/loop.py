@@ -621,9 +621,15 @@ async def run_developer_visit(
     retry_recap: str | None = None,
     retry_note: str | None = None,
     agents_doc: str | None = None,
+    sync_conflict_paths: list[str] | None = None,
 ) -> Card:
     system, user = build_developer_prompt(
-        project, card, retry_recap=retry_recap, retry_note=retry_note, agents_doc=agents_doc
+        project,
+        card,
+        retry_recap=retry_recap,
+        retry_note=retry_note,
+        agents_doc=agents_doc,
+        sync_conflict_paths=sync_conflict_paths,
     )
     return await run_column_visit(
         session,
@@ -752,12 +758,17 @@ async def run_deployer_visit(
             endpoint_used: str,
         ) -> TerminalHandlerResult:
             # Closure, not a free function: run_auto_main_deploy needs the exact
-            # worktree the dispatcher's file tools are scoped to, so a conflict fix
-            # made via write_file/edit_file in an earlier turn is the same worktree
-            # this looks at when the agent calls run_deploy() again.
+            # worktree the dispatcher's tools are scoped to.
             result = await deploy_runner.run_auto_main_deploy(project, card, dispatcher.ctx.worktree_root)
             if result.conflict:
-                return TerminalHandlerResult(handled=False, feedback=result.message)
+                await transitions.complete_deployer_visit_conflict(
+                    session,
+                    card,
+                    visit,
+                    conflicted_paths=result.conflicted_paths,
+                    endpoint_used=endpoint_used,
+                )
+                return TerminalHandlerResult(handled=True)
             await transitions.complete_deployer_visit(
                 session,
                 card,

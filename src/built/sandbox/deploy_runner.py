@@ -14,7 +14,7 @@ Two independent flows, selected by the project's DeployConfig.mode:
 import asyncio
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
@@ -27,20 +27,21 @@ from built.tools.git_tools import GitCommandError, run_git
 
 GITHUB_API_BASE = "https://api.github.com"
 
-_MERGE_AUTHOR_NAME = "built-deployer"
-_MERGE_AUTHOR_EMAIL = "deployer@built.local"
-
 
 @dataclass
 class DeployRunResult:
     success: bool
     message: str
     url: str | None = None
-    # True only for a merge conflict — the one failure mode the Deployer agent can
-    # actually act on (it has file tools scoped to this same worktree). Every other
-    # failure (push rejected, deploy command failed) is reported the same way but
-    # left as an ordinary terminal failure, since no amount of file editing fixes those.
+    # True only for a merge conflict. Unlike the old behavior, the Deployer agent
+    # never sees or fixes this itself — it has no bash/test tools to re-verify a
+    # resolution, and fixing it here would ship straight to production without ever
+    # going back through Tester or Reviewer. The caller (agent/loop.py) bounces the
+    # card back to Developer instead (domain/transitions.complete_deployer_visit_conflict).
+    # Every other failure (push rejected, deploy command failed) is an ordinary
+    # terminal failure, counted against the project's max_deploy_attempts.
     conflict: bool = False
+    conflicted_paths: list[str] = field(default_factory=list)
     # The commit actually pushed to default_branch (auto_main only) — what
     # orchestrator/ci_watcher.py polls GitHub's Checks API for afterward.
     commit_sha: str | None = None
@@ -50,78 +51,27 @@ async def run_auto_main_deploy(project: Project, card: Card, wt_path: Path) -> D
     """Merge the card's branch into default_branch, push, then run the configured
     deploy command.
 
-    wt_path is the Deployer's dedicated worktree, already ensured/reset exactly once
-    at visit start by the caller — this function never re-resolves it, so an
-    in-progress conflict resolution from an earlier tool call in the *same* visit
-    survives across repeated calls here instead of being wiped by a fresh reset.
-
-    A merge conflict is not auto-aborted: the conflicted worktree is left as-is and
-    reported back with conflict=True so the Deployer agent's file tools (read_file /
-    write_file / edit_file, scoped to this same worktree) can see the actual
-    conflict markers and fix them, then call run_deploy() again. That second call
-    re-checks every conflicted path's actual content for leftover markers (not just
-    git's index state, which nothing but `git add` would clear) and, only once none
-    remain, completes the merge commit itself — the per-tool auto-commit is off for
-    this worktree specifically so a partial fix can never silently bake leftover
-    markers from an untouched file into the merge commit."""
-    if await git_tools.merge_in_progress(wt_path):
-        conflicted = await git_tools.conflicted_paths(wt_path)
-        if conflicted:
-            return DeployRunResult(
-                success=False,
-                conflict=True,
-                message=(
-                    f"Still conflicted: {', '.join(conflicted)}. Resolve the remaining "
-                    "<<<<<<<' / '=======' / '>>>>>>>' markers with write_file or edit_file, then "
-                    "call run_deploy() again."
-                ),
-            )
-        await git_tools.complete_merge(
-            wt_path,
-            message=f"Merge {card.branch_name}",
-            author_name=_MERGE_AUTHOR_NAME,
-            author_email=_MERGE_AUTHOR_EMAIL,
+    wt_path is the Deployer's dedicated worktree, freshly reset to the tip of
+    default_branch by the caller before this runs. A merge conflict aborts the
+    merge and reports conflicted_paths — see DeployRunResult.conflict."""
+    # Discard anything sitting in the worktree first — the agent has no file tools
+    # of its own here anymore, but this guards the same edge case that motivated
+    # it originally: a stray untracked file left over from a previous, unrelated
+    # visit blocking the merge with an unrelated git error ("untracked working
+    # tree file would be overwritten"), not a real conflict.
+    await run_git("reset", "--hard", "HEAD", cwd=wt_path)
+    await run_git("clean", "-fd", cwd=wt_path)
+    conflicted = await git_tools.attempt_merge(wt_path, card.branch_name, abort_on_conflict=True)
+    if conflicted:
+        return DeployRunResult(
+            success=False,
+            conflict=True,
+            conflicted_paths=conflicted,
+            message=(
+                f"Merge conflict in: {', '.join(conflicted)} — sent back to Developer to resolve "
+                f"against the current {project.default_branch}."
+            ),
         )
-    else:
-        # A fresh merge attempt, not a continuation — discard anything sitting in
-        # the worktree first. The agent's file tools exist to fix an *actual*
-        # merge conflict, but nothing stops it from writing files before ever
-        # calling run_deploy (observed in practice: a model preemptively
-        # reimplementing a file it expected to already be there). Stray writes
-        # like that would otherwise block the merge with an unrelated git error
-        # ("untracked working tree file would be overwritten"), not a real
-        # conflict — and the agent has no tool that can clean that up itself.
-        await run_git("reset", "--hard", "HEAD", cwd=wt_path)
-        await run_git("clean", "-fd", cwd=wt_path)
-        try:
-            await run_git(
-                "-c",
-                f"user.name={_MERGE_AUTHOR_NAME}",
-                "-c",
-                f"user.email={_MERGE_AUTHOR_EMAIL}",
-                "merge",
-                "--no-ff",
-                "-m",
-                f"Merge {card.branch_name}",
-                card.branch_name,
-                cwd=wt_path,
-            )
-        except GitCommandError as exc:
-            conflicted = await git_tools.conflicted_paths(wt_path)
-            detail = (exc.stdout.strip() + "\n" + exc.stderr.strip()).strip()
-            return DeployRunResult(
-                success=False,
-                conflict=True,
-                message=(
-                    f"Merge conflict in: {', '.join(conflicted) or 'unknown files'}.\n{detail}\n\n"
-                    "Use read_file to see the conflict markers in each listed file, resolve them by "
-                    "combining both sides sensibly (no '<<<<<<<', '=======', or '>>>>>>>' left "
-                    "behind), save the fix with write_file or edit_file, then call run_deploy() "
-                    "again to complete the merge. If you can't reasonably resolve it yourself — the "
-                    "two sides represent a genuine product conflict, not just a mechanical one — "
-                    "call abandon_deploy with a clear reason instead of guessing."
-                ),
-            )
 
     try:
         await run_git("push", "origin", f"HEAD:{project.default_branch}", cwd=wt_path)

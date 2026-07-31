@@ -51,6 +51,8 @@ class VisitOutcome(StrEnum):
     DONE = "done"  # Deployer's run_deploy succeeded (pr_to_operator, or auto_main with no CI to watch)
     DEPLOYED_PENDING_CI = "deployed_pending_ci"  # auto_main run_deploy succeeded; CI still has to confirm
     FAILED = "failed"  # Deployer's run_deploy failed (this attempt, or terminally over cap)
+    DEPLOY_CONFLICT = "deploy_conflict"  # run_deploy hit a merge conflict — bounced back to Developer,
+    # not counted against max_deploy_attempts (see domain/transitions.complete_deployer_visit_conflict)
     ERROR = "error"  # iteration cap / endpoint chain exhausted / unhandled exception
     INTERRUPTED = "interrupted"  # process crashed mid-visit; orchestrator restarts fresh
     CANCELLED = "cancelled"  # a human cancelled the card while this visit was running

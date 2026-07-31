@@ -165,6 +165,7 @@ def build_developer_prompt(
     retry_recap: str | None = None,
     retry_note: str | None = None,
     agents_doc: str | None = None,
+    sync_conflict_paths: list[str] | None = None,
 ) -> tuple[str, str]:
     """Returns (system_prompt, initial_user_message)."""
     if project.test_command:
@@ -195,6 +196,11 @@ def build_developer_prompt(
         "there (git status, git log, git init, etc.) will fail with something like 'not a git "
         "repository' — that's expected sandbox isolation, not a bug to work around, and it's not a "
         "signal that anything is actually wrong with the repo.\n\n"
+        "Before this visit started, your branch was automatically synced with the project's current "
+        "default branch, so you're not building on a stale snapshot of the repo — normally a silent "
+        "no-op. If that sync produced a merge conflict instead, it's called out at the top of your "
+        "task below and takes priority over everything else this visit: none of your other work "
+        "will actually get committed until it's resolved.\n\n"
         "Your task this visit is the card below — its spec and acceptance criteria are the entire "
         "job. This project's overarching goal appears further down for context only (it explains "
         "why the project exists, so you can make judgment calls consistent with it) — it is not "
@@ -213,12 +219,13 @@ def build_developer_prompt(
         "call has every step marked done — exploring is how you figure out what the plan should be, "
         "not a substitute for writing one or executing it, and planning is not a substitute for "
         "understanding what's actually there first.\n\n"
-        "If the user message below opens with rejection feedback, that's real: a previous attempt "
-        "was reviewed and specific, concrete problems were found in the actual prior work — not "
-        "hypothetical gaps in the spec. Your plan must include a step for every item in that "
-        "feedback, not just a fresh pass over the acceptance criteria as if this were the first "
-        "attempt. The feedback is the most authoritative, up-to-date signal of what's actually "
-        "wrong; treat it as higher-priority than re-deriving the same plan from the spec again.\n\n"
+        "If the user message below opens with feedback from a previous attempt, that's real: "
+        "specific, concrete detail about what actually went wrong last time (rejected by Tester or "
+        "Reviewer, or a deploy blocked on a merge conflict) — not a hypothetical gap in the spec. "
+        "Your plan must include a step for every item in that feedback, not just a fresh pass over "
+        "the acceptance criteria as if this were the first attempt. The feedback is the most "
+        "authoritative, up-to-date signal of what's actually wrong; treat it as higher-priority than "
+        "re-deriving the same plan from the spec again.\n\n"
         f"{test_gate}"
         "submit_for_test is also rejected if this visit hasn't actually changed any files yet, "
         "however thoroughly you've explored or planned. If you find the acceptance criteria are "
@@ -233,15 +240,30 @@ def build_developer_prompt(
 
     criteria = "\n".join(f"- {c}" for c in card.acceptance_criteria) or "(none specified)"
     user = "Your task for this visit — the only thing to work on, not the project's broader goal:\n\n"
+    if sync_conflict_paths:
+        # Leads even the revision-feedback block below: this is a blocking
+        # prerequisite for everything else, not just prioritized context. The
+        # dispatcher's auto-commit refuses to commit anything while any of these
+        # files still have raw conflict markers, so nothing else this visit does
+        # will actually be saved until it's cleared.
+        user += (
+            "BEFORE ANYTHING ELSE: your branch was just automatically synced with the current "
+            f"{project.default_branch} to keep it from going stale, and that produced a merge "
+            f"conflict in: {', '.join(sync_conflict_paths)}. Resolve it first — use read_file to see "
+            "the '<<<<<<<' / '=======' / '>>>>>>>' markers in each listed file, decide how to combine "
+            "both sides sensibly, and save the fix with write_file or edit_file. None of your work "
+            "this visit is actually committed until every conflicted file is clean, however many "
+            "turns that takes — then continue with the rest of the card below.\n\n"
+        )
     if card.latest_feedback:
         # Leads the message, not an afterthought appended at the end — this is the
         # most specific, most actionable, most up-to-date signal of what's actually
         # wrong, and it needs to survive contact with everything else below it.
         user += (
-            "THIS IS A REVISION — a previous attempt at this card was reviewed and rejected. "
+            "THIS IS A REVISION — a previous attempt at this card didn't make it through cleanly. "
             "Your update_plan must include a step for every item below, not just a fresh pass "
             "over the acceptance criteria as if this were attempt one:\n\n"
-            f"Rejection feedback (address every item):\n{card.latest_feedback}\n\n"
+            f"Feedback from the previous attempt (address every item):\n{card.latest_feedback}\n\n"
         )
     user += (
         f"Card: {card.title}\n\n"
@@ -322,20 +344,15 @@ def build_deployer_prompt(
         system = (
             intro + "Your first action must be run_deploy — before that, your worktree is just a "
             "clean checkout of the default branch, so the card's own files genuinely aren't there "
-            "yet; that's expected, not a problem to fix. Do NOT write or create any files before "
-            "calling run_deploy — write_file/edit_file exist only to fix a merge conflict run_deploy "
-            "actually reports, never to author or recreate content yourself; the implementation was "
-            "already built and approved by Developer and Tester.\n\n"
+            "yet; that's expected, not a problem to fix, and not something you have tools to change "
+            "— the implementation was already built and approved by Developer and Tester.\n\n"
             "run_deploy takes no arguments — the merge, push, and deploy command are fixed by "
-            "project configuration, not by you. If it reports a merge conflict, that does NOT end "
-            "your turn: it's telling you exactly which files are conflicted, still inside this same "
-            "worktree, with git's own conflict markers ('<<<<<<<', '=======', '>>>>>>>') in them. Use "
-            "read_file to see each one, decide how to combine both sides sensibly, then write_file or "
-            "edit_file to save the fix with no markers left behind. Once every conflicted file is "
-            "clean, call run_deploy again — it picks up where it left off and completes the merge, "
-            "push, and deploy command. If a conflict genuinely can't be resolved by you (the two "
-            "sides represent conflicting product decisions, not just overlapping files), call "
-            f"abandon_deploy with a specific reason instead of guessing or looping pointlessly.\n\n"
+            "project configuration, not by you. It always ends your turn: on success, on an "
+            "ordinary failure (push rejected, deploy command failed), and on a merge conflict too — "
+            "a conflict is not yours to resolve, the card is automatically sent back to Developer to "
+            "reconcile against the current default branch, and this visit ends right there. If you "
+            "believe deploying genuinely shouldn't be attempted at all, call abandon_deploy with a "
+            "specific reason instead of retrying pointlessly.\n\n"
             f"Project goal: {project.overarching_goal}\n\n"
             "Nobody is watching this run interactively — do not stop to ask a question."
         )

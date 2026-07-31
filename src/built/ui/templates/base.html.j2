@@ -28,6 +28,13 @@
        run is still in progress, steady once it settles on pass/fail. */
     .ci-dot-pulse { animation: ci-dot-pulse 1.4s ease-in-out infinite; }
     @keyframes ci-dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+    /* Projects list (projects_list.html.j2) — a hover cue on an otherwise
+       borderless-looking clickable card, and a clamp so one long goal or
+       activity summary can't blow a card out to double the height of its
+       row-mates. */
+    .project-card { transition: box-shadow .15s ease, border-color .15s ease; }
+    .project-card:hover { border-color: var(--bs-primary); box-shadow: 0 .25rem .75rem rgba(0, 0, 0, .15); }
+    .clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   </style>
   <script src="/ui/static/htmx.min.js"></script>
 </head>

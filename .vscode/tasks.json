@@ -1,0 +1,22 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "built: bootstrap venv",
+      "type": "shell",
+      "command": "test -x .venv/bin/pip || python3 -m venv .venv; .venv/bin/pip install -q -e '.[dev]'; if [ ! -f .env ]; then cp .env.example .env; echo 'Created .env from .env.example — set BUILT_API_KEY in it, mutating endpoints 503 until you do.'; fi",
+      "options": {
+        "shell": {
+          "executable": "/bin/bash",
+          "args": ["-c"]
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": false
+      },
+      "problemMatcher": []
+    }
+  ]
+}

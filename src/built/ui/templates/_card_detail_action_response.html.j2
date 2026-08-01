@@ -1,0 +1,7 @@
+{# Response for the card-detail action forms (retry/nudge/cancel/edit/priority/archive/unarchive)
+   when submitted via htmx from either the standalone card page or the board's slide-over panel.
+   Keeps both possible title displays in sync via out-of-band swaps; whichever one isn't present
+   in the current DOM is silently skipped by htmx. #}
+<h5 class="offcanvas-title text-truncate" id="card-offcanvas-title" hx-swap-oob="true">{{ card.title }}</h5>
+<span class="navbar-text py-0 fs-6 text-truncate" style="max-width: 40vw;" id="card-detail-title-breadcrumb" hx-swap-oob="true">{{ card.title }}</span>
+{% include "_card_detail_body.html.j2" %}

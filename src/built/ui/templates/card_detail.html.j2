@@ -3,7 +3,7 @@
 {% block breadcrumb %}
 {{ super() }}
 <span class="navbar-text text-white-50 px-1">/</span>
-<span class="navbar-text py-0 fs-6 text-truncate" style="max-width: 40vw;">{{ card.title }}</span>
+<span class="navbar-text py-0 fs-6 text-truncate" style="max-width: 40vw;" id="card-detail-title-breadcrumb">{{ card.title }}</span>
 {% endblock %}
 {% block content %}
 {% include "_card_detail_body.html.j2" %}

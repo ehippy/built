@@ -1,4 +1,5 @@
 {% import "macros.html.j2" as m %}
+<div id="card-detail-root">
 <div class="mb-3">
   <p class="d-flex flex-wrap align-items-center gap-1">
     {{ m.badge(card.lifecycle_state) }}
@@ -13,8 +14,8 @@
 <!-- Every action this page offers lives here, in one place, instead of scattered
      next to whatever section happens to relate to it. -->
 <div class="d-flex flex-wrap align-items-center gap-2 mb-4">
-  <form method="post" action="/ui/cards/{{ card.id }}/priority">
-    <select class="form-select form-select-sm" name="priority" onchange="this.form.submit()">
+  <form method="post" action="/ui/cards/{{ card.id }}/priority" hx-post="/ui/cards/{{ card.id }}/priority" hx-target="#card-detail-root" hx-swap="outerHTML">
+    <select class="form-select form-select-sm" name="priority" onchange="this.form.requestSubmit()">
       <option value="high" {% if card.priority == "high" %}selected{% endif %}>High priority</option>
       <option value="normal" {% if card.priority == "normal" %}selected{% endif %}>Normal priority</option>
       <option value="low" {% if card.priority == "low" %}selected{% endif %}>Low priority</option>
@@ -25,7 +26,7 @@
   <details>
     <summary class="btn btn-primary btn-sm">Retry</summary>
     <div class="card card-body mt-2" style="min-width: 24rem;">
-      <form method="post" action="/ui/cards/{{ card.id }}/retry">
+      <form method="post" action="/ui/cards/{{ card.id }}/retry" hx-post="/ui/cards/{{ card.id }}/retry" hx-target="#card-detail-root" hx-swap="outerHTML">
         <div class="mb-3">
           <label class="form-label" for="note">Note for the next attempt (optional)</label>
           <textarea class="form-control" id="note" name="note" placeholder="e.g. rebase onto main and resolve the conflict in index.html"></textarea>
@@ -40,7 +41,7 @@
   <details>
     <summary class="btn btn-outline-secondary btn-sm">Nudge</summary>
     <div class="card card-body mt-2" style="min-width: 24rem;">
-      <form method="post" action="/ui/cards/{{ card.id }}/nudge">
+      <form method="post" action="/ui/cards/{{ card.id }}/nudge" hx-post="/ui/cards/{{ card.id }}/nudge" hx-target="#card-detail-root" hx-swap="outerHTML">
         <div class="mb-3">
           <label class="form-label" for="nudge-note">Note for the agent</label>
           <textarea class="form-control" id="nudge-note" name="note" required placeholder="e.g. don't touch the payments module, that's handled elsewhere"></textarea>
@@ -50,7 +51,7 @@
       </form>
     </div>
   </details>
-  <form method="post" action="/ui/cards/{{ card.id }}/cancel" onsubmit="return confirm('Cancel this card?');">
+  <form method="post" action="/ui/cards/{{ card.id }}/cancel" onsubmit="return confirm('Cancel this card?');" hx-post="/ui/cards/{{ card.id }}/cancel" hx-target="#card-detail-root" hx-swap="outerHTML">
     <button class="btn btn-outline-danger btn-sm" type="submit">Cancel</button>
   </form>
   {% endif %}
@@ -58,7 +59,7 @@
   <details>
     <summary class="btn btn-secondary btn-sm">Edit</summary>
     <div class="card card-body mt-2" style="min-width: 24rem;">
-      <form method="post" action="/ui/cards/{{ card.id }}/edit">
+      <form method="post" action="/ui/cards/{{ card.id }}/edit" hx-post="/ui/cards/{{ card.id }}/edit" hx-target="#card-detail-root" hx-swap="outerHTML">
         <div class="mb-3">
           <label class="form-label" for="title">Title</label>
           <input class="form-control" type="text" id="title" name="title" required value="{{ card.title }}">
@@ -73,11 +74,11 @@
   </details>
 
   {% if card.archived_at %}
-  <form method="post" action="/ui/cards/{{ card.id }}/unarchive">
+  <form method="post" action="/ui/cards/{{ card.id }}/unarchive" hx-post="/ui/cards/{{ card.id }}/unarchive" hx-target="#card-detail-root" hx-swap="outerHTML">
     <button class="btn btn-secondary btn-sm" type="submit">Unarchive</button>
   </form>
   {% else %}
-  <form method="post" action="/ui/cards/{{ card.id }}/archive" onsubmit="return confirm('Archive this card? It will drop off the board until unarchived.');">
+  <form method="post" action="/ui/cards/{{ card.id }}/archive" onsubmit="return confirm('Archive this card? It will drop off the board until unarchived.');" hx-post="/ui/cards/{{ card.id }}/archive" hx-target="#card-detail-root" hx-swap="outerHTML">
     <button class="btn btn-secondary btn-sm" type="submit">Archive</button>
   </form>
   {% endif %}
@@ -260,4 +261,5 @@
       {% include "_events_fragment.html.j2" %}
     </div>
   </div>
+</div>
 </div>

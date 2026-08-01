@@ -73,8 +73,12 @@ async def run_auto_main_deploy(project: Project, card: Card, wt_path: Path) -> D
             ),
         )
 
+    deploy_config = project.deploy_config
+    assert deploy_config is not None
+    token = os.environ.get(deploy_config.github_token_ref or "") if deploy_config.github_token_ref else None
+
     try:
-        await run_git("push", "origin", f"HEAD:{project.default_branch}", cwd=wt_path)
+        await run_git("push", "origin", f"HEAD:{project.default_branch}", cwd=wt_path, token=token)
     except GitCommandError as exc:
         return DeployRunResult(success=False, message=f"push failed: {exc.stderr.strip()}")
 
@@ -86,8 +90,6 @@ async def run_auto_main_deploy(project: Project, card: Card, wt_path: Path) -> D
     except GitCommandError:
         commit_sha = None
 
-    deploy_config = project.deploy_config
-    assert deploy_config is not None
     result = await _run_deploy_command(deploy_config, cwd=wt_path)
     result.commit_sha = commit_sha if result.success else None
     return result
@@ -249,7 +251,7 @@ async def open_pull_request(project: Project, card: Card, *, summary: str) -> De
 
     bare_path = bare_repo_path(project)
     try:
-        await run_git("push", "origin", f"{card.branch_name}:{card.branch_name}", cwd=bare_path)
+        await run_git("push", "origin", f"{card.branch_name}:{card.branch_name}", cwd=bare_path, token=token)
     except GitCommandError as exc:
         return DeployRunResult(success=False, message=f"push failed: {exc.stderr.strip()}")
 

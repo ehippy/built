@@ -2,6 +2,7 @@
 CLI's behavior is what we've actually verified empirically for bare-repo worktrees)."""
 
 import asyncio
+import base64
 import re
 from pathlib import Path
 
@@ -52,8 +53,24 @@ async def _run(*args: str, cwd: Path) -> tuple[int, str, str]:
     return process.returncode or 0, stdout.decode(), stderr.decode()
 
 
-async def run_git(*args: str, cwd: Path) -> str:
-    returncode, stdout, stderr = await _run(*args, cwd=cwd)
+def _token_auth_config(token: str) -> tuple[str, ...]:
+    """`-c` flags that make a single git invocation authenticate to github.com as
+    the given token, scoped to just this call and just github.com's http(s) remotes
+    — never written to any on-disk gitconfig. Overrides `credential.helper=` (empty)
+    too: without that, a host-level helper (e.g. `gh`'s, which may be configured for
+    a differently-scoped token) can still win over the explicit header for some git
+    versions/prompted flows, silently authenticating as the wrong identity instead
+    of the token this call was actually given."""
+    basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    return (
+        "-c", "credential.helper=",
+        "-c", f"http.https://github.com/.extraheader=AUTHORIZATION: basic {basic}",
+    )
+
+
+async def run_git(*args: str, cwd: Path, token: str | None = None) -> str:
+    extra = _token_auth_config(token) if token else ()
+    returncode, stdout, stderr = await _run(*extra, *args, cwd=cwd)
     if returncode != 0:
         raise GitCommandError(args, returncode, stdout, stderr)
     return stdout

@@ -1,6 +1,7 @@
 """Project-level chat: a human and an LLM brainstorming and workshopping ticket
 ideas together, with read-only repo-browsing tools plus create_ticket/update_ticket
-to file or edit cards mid-conversation. The read-only-explore-plus-file-tickets
+to file or edit cards mid-conversation, and unblock_card/archive_card/unarchive_card
+for the human's board-maintenance requests. The read-only-explore-plus-file-tickets
 sibling of agent/curation.py, but step-wise rather than run-to-completion: unlike
 every other agent/* module, a "run" here is one bounded reply to whatever's new, not
 a loop that only ends via a terminal tool. Persisted history
@@ -177,10 +178,11 @@ async def _dispatch(
     tickets_created: int,
 ) -> tuple[str, bool, str | None]:
     """Repo-browsing tools go through the shared, DB-agnostic ToolDispatcher (same
-    as every other column); search_tickets/get_ticket/create_ticket/update_ticket
-    are dispatched here instead, inline, because they need `session` and
-    card_service — the first case in this codebase of one tool-call batch needing
-    both a worktree-scoped dispatcher AND direct DB access."""
+    as every other column); search_tickets/get_ticket/create_ticket/update_ticket/
+    unblock_card/archive_card/unarchive_card are dispatched here instead, inline,
+    because they need `session` and card_service — the first case in this codebase
+    of one tool-call batch needing both a worktree-scoped dispatcher AND direct DB
+    access."""
     if name == "search_tickets":
         query = str(arguments.get("query", "")).strip()
         include_archived = bool(arguments.get("include_archived", False))
@@ -237,6 +239,50 @@ async def _dispatch(
             return f"no such card: {card_id!r}", True, None
         await session.commit()
         return f"Updated card {card.id}: {card.title!r}.", False, card.id
+    if name == "unblock_card":
+        card_id = str(arguments.get("card_id", "")).strip()
+        note = str(arguments.get("note", "")).strip() or None
+        if not card_id:
+            return "card_id is required.", True, None
+        try:
+            card = await card_service.retry_card(session, card_id, note=note)
+        except card_service.NotFoundError:
+            return f"no such card: {card_id!r}", True, None
+        except ValueError as exc:
+            return str(exc), True, None
+        await session.commit()
+        message = (
+            f"Unblocked card {card.id}: {card.title!r} — back to ACTIVE in the "
+            f"{card.column.value} column with a fresh retry budget."
+        )
+        if note:
+            message += f" Note left for the next agent: {note}"
+        return message, False, card.id
+    if name == "archive_card":
+        card_id = str(arguments.get("card_id", "")).strip()
+        if not card_id:
+            return "card_id is required.", True, None
+        try:
+            card = await card_service.archive_card(session, card_id)
+        except card_service.NotFoundError:
+            return f"no such card: {card_id!r}", True, None
+        await session.commit()
+        return (
+            f"Archived card {card.id}: {card.title!r} — off the board, history intact. "
+            "It can be restored with unarchive_card if needed.",
+            False,
+            card.id,
+        )
+    if name == "unarchive_card":
+        card_id = str(arguments.get("card_id", "")).strip()
+        if not card_id:
+            return "card_id is required.", True, None
+        try:
+            card = await card_service.unarchive_card(session, card_id)
+        except card_service.NotFoundError:
+            return f"no such card: {card_id!r}", True, None
+        await session.commit()
+        return f"Restored card {card.id}: {card.title!r} — back on the board.", False, card.id
     outcome = await dispatcher.dispatch(name, arguments)
     return outcome.result.output, outcome.result.is_error, None
 

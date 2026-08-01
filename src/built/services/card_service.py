@@ -197,6 +197,33 @@ async def count_column_backlog(session: AsyncSession, project_id: str, column: C
     return await session.scalar(stmt) or 0
 
 
+async def list_pm_backlog(session: AsyncSession, project_id: str) -> list[Card]:
+    """Open, non-archived cards currently sitting in the PM column, oldest first —
+    what agent/pm_triage.py (ActivityKind.PM_TRIAGE) reads to decide what to
+    reprioritize or merge, and what it re-checks every referenced card_id against
+    fresh, right before actually applying anything (never trusts the model's own
+    view of what's still there — same pattern as agent/curation.py's
+    _dedupe_against_live_cards). Oldest first, unlike list_open_cards, so a card
+    that's been sitting untouched the longest is the first thing a human — or this
+    prompt — sees.
+
+    Excludes epic-parent cards for the same reason count_column_backlog does:
+    they're parked at column=PM forever by design, not backlog waiting to be
+    groomed."""
+    stmt = (
+        select(Card)
+        .where(
+            Card.project_id == project_id,
+            Card.column == Column.PM,
+            Card.archived_at.is_(None),
+            Card.lifecycle_state.not_in([LifecycleState.DONE, LifecycleState.FAILED]),
+            Card.id.not_in(select(EpicLink.parent_card_id)),
+        )
+        .order_by(Card.created_at)
+    )
+    return list((await session.scalars(stmt)).all())
+
+
 _PRIORITY_SORT_RANK = {Priority.HIGH: 0, Priority.NORMAL: 1, Priority.LOW: 2}
 
 
@@ -799,9 +826,12 @@ async def update_card(session: AsyncSession, card_id: str, *, title: str, raw_re
 async def set_priority(session: AsyncSession, card_id: str, priority: Priority) -> Card:
     """The one-click "bless this as important" action — deliberately separate from
     update_card (which edits authored content) since this is a quick, no-context
-    action a human should be able to take from anywhere the card appears. Purely a
-    manual signal: never touched by any agent or automated pass. See
-    orchestrator/worker.py's _CLAIM_PRIORITY_ORDER for how it affects claim order."""
+    action a human should be able to take from anywhere the card appears. Almost
+    always a manual signal; the one exception is agent/pm_triage.py
+    (ActivityKind.PM_TRIAGE), which calls this for a card still sitting in the PM
+    column after re-validating it's still there, with a reason recorded separately
+    as a SYSTEM_NOTE event. See orchestrator/worker.py's _CLAIM_PRIORITY_ORDER for
+    how it affects claim order."""
     card = await get_card(session, card_id)
     card.priority = priority
     await session.flush()

@@ -1,6 +1,6 @@
 """OpenAI-compatible function-calling tool schemas, one list per column role."""
 
-from built.domain.enums import Column, DeployMode, Severity
+from built.domain.enums import Column, DeployMode, Priority, Severity
 
 READ_FILE = {
     "type": "function",
@@ -620,6 +620,85 @@ REPORT_DUPLICATE_CANDIDATES = {
 }
 CURATION_DEDUP_TOOLS = [REPORT_DUPLICATE_CANDIDATES]
 CURATION_DEDUP_TERMINAL_TOOL = "report_duplicate_candidates"
+
+# agent/pm_triage.py's ActivityKind.PM_TRIAGE — unlike every other curation kind,
+# doesn't propose new cards; it acts on cards already sitting in the PM column,
+# browsing the repo read-only the same way the other kinds do first. Every card_id
+# it references is re-validated server-side right before anything is applied
+# (still open, still in Column.PM, not an epic parent) — never trusted from the
+# model's own say-so, same pattern as agent/curation.py's _dedupe_against_live_cards.
+MAX_GROOM_ACTIONS = 10
+
+GROOM_BACKLOG = {
+    "type": "function",
+    "function": {
+        "name": "groom_backlog",
+        "description": (
+            "Act on cards currently sitting in the PM column: reprioritize ones worth bumping or "
+            "deprioritizing, and merge genuine duplicates by archiving all but one of each group. "
+            "Both lists may be empty — if the backlog looks fine as it is, that's a legitimate, good "
+            "outcome; don't invent action just to have something to report. This ends your turn."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reprioritizations": {
+                    "type": "array",
+                    "maxItems": MAX_GROOM_ACTIONS,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "card_id": {
+                                "type": "string",
+                                "description": "id of the PM-column card to reprioritize.",
+                            },
+                            "priority": {"type": "string", "enum": [p.value for p in Priority]},
+                            "reason": {
+                                "type": "string",
+                                "description": (
+                                    "Why this card's priority should change — concrete, not vague. "
+                                    "'blocks work on the current epic' or 'has sat untouched for days "
+                                    "while newer cards were worked' is a reason; 'seems important' is not."
+                                ),
+                            },
+                        },
+                        "required": ["card_id", "priority", "reason"],
+                    },
+                },
+                "duplicate_groups": {
+                    "type": "array",
+                    "maxItems": MAX_GROOM_ACTIONS,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "keep_card_id": {
+                                "type": "string",
+                                "description": "id of the card to keep — usually the clearer or older one.",
+                            },
+                            "duplicate_card_ids": {
+                                "type": "array",
+                                "minItems": 1,
+                                "items": {"type": "string"},
+                                "description": (
+                                    "ids of the other cards to archive as duplicates of keep_card_id — "
+                                    "the same underlying request, not just a similar topic."
+                                ),
+                            },
+                            "reason": {
+                                "type": "string",
+                                "description": "Why these are genuinely the same request, not just related.",
+                            },
+                        },
+                        "required": ["keep_card_id", "duplicate_card_ids", "reason"],
+                    },
+                },
+            },
+            "required": ["reprioritizations", "duplicate_groups"],
+        },
+    },
+}
+PM_TRIAGE_TOOLS = [READ_FILE, LIST_FILES, GLOB_FILES, GREP_FILES, GROOM_BACKLOG]
+PM_TRIAGE_TERMINAL_TOOL = "groom_backlog"
 
 # agent/summarizer.py's postmortem call: the card's column-visit map is handed in
 # directly, and get_visit_detail is the one narrow "explore" tool available — no

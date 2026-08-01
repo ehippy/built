@@ -21,10 +21,13 @@ COLUMN_ORDER: list[Column] = [
 
 
 class Priority(StrEnum):
-    """A human's manual bless/deprioritize signal on a card — orthogonal to column
-    and lifecycle_state. Sorts before both column-depth and recency when the
+    """A manual bless/deprioritize signal on a card — orthogonal to column and
+    lifecycle_state. Sorts before both column-depth and recency when the
     orchestrator picks the next card to claim (see orchestrator/worker.py's
-    _CLAIM_PRIORITY_ORDER)."""
+    _CLAIM_PRIORITY_ORDER). Historically a human-only signal; the one exception is
+    ActivityKind.PM_TRIAGE (agent/pm_triage.py), which may reprioritize a card still
+    sitting in the PM column — scoped there specifically, with a reason recorded as
+    a SYSTEM_NOTE event, never touched by any other agent."""
 
     HIGH = "high"
     NORMAL = "normal"
@@ -33,9 +36,9 @@ class Priority(StrEnum):
 
 class Severity(StrEnum):
     """A curation candidate's self-rated importance (llm/tool_schemas.py's
-    PROPOSE_TASKS) — never confused with Priority: Priority is a human's manual
-    signal on a Card, never touched by any agent. Severity is the model's own
-    rating of a not-yet-filed candidate, consumed only by agent/curation.py's
+    PROPOSE_TASKS) — never confused with Priority: Priority is a Card field
+    (see its own docstring for the one agent exception); Severity is the model's
+    own rating of a not-yet-filed candidate, consumed only by agent/curation.py's
     server-side file-policy whittling, then discarded — never written to a Card."""
 
     CRITICAL = "critical"
@@ -126,11 +129,11 @@ class ChatRole(StrEnum):
 
 
 class ActivityKind(StrEnum):
-    """A periodic curation pass over a project. Every kind does the same mechanical
-    thing — explore read-only, decide, call propose_tasks — differing only in system
-    prompt and (for AGENTS_MD) what context it's fed. None of them ever edit the
-    repo directly; the only thing any kind can do is create new cards, exactly like
-    a human PM filing a ticket. See agent/curation.py and orchestrator/curator.py."""
+    """A periodic background pass over a project — scheduled and toggled uniformly
+    by orchestrator/curator.py, but not all one mechanism. Most kinds explore
+    read-only and call propose_tasks, creating new cards exactly like a human PM
+    filing a ticket (see agent/curation.py). PM_TRIAGE is structurally different —
+    see its own entry below and agent/pm_triage.py."""
 
     BUG_SWEEP = "bug_sweep"
     OPPORTUNITY_BRAINSTORM = "opportunity_brainstorm"
@@ -141,3 +144,7 @@ class ActivityKind(StrEnum):
     REFACTOR_SWEEP = "refactor_sweep"  # decomposition candidates, layering violations, dead code, drift
     AGENTS_MD = "agents_md"  # proposes an AGENTS.md-update card; replaces the old Tender
     RETRO = "retro"  # mines recent CardPostmortems (agent/summarizer.py) for a recurring struggle
+    # Doesn't propose new cards or touch the repo — the one kind with authority to
+    # act on cards already sitting in the PM column: reprioritize (Priority) and
+    # archive genuine duplicates. Never touches a card that's moved past PM.
+    PM_TRIAGE = "pm_triage"

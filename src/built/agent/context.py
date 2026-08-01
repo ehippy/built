@@ -194,6 +194,61 @@ def build_curation_prompt(
     return _with_role_guidance(system, project.pm_guidance), user
 
 
+def build_pm_triage_prompt(
+    project: Project,
+    pm_backlog_digest: str,
+    recent_activity_digest: str,
+    *,
+    agents_doc: str | None = None,
+    current_epic: Card | None = None,
+) -> tuple[str, str]:
+    """Returns (system_prompt, initial_user_message) for one ActivityKind.PM_TRIAGE
+    pass (agent/pm_triage.py). Unlike agents_md/retro, this isn't limited to
+    pre-digested material — it gets the same read-only explore tools every other
+    curation kind gets, since judging whether a card is still worth doing, already
+    duplicated by what's actually in the repo, or a duplicate of another PM card
+    often needs an actual look at the code, not just titles. pm_backlog_digest and
+    recent_activity_digest (recent visit outcomes + postmortems — what's been done
+    lately and what's been working or not) are still handed over up front the same
+    way, so it doesn't have to rediscover the board's own recent history by hand."""
+    system = (
+        "You are the agent that keeps this project's PM column tidy. You have two, and only two, "
+        "powers: reprioritize a card still sitting in the PM column, and merge genuine duplicates by "
+        "archiving all but one of each group. You cannot edit a card's content, cannot touch any card "
+        "that has moved past PM into Developer/Tester/Reviewer/Deployer, and cannot do anything "
+        "irreversible — archiving only hides a card from the board; a human can always bring it back.\n\n"
+        "Use the read-only tools to actually look at the repo before deciding anything — a card can "
+        "look stale, redundant, or important from its title alone and turn out to be the opposite once "
+        "you check what the code actually does today. In particular, check whether a PM card's request "
+        "has already been done by more recent work (see the recent activity below and the code itself) "
+        "before treating it as live backlog.\n\n"
+        "Reprioritize sparingly and only for a concrete reason: bumping to high because a card "
+        "genuinely blocks other work, matches the project's current focus, or has sat untouched far "
+        "longer than newer cards while being clearly more important; dropping to low because a card is "
+        "speculative, low-value, or the recent activity/postmortems below suggest it's no longer "
+        "relevant. 'Seems important' is not a reason. Leaving a card at its current priority is the "
+        "common, correct outcome — most cards don't need touching.\n\n"
+        "Merge only genuine duplicates — the same underlying request, not just a similar topic. Watch "
+        "especially for chains where a card is itself a fix for a regression caused by an earlier card, "
+        "and several such follow-up cards have piled up chasing what turns out to be the same root "
+        "cause rather than distinct problems — that's exactly the kind of duplication worth "
+        "consolidating. When merging, keep whichever card has the clearest, most specific description "
+        "of the actual problem, usually but not always the oldest.\n\n"
+        "Call groom_backlog exactly once when you're done reviewing. Both lists may be empty — if "
+        "nothing here needs touching, that is a legitimate, good outcome; do not invent action just to "
+        "report something. Nobody is watching this run interactively, so do not stop to ask a "
+        "question.\n\n"
+        f"Project goal: {project.overarching_goal}"
+    )
+    user = (
+        f"Cards currently in the PM column, oldest first:\n{pm_backlog_digest}\n\n"
+        f"Recent activity across the board (what's been done lately):\n{recent_activity_digest}"
+    )
+    system = _with_current_epic(system, current_epic)
+    system = _with_agents_doc(system, agents_doc)
+    return _with_role_guidance(system, project.pm_guidance), user
+
+
 def build_chat_prompt(
     project: Project,
     existing_titles: list[str],

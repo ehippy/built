@@ -4,7 +4,10 @@ run_curation_activity for on-demand manual triggers (the board page's per-kind
 "run now" buttons) — same underlying pass, just invoked once outside the timer.
 
 Curation never edits the repo — every kind ends with propose_tasks, so unlike the
-old Tender this replaces, its worktree needs no git identity, no commit, no push."""
+old Tender this replaces, its worktree needs no git identity, no commit, no push.
+ActivityKind.PM_TRIAGE (agent/pm_triage.py) shares the same read-only worktree and
+explore tools as every other kind, but ends with groom_backlog instead of
+propose_tasks — see the `kind == ActivityKind.PM_TRIAGE` branch below."""
 
 import asyncio
 import logging
@@ -12,6 +15,7 @@ from datetime import UTC, datetime
 
 from built.agent.context_window import ContextWindowConfig
 from built.agent.curation import run_curation_pass
+from built.agent.pm_triage import run_pm_triage_pass
 from built.config import settings
 from built.db.base import async_session_factory
 from built.db.models import CardPostmortem, Project
@@ -47,6 +51,7 @@ _CURATION_INTERVALS: dict[ActivityKind, float] = {
     ActivityKind.STAY_DRY: 21600,
     ActivityKind.REFACTOR_SWEEP: 21600,
     ActivityKind.COVERAGE_SWEEP: 21600,
+    ActivityKind.PM_TRIAGE: 900,  # 15m — cheap (no repo I/O), and the point is catching pileup quickly
     # agents_md/retro: no entry — falls back to curator_poll_interval_seconds as a
     # floor; each has its own "anything new since last run" gate below (closed
     # visits for agents_md, fresh postmortems for retro) that's the stricter, real
@@ -82,16 +87,25 @@ def _as_utc(dt: datetime) -> datetime:
 
 async def _needs_run(session, project: Project, kind: ActivityKind) -> tuple[bool, str | None]:
     """Returns (should_run, extra_context). Gated in order: (1) the PM column's
-    backlog WIP limit, checked first for every kind — cheapest, and there's no
-    point computing cadence for a kind that can't propose anywhere useful anyway;
-    (2) a uniform per-kind interval (_CURATION_INTERVALS, falling back to
+    backlog WIP limit, checked first for every kind that *proposes* PM-column work —
+    cheapest, and there's no point computing cadence for a kind that can't propose
+    anywhere useful anyway. PM_TRIAGE is the inverse case: its whole job is tending
+    that same backlog, so it's gated on there being at least 2 cards to compare
+    instead — nothing to dedupe or reasonably reprioritize below that. (2) a
+    uniform per-kind interval (_CURATION_INTERVALS, falling back to
     curator_poll_interval_seconds) since this kind's last run; (3) agents_md and
     retro each get an *additional* "anything new since last run" gate stacked on
-    top of (2) — the natural throttle for their sparse-signal activity. None of
+    top of (2) — the natural throttle for their sparse-signal activity; PM_TRIAGE
+    gets recent visit outcomes + postmortems as its extra_context instead (same
+    material as agents_md/retro, just not gated on "anything new" — a quiet recent
+    history is still worth restating to it every pass, unlike those two). None of
     this gates a human's manual "run now" (run_curation_activity called directly)
     — only the automatic scheduler loop below reads this."""
     pm_backlog = await card_service.count_column_backlog(session, project.id, Column.PM)
-    if pm_backlog >= settings.curator_max_pm_backlog:
+    if kind == ActivityKind.PM_TRIAGE:
+        if pm_backlog < 2:
+            return False, None
+    elif pm_backlog >= settings.curator_max_pm_backlog:
         return False, None
 
     last_run = await project_service.get_activity_last_run(session, project.id, kind)
@@ -110,6 +124,15 @@ async def _needs_run(session, project: Project, kind: ActivityKind) -> tuple[boo
         if not postmortems:
             return False, None
         return True, _format_recent_postmortems(postmortems)
+
+    if kind == ActivityKind.PM_TRIAGE:
+        outcomes = await card_service.list_recent_visit_outcomes(session, project.id, limit=20)
+        postmortems = await card_service.list_recent_postmortems(session, project.id, limit=15)
+        context = (
+            f"Visit outcomes:\n{_format_recent_outcomes(outcomes)}\n\n"
+            f"Postmortems (what's been working and what hasn't):\n{_format_recent_postmortems(postmortems)}"
+        )
+        return True, context
 
     return True, None
 
@@ -158,26 +181,43 @@ async def run_curation_activity(
                 max_tokens = settings.default_max_tokens
 
             agents_doc = await read_default_branch_file(project, "AGENTS.md")
+            context_window_config = ContextWindowConfig(
+                max_tokens=max_tokens, keep_messages=settings.default_keep_messages
+            )
 
-            created = await run_curation_pass(
-                session,
-                project,
-                kind,
-                llm_client=llm_client,
-                dispatcher=dispatcher,
-                max_iterations=settings.curator_max_iterations,
-                agents_doc=agents_doc,
-                extra_context=extra_context,
-                context_window_config=ContextWindowConfig(
-                    max_tokens=max_tokens,
-                    keep_messages=settings.default_keep_messages,
-                ),
-            )
-            await project_service.record_activity_run(
-                session, project.id, kind, summary=f"created {len(created)} card(s)"
-            )
-            await session.commit()
-            logger.info("curation %s for project %s created %d card(s)", kind.value, project_id, len(created))
+            if kind == ActivityKind.PM_TRIAGE:
+                summary = await run_pm_triage_pass(
+                    session,
+                    project,
+                    llm_client=llm_client,
+                    dispatcher=dispatcher,
+                    max_iterations=settings.curator_max_iterations,
+                    agents_doc=agents_doc,
+                    extra_context=extra_context,
+                    context_window_config=context_window_config,
+                )
+                await project_service.record_activity_run(session, project.id, kind, summary=summary)
+                await session.commit()
+                logger.info("curation %s for project %s: %s", kind.value, project_id, summary)
+            else:
+                created = await run_curation_pass(
+                    session,
+                    project,
+                    kind,
+                    llm_client=llm_client,
+                    dispatcher=dispatcher,
+                    max_iterations=settings.curator_max_iterations,
+                    agents_doc=agents_doc,
+                    extra_context=extra_context,
+                    context_window_config=context_window_config,
+                )
+                await project_service.record_activity_run(
+                    session, project.id, kind, summary=f"created {len(created)} card(s)"
+                )
+                await session.commit()
+                logger.info(
+                    "curation %s for project %s created %d card(s)", kind.value, project_id, len(created)
+                )
     finally:
         _curation_in_progress.discard((project_id, kind))
 

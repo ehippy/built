@@ -65,6 +65,30 @@ deciding what to work on next.
 - At least one OpenAI-tool-calling-compatible LLM endpoint (a hosted API, or a local
   server like vLLM/llama.cpp/Ollama that speaks the OpenAI chat-completions format)
 
+### Docker access
+
+The account that runs the Built/Uvicorn process—not merely the account used to
+install Docker—must be able to talk to the Docker daemon. On a typical Linux Docker
+installation, add that account to the `docker` group, then start a fresh login
+session and restart Uvicorn:
+
+```bash
+sudo usermod -aG docker your-user
+# Log out and back in, then verify:
+docker version
+```
+
+For a systemd-managed Uvicorn service, make its group explicit in the service unit:
+
+```ini
+[Service]
+SupplementaryGroups=docker
+```
+
+After editing the unit, run `sudo systemctl daemon-reload` and restart the service.
+Membership in the `docker` group is effectively root-equivalent access; grant it only
+to trusted service accounts.
+
 ## Quick start
 
 ```bash
@@ -84,8 +108,11 @@ BUILT_API_KEY=some-long-random-string
 Start it:
 
 ```bash
-uvicorn built.main:app --reload
+uvicorn built.main:app --reload --reload-exclude 'data/*'
 ```
+
+`data/` holds live runtime state (the SQLite database, managed clones, and
+worktrees), so it is ignored by Git and excluded from Uvicorn's reload watcher.
 
 Then, from the UI (or the API, with `X-API-Key` set to the value above):
 

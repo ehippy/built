@@ -13,6 +13,7 @@ an all-or-nothing switch — leave it False (egress allowed, for pip/npm install
 unless a project needs full network isolation instead."""
 
 import asyncio
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -32,6 +33,10 @@ DEFAULT_PIDS_LIMIT = 256
 TMPFS_MOUNT_OPTIONS = "exec,size=512m"
 
 
+class DockerDaemonAccessError(RuntimeError):
+    """Docker is unavailable to the account running the application."""
+
+
 @dataclass
 class CommandResult:
     exit_code: int
@@ -42,6 +47,8 @@ class CommandResult:
 
 class CommandExecutor(Protocol):
     async def run(self, *, worktree: Path, command: str, timeout_seconds: int) -> CommandResult: ...
+
+    async def build_sandbox(self, *, worktree: Path) -> str: ...
 
 
 class DockerCommandExecutor:
@@ -58,6 +65,7 @@ class DockerCommandExecutor:
     def __init__(self, image: str = DEFAULT_IMAGE, *, network_disabled: bool = False):
         self.image = image
         self.network_disabled = network_disabled
+        self._built_sandbox_fingerprint: tuple[str, str] | None = None
 
     async def run(
         self, *, worktree: Path, command: str, timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
@@ -66,10 +74,52 @@ class DockerCommandExecutor:
         # thread so one slow container doesn't stall every other card's asyncio tasks.
         return await asyncio.to_thread(self._run_sync, worktree, command, timeout_seconds)
 
+    async def build_sandbox(self, *, worktree: Path) -> str:
+        return await asyncio.to_thread(self._build_sandbox_sync, worktree)
+
+    def _build_sandbox_sync(self, worktree: Path) -> str:
+        dockerfile = worktree / "Dockerfile.built-sandbox"
+        if not dockerfile.is_file():
+            raise ValueError("Dockerfile.built-sandbox does not exist in the repository root")
+        import docker
+        tag = f"built-sandbox:{hashlib.sha256(str(worktree.resolve()).encode()).hexdigest()[:16]}"
+        try:
+            client = docker.from_env()
+            try:
+                client.images.build(path=str(worktree), dockerfile=dockerfile.name, tag=tag, rm=True, forcerm=True)
+            finally:
+                client.close()
+        except docker.errors.DockerException as exc:
+            raise DockerDaemonAccessError(f"Unable to build Dockerfile.built-sandbox: {exc}") from exc
+        self.image = tag
+        self._built_sandbox_fingerprint = (
+            str(worktree.resolve()),
+            hashlib.sha256(dockerfile.read_bytes()).hexdigest(),
+        )
+        return tag
+
+    def _ensure_worktree_sandbox(self, worktree: Path) -> None:
+        """Prefer a repository's opt-in sandbox image over the configured default."""
+        dockerfile = worktree / "Dockerfile.built-sandbox"
+        if not dockerfile.is_file():
+            return
+        fingerprint = (str(worktree.resolve()), hashlib.sha256(dockerfile.read_bytes()).hexdigest())
+        if fingerprint != self._built_sandbox_fingerprint:
+            self._build_sandbox_sync(worktree)
+
     def _run_sync(self, worktree: Path, command: str, timeout_seconds: int) -> CommandResult:
         import docker
 
-        client = docker.from_env()
+        try:
+            client = docker.from_env()
+        except docker.errors.DockerException as exc:
+            raise DockerDaemonAccessError(
+                "Cannot access the Docker daemon. The account running Built/Uvicorn "
+                "must be allowed to use Docker (usually by belonging to the docker group); "
+                "restart the service after changing its group membership. "
+                f"Docker reported: {exc}"
+            ) from exc
+        self._ensure_worktree_sandbox(worktree)
         container = None
         try:
             container = client.containers.run(

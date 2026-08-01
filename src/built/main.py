@@ -22,6 +22,7 @@ from built.logging_config import configure_logging
 from built.orchestrator.archiver import run_archiver_loop
 from built.orchestrator.ci_watcher import run_ci_watcher_loop
 from built.orchestrator.curator import run_curator_loop
+from built.orchestrator.pr_watcher import run_pr_watcher_loop
 from built.orchestrator.reviver import run_reviver_loop
 from built.orchestrator.worker import run_worker_pool
 from built.ui.routers import board as ui_board
@@ -50,6 +51,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     curator_task: asyncio.Task | None = None
     archiver_task: asyncio.Task | None = None
     ci_watcher_task: asyncio.Task | None = None
+    pr_watcher_task: asyncio.Task | None = None
     stop_event = asyncio.Event()
     if settings.orchestrator_enabled:
         worker_task = asyncio.create_task(
@@ -87,10 +89,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 poll_interval=settings.ci_watcher_poll_interval_seconds,
             )
         )
+    if settings.pr_watcher_enabled:
+        pr_watcher_task = asyncio.create_task(
+            run_pr_watcher_loop(
+                stop_event=stop_event,
+                poll_interval=settings.pr_watcher_poll_interval_seconds,
+            )
+        )
 
     background_tasks = [
         t
-        for t in (worker_task, reviver_task, curator_task, archiver_task, ci_watcher_task)
+        for t in (worker_task, reviver_task, curator_task, archiver_task, ci_watcher_task, pr_watcher_task)
         if t is not None
     ]
     try:

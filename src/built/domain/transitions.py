@@ -290,6 +290,7 @@ async def complete_deployer_visit(
     summary: str,
     deploy_url: str | None = None,
     pending_ci_commit_sha: str | None = None,
+    pending_pr_number: int | None = None,
     endpoint_used: str | None = None,
 ) -> Card:
     """Deployer's run_deploy (auto_main) or open_pull_request (pr_to_operator).
@@ -298,14 +299,14 @@ async def complete_deployer_visit(
     (failed) with no further action — there is no human-approval gate to fall back
     to in this pipeline.
 
-    Success is terminal (done) UNLESS pending_ci_commit_sha is given (auto_main
-    only — pr_to_operator has a human in the loop before anything merges, so
-    there's nothing this pipeline should gate on). The Deployer's own job — the
-    git-level push — is genuinely finished, but the card's overall completion
-    isn't: it stays ACTIVE with the commit tracked for
-    orchestrator/ci_watcher.py to poll, and only reaches DONE once CI resolves one
-    way or the other (see confirm_ci_passed / confirm_ci_failed_with_followup /
-    mark_ci_wait_timed_out below)."""
+    Success is terminal (done) UNLESS pending_ci_commit_sha (auto_main) or
+    pending_pr_number (pr_to_operator) is given. In both those cases the Deployer's
+    own job — the git-level push / the PR opened — is genuinely finished, but the
+    card's overall completion isn't: it stays ACTIVE with the external handoff
+    tracked for orchestrator/ci_watcher.py (CI) or orchestrator/pr_watcher.py (PR
+    review) to poll, and only reaches DONE once that resolves (confirm_ci_passed /
+    confirm_ci_failed_with_followup / mark_ci_wait_timed_out, and confirm_pr_merged
+    / request_pr_changes / mark_pr_wait_timed_out below)."""
     if success:
         if deploy_url is not None:
             card.deploy_url = deploy_url
@@ -316,6 +317,17 @@ async def complete_deployer_visit(
                 session,
                 visit,
                 outcome=VisitOutcome.DEPLOYED_PENDING_CI,
+                summary=summary,
+                endpoint_used=endpoint_used,
+            )
+            return card
+        if pending_pr_number is not None:
+            card.pr_number = pending_pr_number
+            card.pr_waiting_since = datetime.now(UTC)
+            await _close_visit(
+                session,
+                visit,
+                outcome=VisitOutcome.DEPLOYED_PENDING_PR,
                 summary=summary,
                 endpoint_used=endpoint_used,
             )
@@ -433,6 +445,96 @@ async def mark_ci_wait_timed_out(session: AsyncSession, card: Card, *, note: str
         card_id=card.id,
         type=EventType.SYSTEM_NOTE,
         payload={"action": "ci_wait_timed_out", "note": note},
+    )
+    return card
+
+
+async def confirm_pr_merged(session: AsyncSession, card: Card, *, note: str) -> Card:
+    """orchestrator/pr_watcher.py: the PR this card opened has been merged — either
+    by the watcher after an approving review, or by a human. The deploy the card
+    was holding the pipeline open for is now genuinely done, so this is where DONE
+    actually happens for a pr_to_operator card."""
+    card.lifecycle_state = LifecycleState.DONE
+    card.pr_number = None
+    card.pr_waiting_since = None
+    await append_event(
+        session, card_id=card.id, type=EventType.SYSTEM_NOTE, payload={"action": "pr_merged", "note": note}
+    )
+    await _maybe_complete_epic(session, card)
+    return card
+
+
+async def request_pr_changes(session: AsyncSession, card: Card, *, feedback: str, note: str) -> Card:
+    """orchestrator/pr_watcher.py: a reviewer requested changes on the PR this card
+    opened. Bounce back to Developer with the review feedback, sharing the same
+    revision_count safety valve as Tester/Reviewer's request_changes (exceeding
+    max_revisions blocks the card for a human). pr_number is cleared so the card is
+    claimable again; when it flows back through to Deployer, open_pull_request
+    finds the still-open PR (same branch) and updates it rather than opening a
+    duplicate."""
+    card.revision_count += 1
+    card.latest_feedback = feedback
+    card.column = Column.DEVELOPER
+    card.pr_number = None
+    card.pr_waiting_since = None
+    project = await session.get(Project, card.project_id)
+    if card.revision_count > project.max_revisions:
+        card.lifecycle_state = LifecycleState.BLOCKED
+    await append_event(
+        session,
+        card_id=card.id,
+        type=EventType.SYSTEM_NOTE,
+        payload={"action": "pr_changes_requested", "feedback": feedback, "note": note},
+    )
+    return card
+
+
+async def mark_pr_wait_timed_out(session: AsyncSession, card: Card, *, note: str) -> Card:
+    """orchestrator/pr_watcher.py: the PR never got reviewed and merged within the
+    configured window. Blocks for a human rather than polling forever; the Reviver
+    can pick this up like any other blocked card."""
+    card.lifecycle_state = LifecycleState.BLOCKED
+    card.pr_number = None
+    card.pr_waiting_since = None
+    await append_event(
+        session,
+        card_id=card.id,
+        type=EventType.SYSTEM_NOTE,
+        payload={"action": "pr_wait_timed_out", "note": note},
+    )
+    return card
+
+
+async def mark_pr_closed_unmerged(session: AsyncSession, card: Card, *, note: str) -> Card:
+    """orchestrator/pr_watcher.py: a human closed the PR without merging. The card's
+    work is neither shipped nor back in the pipeline — block for a human to decide
+    whether it should be reopened, retried, or cancelled."""
+    card.lifecycle_state = LifecycleState.BLOCKED
+    card.pr_number = None
+    card.pr_waiting_since = None
+    await append_event(
+        session,
+        card_id=card.id,
+        type=EventType.SYSTEM_NOTE,
+        payload={"action": "pr_closed_unmerged", "note": note},
+    )
+    return card
+
+
+async def mark_pr_merge_conflicted(session: AsyncSession, card: Card, *, note: str) -> Card:
+    """orchestrator/pr_watcher.py: the PR was approved but default_branch has
+    advanced into a real conflict with the card's branch, so the merge API refused.
+    An autonomous rebase/merge of shared history is a bigger, riskier action than
+    this pipeline should take unsupervised (the same call ci_watcher makes about
+    reverting a bad commit) — block for a human to resolve or merge by hand."""
+    card.lifecycle_state = LifecycleState.BLOCKED
+    card.pr_number = None
+    card.pr_waiting_since = None
+    await append_event(
+        session,
+        card_id=card.id,
+        type=EventType.SYSTEM_NOTE,
+        payload={"action": "pr_merge_conflicted", "note": note},
     )
     return card
 

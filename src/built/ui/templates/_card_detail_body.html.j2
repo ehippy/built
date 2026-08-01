@@ -13,6 +13,14 @@
     </span>
     {% endif %}
   </p>
+  {% if card.pr_number %}
+  <p class="mb-0">
+    {{ m.badge("watching-ci", "waiting on PR review") }}
+    PR <code>#{{ card.pr_number }}</code> opened {{ card.pr_waiting_since|timeago }} — waiting on
+    review before this card closes out. An approving review gets the PR merged and the card done;
+    a "changes requested" review bounces it back to Developer with the feedback.
+  </p>
+  {% endif %}
   <p class="text-body-secondary small">Last updated {{ card.last_activity_at|timeago }}</p>
 </div>
 

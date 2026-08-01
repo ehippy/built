@@ -562,6 +562,7 @@ async def _deployer_open_pr_handler(
         success=result.success,
         summary=result.message,
         deploy_url=result.url,
+        pending_pr_number=result.pr_number,
         endpoint_used=endpoint_used,
     )
     await _maybe_write_postmortem(session, project, card)

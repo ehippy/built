@@ -68,6 +68,28 @@ async def test_does_not_claim_a_card_already_held_by_another_worker(db_session):
     assert second is None
 
 
+async def test_does_not_claim_a_card_waiting_on_its_pr_review(db_session):
+    """A pr_to_operator card that opened its PR (pr_number set) stays ACTIVE in
+    Deployer but isn't claimable — its Deployer work is done; orchestrator/
+    pr_watcher.py owns it until the PR merges or it bounces back to Developer."""
+    project = await _project(db_session, _n="pr-pending")
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    card.column = Column.DEPLOYER
+    card.pr_number = 7
+    card.pr_waiting_since = datetime.now(UTC)
+    await db_session.commit()
+
+    assert await claim_next_card(db_session, "worker-a") is None
+
+    # A second, unrelated claimable card is still picked up — only the PR-waiting
+    # one is excluded.
+    await card_service.create_card(db_session, project.id, title="other", raw_request="r")
+    await db_session.commit()
+    claimed = await claim_next_card(db_session, "worker-a")
+    assert claimed is not None
+    assert claimed.title == "other"
+
+
 async def test_claims_a_card_with_an_expired_lease(db_session):
     project = await _project(db_session, _n="5")
     card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")

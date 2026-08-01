@@ -237,7 +237,11 @@ async def test_open_pull_request_success(db_session, deployable_repo_remote, mon
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["authorization"] == "Bearer fake-token"
-        return httpx.Response(201, json={"html_url": "https://github.com/owner/repo/pull/42"})
+        if request.method == "GET":
+            # existing-PR lookup: no open PR for this branch yet
+            assert "/pulls" in request.url.path
+            return httpx.Response(200, json=[])
+        return httpx.Response(201, json={"html_url": "https://github.com/owner/repo/pull/42", "number": 42})
 
     _mock_github(monkeypatch, handler)
     project.repo_remote_url = "https://github.com/owner/repo.git"
@@ -246,8 +250,65 @@ async def test_open_pull_request_success(db_session, deployable_repo_remote, mon
 
     assert result.success is True
     assert result.url == "https://github.com/owner/repo/pull/42"
+    assert result.pr_number == 42
 
     # The card's branch actually landed on the remote, unmerged.
+    branches = subprocess.run(
+        ["git", "branch", "--list", card.branch_name],
+        cwd=deployable_repo_remote,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert card.branch_name in branches
+
+
+async def test_open_pull_request_reuses_an_existing_open_pr_for_the_branch(
+    db_session, deployable_repo_remote, monkeypatch
+):
+    """A card that bounced back to Developer on review feedback and flowed back
+    through to Deployer pushes new commits to the same branch — the PR is still
+    open, so opening a second one would be a duplicate. The existing PR must be
+    re-used (body refreshed), not re-created."""
+    project = await _make_project(db_session, deployable_repo_remote, mode=DeployMode.PR_TO_OPERATOR)
+    card = await _make_card_with_change(
+        db_session,
+        project,
+        "address review feedback",
+        content="def greet():\n    return 'hi'\n\n\ndef farewell():\n    return 'thanks'\n",
+    )
+    monkeypatch.setenv("TEST_GH_TOKEN", "fake-token")
+
+    post_called = False
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal post_called
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "number": 7,
+                        "html_url": "https://github.com/owner/repo/pull/7",
+                        "body": "adds farewell()",
+                    }
+                ],
+            )
+        post_called = True
+        return httpx.Response(201, json={})
+
+    _mock_github(monkeypatch, handler)
+    project.repo_remote_url = "https://github.com/owner/repo.git"
+
+    result = await deploy_runner.open_pull_request(project, card, summary="adds farewell()")
+
+    assert result.success is True
+    assert result.pr_number == 7
+    assert result.url == "https://github.com/owner/repo/pull/7"
+    assert "re-used existing PR" in result.message
+    assert post_called is False  # PATCH only — never a duplicate POST
+
+    # The updated branch still landed on the remote, unmerged.
     branches = subprocess.run(
         ["git", "branch", "--list", card.branch_name],
         cwd=deployable_repo_remote,
@@ -266,6 +327,8 @@ async def test_open_pull_request_github_api_error(db_session, deployable_repo_re
     monkeypatch.setenv("TEST_GH_TOKEN", "fake-token")
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json=[])
         return httpx.Response(422, json={"message": "Validation Failed"})
 
     _mock_github(monkeypatch, handler)
@@ -275,3 +338,127 @@ async def test_open_pull_request_github_api_error(db_session, deployable_repo_re
 
     assert result.success is False
     assert "422" in result.message
+
+
+async def test_fetch_pr_status_report_merged(db_session, monkeypatch):
+    project = await _make_project(db_session, "https://github.com/octocat/hello-world.git")
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    card.pr_number = 7
+    await db_session.commit()
+    monkeypatch.setenv("TEST_GH_TOKEN", "fake-token")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "/pulls/7" in request.url.path
+        assert request.headers["authorization"] == "Bearer fake-token"
+        return httpx.Response(200, json={"state": "closed", "merged": True, "merged_at": "2026-01-01"})
+
+    _mock_github(monkeypatch, handler)
+
+    status = await deploy_runner.fetch_pr_status(project, card)
+
+    assert status.merged is True
+    assert status.state == "closed"
+
+
+async def test_fetch_pr_status_decision_from_most_recent_substantive_review(db_session, monkeypatch):
+    """The last approve/changes-requested review decides — an approve submitted
+    after an earlier changes-requested means approved, and vice versa."""
+    project = await _make_project(db_session, "https://github.com/octocat/hello-world.git")
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    card.pr_number = 7
+    await db_session.commit()
+    monkeypatch.setenv("TEST_GH_TOKEN", "fake-token")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/reviews"):
+            return httpx.Response(
+                200,
+                json=[
+                    {"state": "APPROVED", "submitted_at": "2026-01-01T10:00:00Z", "body": "nice"},
+                    {
+                        "state": "CHANGES_REQUESTED",
+                        "submitted_at": "2026-01-01T11:00:00Z",
+                        "body": "rename it",
+                    },
+                    {"state": "COMMENTED", "submitted_at": "2026-01-01T12:00:00Z", "body": "nit"},
+                ],
+            )
+        return httpx.Response(200, json={"state": "open", "merged": False})
+
+    _mock_github(monkeypatch, handler)
+
+    status = await deploy_runner.fetch_pr_status(project, card)
+
+    assert status.review_decision == "changes_requested"
+    assert status.feedback == "rename it"
+
+
+async def test_fetch_pr_status_approved_review_wins_over_earlier_changes(db_session, monkeypatch):
+    project = await _make_project(db_session, "https://github.com/octocat/hello-world.git")
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    card.pr_number = 7
+    await db_session.commit()
+    monkeypatch.setenv("TEST_GH_TOKEN", "fake-token")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/reviews"):
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "state": "CHANGES_REQUESTED",
+                        "submitted_at": "2026-01-01T10:00:00Z",
+                        "body": "rename it",
+                    },
+                    {"state": "APPROVED", "submitted_at": "2026-01-01T11:00:00Z", "body": "ok now"},
+                ],
+            )
+        return httpx.Response(200, json={"state": "open", "merged": False})
+
+    _mock_github(monkeypatch, handler)
+
+    status = await deploy_runner.fetch_pr_status(project, card)
+
+    assert status.review_decision == "approved"
+    assert status.feedback is None
+
+
+async def test_merge_pull_request_success(db_session, monkeypatch):
+    project = await _make_project(db_session, "https://github.com/octocat/hello-world.git")
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    card.pr_number = 7
+    card.deploy_url = "https://github.com/octocat/hello-world/pull/7"
+    await db_session.commit()
+    monkeypatch.setenv("TEST_GH_TOKEN", "fake-token")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "PUT"
+        assert "/pulls/7/merge" in request.url.path
+        assert request.headers["authorization"] == "Bearer fake-token"
+        return httpx.Response(200, json={"sha": "abc123"})
+
+    _mock_github(monkeypatch, handler)
+
+    result = await deploy_runner.merge_pull_request(project, card)
+
+    assert result.success is True
+    assert "PR #7 merged" in result.message
+    assert result.url == card.deploy_url
+
+
+async def test_merge_pull_request_not_mergeable(db_session, monkeypatch):
+    project = await _make_project(db_session, "https://github.com/octocat/hello-world.git")
+    card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")
+    card.pr_number = 7
+    await db_session.commit()
+    monkeypatch.setenv("TEST_GH_TOKEN", "fake-token")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(405, json={"message": "Pull Request is not mergeable"})
+
+    _mock_github(monkeypatch, handler)
+
+    result = await deploy_runner.merge_pull_request(project, card)
+
+    assert result.success is False
+    assert "not mergeable" in result.message

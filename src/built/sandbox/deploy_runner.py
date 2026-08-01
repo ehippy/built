@@ -8,8 +8,11 @@ Two independent flows, selected by the project's DeployConfig.mode:
     deploy command. Zero human gate — if CI comes back red on the pushed commit,
     orchestrator/ci_watcher.py does not attempt to revert it (too risky to do
     unsupervised against shared history); it opens a follow-up card instead.
-  - pr_to_operator: push the card's branch as-is and open a GitHub PR. No merge, no
-    deploy command — a human takes over from the PR onward."""
+  - pr_to_operator: push the card's branch as-is and open a GitHub PR. Nothing
+    merges from the agent's side — orchestrator/pr_watcher.py polls the PR: an
+    approving review gets it merged via the merge API (and the card marked done),
+    a "changes requested" review bounces the card back to Developer. No deploy
+    command runs."""
 
 import asyncio
 import os
@@ -45,6 +48,9 @@ class DeployRunResult:
     # The commit actually pushed to default_branch (auto_main only) — what
     # orchestrator/ci_watcher.py polls GitHub's Checks API for afterward.
     commit_sha: str | None = None
+    # The GitHub PR number (pr_to_operator only) — what orchestrator/pr_watcher.py
+    # polls reviews on and ultimately merges.
+    pr_number: int | None = None
 
 
 async def run_auto_main_deploy(project: Project, card: Card, wt_path: Path) -> DeployRunResult:
@@ -228,9 +234,25 @@ async def fetch_check_runs(project: Project, commit_sha: str) -> list[CheckRun] 
     ]
 
 
+def _github_headers(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+
+
+def _github_token(project: Project) -> str | None:
+    """The project's GitHub PAT, resolved from its env-var *name* (github_token_ref)
+    — never a raw secret stored in the database."""
+    deploy_config = project.deploy_config
+    token_ref = deploy_config.github_token_ref if deploy_config else None
+    return os.environ.get(token_ref or "") if token_ref else None
+
+
 async def open_pull_request(project: Project, card: Card, *, summary: str) -> DeployRunResult:
     """Push the card's branch as-is (no merge) and open a GitHub PR against
-    default_branch. A human takes over from here — no deploy command runs."""
+    default_branch. If the branch already has an open PR (a card that bounced back
+    to Developer on review feedback and flowed through the pipeline again), re-use
+    it — re-push the branch and refresh its body rather than opening a duplicate.
+    The pipeline waits on the PR from here (orchestrator/pr_watcher.py); no deploy
+    command runs."""
     owner_repo = parse_github_owner_repo(project.repo_remote_url)
     if owner_repo is None:
         return DeployRunResult(
@@ -239,9 +261,7 @@ async def open_pull_request(project: Project, card: Card, *, summary: str) -> De
         )
     owner, repo = owner_repo
 
-    deploy_config = project.deploy_config
-    assert deploy_config is not None
-    token = os.environ.get(deploy_config.github_token_ref or "") if deploy_config.github_token_ref else None
+    token = _github_token(project)
     if not token:
         return DeployRunResult(
             success=False,
@@ -255,19 +275,54 @@ async def open_pull_request(project: Project, card: Card, *, summary: str) -> De
     except GitCommandError as exc:
         return DeployRunResult(success=False, message=f"push failed: {exc.stderr.strip()}")
 
+    body = summary or f"Automated PR for card {card.id}."
     async with httpx.AsyncClient(timeout=30) as client:
+        try:
+            existing = await client.get(
+                f"{GITHUB_API_BASE}/repos/{owner}/{repo}/pulls",
+                headers=_github_headers(token),
+                params={"head": f"{owner}:{card.branch_name}", "state": "open"},
+            )
+        except httpx.HTTPError as exc:
+            return DeployRunResult(success=False, message=f"GitHub API request failed: {exc}")
+        if not existing.is_success:
+            return DeployRunResult(
+                success=False, message=f"GitHub API returned {existing.status_code}: {existing.text[:2000]}"
+            )
+        pulls = existing.json()
+        if pulls:
+            pull = pulls[0]
+            pr_number = pull.get("number")
+            if pull.get("body") != body:
+                try:
+                    updated = await client.patch(
+                        f"{GITHUB_API_BASE}/repos/{owner}/{repo}/pulls/{pr_number}",
+                        headers=_github_headers(token),
+                        json={"body": body},
+                    )
+                except httpx.HTTPError as exc:
+                    return DeployRunResult(success=False, message=f"GitHub API request failed: {exc}")
+                if not updated.is_success:
+                    return DeployRunResult(
+                        success=False,
+                        message=f"GitHub API returned {updated.status_code}: {updated.text[:2000]}",
+                    )
+            return DeployRunResult(
+                success=True,
+                message="re-used existing PR (branch re-pushed with the new changes)",
+                url=pull.get("html_url") or f"{GITHUB_API_BASE}/repos/{owner}/{repo}/pulls/{pr_number}",
+                pr_number=pr_number,
+            )
+
         try:
             response = await client.post(
                 f"{GITHUB_API_BASE}/repos/{owner}/{repo}/pulls",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/vnd.github+json",
-                },
+                headers=_github_headers(token),
                 json={
                     "title": card.title,
                     "head": card.branch_name,
                     "base": project.default_branch,
-                    "body": summary or f"Automated PR for card {card.id}.",
+                    "body": body,
                 },
             )
         except httpx.HTTPError as exc:
@@ -275,7 +330,130 @@ async def open_pull_request(project: Project, card: Card, *, summary: str) -> De
 
     if response.status_code == 201:
         data = response.json()
-        return DeployRunResult(success=True, message="PR opened", url=data.get("html_url"))
+        return DeployRunResult(
+            success=True,
+            message="PR opened",
+            url=data.get("html_url"),
+            pr_number=data.get("number"),
+        )
+    return DeployRunResult(
+        success=False, message=f"GitHub API returned {response.status_code}: {response.text[:2000]}"
+    )
+
+
+@dataclass
+class PullRequestStatus:
+    merged: bool
+    state: str  # "open" | "closed"
+    review_decision: str | None = None  # "approved" | "changes_requested" | None (no substantive review yet)
+    feedback: str | None = None  # body of the deciding changes-requested review
+
+
+class PrStatusUnavailableError(Exception):
+    """A transient failure fetching PR status — network blip, GitHub rate limit,
+    or the PR not replicated to GitHub's API yet (briefly common right after
+    opening). A caller should retry later on this error, not treat it as a
+    settled state."""
+
+
+async def fetch_pr_status(project: Project, card: Card) -> PullRequestStatus:
+    """GitHub's current state for the PR this card opened (card.pr_number) — merged
+    vs open, and the review decision among the substantive reviews: the most recent
+    approve / changes-requested review decides. Raises PrStatusUnavailableError for
+    anything transient so a caller retries next pass instead of misreading it."""
+    owner_repo = parse_github_owner_repo(project.repo_remote_url)
+    if owner_repo is None:
+        raise PrStatusUnavailableError("not a github.com remote")
+    owner, repo = owner_repo
+    token = _github_token(project)
+    if not token or card.pr_number is None:
+        raise PrStatusUnavailableError("no GitHub token configured, or no pr_number set")
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        try:
+            response = await client.get(
+                f"{GITHUB_API_BASE}/repos/{owner}/{repo}/pulls/{card.pr_number}",
+                headers=_github_headers(token),
+            )
+        except httpx.HTTPError as exc:
+            raise PrStatusUnavailableError(f"request failed: {exc}") from exc
+        if not response.is_success:
+            raise PrStatusUnavailableError(
+                f"GitHub API returned {response.status_code}: {response.text[:500]}"
+            )
+        pull = response.json()
+        status = PullRequestStatus(merged=bool(pull.get("merged")), state=pull.get("state", "open"))
+
+        if status.merged or status.state != "open":
+            return status
+
+        try:
+            reviews_response = await client.get(
+                f"{GITHUB_API_BASE}/repos/{owner}/{repo}/pulls/{card.pr_number}/reviews",
+                headers=_github_headers(token),
+            )
+        except httpx.HTTPError as exc:
+            raise PrStatusUnavailableError(f"request failed: {exc}") from exc
+        if not reviews_response.is_success:
+            raise PrStatusUnavailableError(
+                f"GitHub API returned {reviews_response.status_code}: {reviews_response.text[:500]}"
+            )
+
+    substantive = [
+        review
+        for review in reviews_response.json()
+        if review.get("state") in ("APPROVED", "CHANGES_REQUESTED")
+    ]
+    substantive.sort(key=lambda review: review.get("submitted_at") or "")
+    if substantive:
+        deciding = substantive[-1]
+        status.review_decision = (
+            "approved" if deciding["state"] == "APPROVED" else "changes_requested"
+        )
+        if status.review_decision == "changes_requested":
+            status.feedback = deciding.get("body")
+    return status
+
+
+async def merge_pull_request(project: Project, card: Card) -> DeployRunResult:
+    """Merge the open PR this card tracks (card.pr_number). Runs only after an
+    approving review — the pr_watcher's decision, never at the model's say-so."""
+    owner_repo = parse_github_owner_repo(project.repo_remote_url)
+    if owner_repo is None:
+        return DeployRunResult(success=False, message="not a github.com remote")
+    owner, repo = owner_repo
+    token = _github_token(project)
+    if not token or card.pr_number is None:
+        return DeployRunResult(success=False, message="no GitHub token configured, or no pr_number set")
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        try:
+            response = await client.put(
+                f"{GITHUB_API_BASE}/repos/{owner}/{repo}/pulls/{card.pr_number}/merge",
+                headers=_github_headers(token),
+                json={"commit_title": f"Merge {card.branch_name} (card {card.id})"},
+            )
+        except httpx.HTTPError as exc:
+            return DeployRunResult(success=False, message=f"GitHub API request failed: {exc}")
+
+    if response.status_code in (200, 201):
+        return DeployRunResult(
+            success=True,
+            message=f"PR #{card.pr_number} merged",
+            url=card.deploy_url,
+            commit_sha=response.json().get("sha"),
+        )
+    if response.status_code == 405:
+        # Pull request is not mergeable — default_branch has advanced into a real
+        # conflict with the card's branch. An autonomous rebase of shared history is
+        # a bigger, riskier action than this pipeline should take unsupervised (the
+        # same call ci_watcher makes about reverting) — the watcher blocks the card
+        # for a human.
+        return DeployRunResult(
+            success=False,
+            message=f"PR #{card.pr_number} is not mergeable (conflicts with {project.default_branch}): "
+            f"{response.text[:2000]}",
+        )
     return DeployRunResult(
         success=False, message=f"GitHub API returned {response.status_code}: {response.text[:2000]}"
     )
@@ -286,7 +464,11 @@ __all__ = [
     "CIStatusUnavailableError",
     "DeployRunResult",
     "FAILING_CONCLUSIONS",
+    "PrStatusUnavailableError",
+    "PullRequestStatus",
     "fetch_check_runs",
+    "fetch_pr_status",
+    "merge_pull_request",
     "open_pull_request",
     "parse_github_owner_repo",
     "run_auto_main_deploy",

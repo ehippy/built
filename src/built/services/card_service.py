@@ -1,6 +1,7 @@
 import logging
 import re
 from datetime import UTC, datetime
+from pathlib import Path
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,8 @@ from built.domain import transitions
 from built.domain.enums import Column, EventType, LifecycleState, Priority
 from built.domain.events import append_event
 from built.services.project_service import NotFoundError, get_project
+from built.tools import git_tools
+from built.tools.git_tools import GitCommandError
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +126,21 @@ async def get_card(
     if with_last_activity:
         await _attach_last_activity(session, [card])
     return card
+
+
+async def get_card_diff_stat(session: AsyncSession, card_id: str) -> tuple[int, int] | None:
+    """(insertions, deletions) of the card's branch against its project's default
+    branch, or None when there's nothing to diff yet — no worktree (not yet picked
+    up by an agent, or cleared once the card is archived/done by
+    orchestrator/archiver.py) or the worktree directory is simply gone."""
+    card = await get_card(session, card_id)
+    if not card.worktree_path or not card.branch_name:
+        return None
+    project = await get_project(session, card.project_id)
+    try:
+        return await git_tools.diff_shortstat_against_ref(Path(card.worktree_path), project.default_branch)
+    except (GitCommandError, OSError):
+        return None
 
 
 async def list_cards(session: AsyncSession, project_id: str, *, include_archived: bool = False) -> list[Card]:

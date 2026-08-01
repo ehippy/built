@@ -51,3 +51,24 @@ async def test_diff_truncates_oversized_uncommitted_diff(toy_repo_remote):
 
     assert len(result) <= git_tools.MAX_DIFF_CHARS + 300
     assert "truncated" in result
+
+
+async def test_diff_shortstat_against_ref_counts_insertions_and_deletions(toy_repo_remote):
+    _run(toy_repo_remote, "branch", "base")
+    new_content = "def greet():\n    return 'hi there'\n\n\ndef farewell():\n    pass\n"
+    (toy_repo_remote / "app.py").write_text(new_content)
+    _run(toy_repo_remote, "add", "-A")
+    _run(toy_repo_remote, "commit", "-q", "-m", "tweak greet, add farewell")
+
+    insertions, deletions = await git_tools.diff_shortstat_against_ref(toy_repo_remote, "base")
+
+    assert insertions == 5
+    assert deletions == 1
+
+
+async def test_diff_shortstat_against_ref_is_zero_when_nothing_changed(toy_repo_remote):
+    _run(toy_repo_remote, "branch", "base")
+
+    insertions, deletions = await git_tools.diff_shortstat_against_ref(toy_repo_remote, "base")
+
+    assert (insertions, deletions) == (0, 0)

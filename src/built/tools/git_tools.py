@@ -94,6 +94,21 @@ async def diff_against_ref(worktree: Path, ref: str) -> str:
     return _truncate_diff(await run_git("diff", f"{ref}...HEAD", cwd=worktree))
 
 
+_SHORTSTAT_INSERTIONS_RE = re.compile(r"(\d+) insertions?\(\+\)")
+_SHORTSTAT_DELETIONS_RE = re.compile(r"(\d+) deletions?\(-\)")
+
+
+async def diff_shortstat_against_ref(worktree: Path, ref: str) -> tuple[int, int]:
+    """(insertions, deletions) since HEAD diverged from `ref` — same three-dot
+    comparison as diff_against_ref, just the one-line summary instead of the full
+    body, so a UI readout doesn't need to fetch/truncate the whole diff just to
+    show a size."""
+    output = await run_git("diff", "--shortstat", f"{ref}...HEAD", cwd=worktree)
+    insertions = int(m.group(1)) if (m := _SHORTSTAT_INSERTIONS_RE.search(output)) else 0
+    deletions = int(m.group(1)) if (m := _SHORTSTAT_DELETIONS_RE.search(output)) else 0
+    return insertions, deletions
+
+
 _CONFLICT_STATUS_CODES = {"UU", "AA", "DD", "AU", "UA", "DU", "UD"}
 # Classic git conflict marker lines: '<<<<<<< HEAD', a bare '=======', '>>>>>>> branch'.
 _CONFLICT_MARKER_RE = re.compile(r"^<{7} |^={7}$|^>{7} ", re.MULTILINE)

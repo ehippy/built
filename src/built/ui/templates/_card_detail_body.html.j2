@@ -7,6 +7,11 @@
     {% if card.priority != "normal" %}{{ m.badge("priority-" ~ card.priority, card.priority ~ " priority") }}{% endif %}
     {% if card.archived_at %}{{ m.badge("paused", "archived") }}{% endif %}
     {% if card.branch_name %}· <code>{{ card.branch_name }}</code>{% endif %}
+    {% if diff_stat %}
+    · <span class="text-nowrap">
+      <span class="text-success">+{{ diff_stat[0] }}</span> <span class="text-danger">-{{ diff_stat[1] }}</span>
+    </span>
+    {% endif %}
   </p>
   <p class="text-body-secondary small">Last updated {{ card.last_activity_at|timeago }}</p>
 </div>

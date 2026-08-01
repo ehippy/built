@@ -22,6 +22,7 @@ async def _card_detail_context(session: SessionDep, card_id: str) -> dict:
     )
     dependencies = await card_service.list_dependencies(session, card_id)
     dependents = await card_service.list_dependents(session, card_id)
+    diff_stat = await card_service.get_card_diff_stat(session, card_id)
     return {
         "card": card,
         "visits": visits,
@@ -31,6 +32,7 @@ async def _card_detail_context(session: SessionDep, card_id: str) -> dict:
         "epic_children": epic_children,
         "dependencies": dependencies,
         "dependents": dependents,
+        "diff_stat": diff_stat,
     }
 
 

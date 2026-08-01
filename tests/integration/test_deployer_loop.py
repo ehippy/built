@@ -440,6 +440,8 @@ async def test_deployer_pr_to_operator_defers_postmortem_until_merged(
         mode=DeployMode.PR_TO_OPERATOR,
     )
 
+    # Opening the PR is the Deployer's job; the card's completion isn't — it stays
+    # ACTIVE (excluded from claiming via pr_number), so no postmortem yet.
     assert result.lifecycle_state == LifecycleState.ACTIVE
     assert result.pr_number == 7
     assert await _postmortems_for(db_session, card.id) == []
@@ -449,6 +451,12 @@ async def test_deployer_pr_to_operator_defers_postmortem_until_merged(
         "fetch_pr_status",
         lambda project, card: _async_result(deploy_runner.PullRequestStatus(merged=True, state="closed")),
     )
+
+    # The PR merges (by a human, or the watcher after an approving review).
+    async def _merged(_project, _card):
+        return deploy_runner.PullRequestStatus(merged=True, state="closed")
+
+    monkeypatch.setattr(deploy_runner, "fetch_pr_status", _merged)
     await run_pr_watcher_once()
     await db_session.refresh(card)
 

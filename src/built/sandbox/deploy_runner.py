@@ -246,6 +246,58 @@ def _github_token(project: Project) -> str | None:
     return os.environ.get(token_ref or "") if token_ref else None
 
 
+_ACTIONS_JOB_URL_RE = re.compile(r"/actions/runs/\d+/job/(?P<job_id>\d+)")
+
+
+async def fetch_job_error_lines(project: Project, html_url: str | None, *, max_lines: int = 20) -> str | None:
+    """Best-effort: pull the `##[error]` lines out of a failed GitHub Actions job's
+    log, the same signal `gh run view --log-failed` surfaces. A CheckRun's
+    name/conclusion/html_url alone tells a follow-up card *that* something failed,
+    not *why* — without the actual error text, whoever picks up the follow-up card
+    has to re-discover the failure from scratch, which is exactly what let a single
+    root cause (e.g. one broken workflow file) spawn a long chain of follow-up cards
+    that each misdiagnosed it as an unrelated app regression. Returns None (never
+    raises) for anything that doesn't pan out — a missing/malformed URL, no token,
+    a network error, or a log with no `##[error]` lines — since this is pure
+    enrichment and should never block filing the follow-up card it's for."""
+    if not html_url:
+        return None
+    match = _ACTIONS_JOB_URL_RE.search(html_url)
+    if not match:
+        return None
+    owner_repo = parse_github_owner_repo(project.repo_remote_url)
+    if owner_repo is None:
+        return None
+    owner, repo = owner_repo
+
+    token = _github_token(project)
+    if not token:
+        return None
+
+    job_id = match.group("job_id")
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        try:
+            response = await client.get(
+                f"{GITHUB_API_BASE}/repos/{owner}/{repo}/actions/jobs/{job_id}/logs",
+                headers=_github_headers(token),
+            )
+        except httpx.HTTPError:
+            return None
+    if not response.is_success:
+        return None
+
+    error_lines = [
+        # Strip GitHub's leading ISO-timestamp log prefix — pure noise for a card
+        # that's meant to be read and acted on by an LLM.
+        re.sub(r"^\d{4}-\d{2}-\d{2}T[\d:.]+Z ", "", line)
+        for line in response.text.splitlines()
+        if "##[error]" in line
+    ]
+    if not error_lines:
+        return None
+    return "\n".join(error_lines[:max_lines])
+
+
 async def open_pull_request(project: Project, card: Card, *, summary: str) -> DeployRunResult:
     """Push the card's branch as-is (no merge) and open a GitHub PR against
     default_branch. If the branch already has an open PR (a card that bounced back

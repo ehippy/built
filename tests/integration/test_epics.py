@@ -86,9 +86,9 @@ async def test_a_failed_child_means_the_epic_never_auto_completes(db_session):
 
 
 async def test_confirm_ci_passed_also_propagates_to_the_epic(db_session):
-    """complete_deployer_visit, confirm_ci_passed, and confirm_ci_failed_with_followup
-    are three independent lifecycle_state=DONE sites, not routed through one shared
-    function — each needs its own _maybe_complete_epic call, verified separately."""
+    """complete_deployer_visit and confirm_ci_passed are two independent
+    lifecycle_state=DONE sites, not routed through one shared function — each
+    needs its own _maybe_complete_epic call, verified separately."""
     project = await _make_project(db_session, name="ci-passed")
     epic = await card_service.create_card(db_session, project.id, title="Epic", raw_request="r")
     c1 = await card_service.create_card(db_session, project.id, title="C1", raw_request="r")
@@ -101,7 +101,10 @@ async def test_confirm_ci_passed_also_propagates_to_the_epic(db_session):
     assert epic.lifecycle_state == LifecycleState.DONE
 
 
-async def test_confirm_ci_failed_with_followup_also_propagates_to_the_epic(db_session):
+async def test_ci_failure_reopens_the_child_without_completing_the_epic(db_session):
+    """Unlike confirm_ci_passed, a CI failure reopens the child card back to
+    Developer (ACTIVE) rather than DONE — the epic must not auto-complete on a
+    child whose shipped work just turned out to be broken."""
     project = await _make_project(db_session, name="ci-failed")
     epic = await card_service.create_card(db_session, project.id, title="Epic", raw_request="r")
     c1 = await card_service.create_card(db_session, project.id, title="C1", raw_request="r")
@@ -109,11 +112,10 @@ async def test_confirm_ci_failed_with_followup_also_propagates_to_the_epic(db_se
     await card_service.link_epic_child(db_session, parent_card_id=epic.id, child_card_id=c1.id)
     await db_session.commit()
 
-    await transitions.confirm_ci_failed_with_followup(db_session, c1, note="red")
+    await transitions.reopen_after_ci_failure(db_session, c1, project, feedback="red")
 
-    # The merge/deploy itself succeeded — that still reaches DONE (see the
-    # function's own docstring) — so the epic completes here too.
-    assert epic.lifecycle_state == LifecycleState.DONE
+    assert c1.lifecycle_state == LifecycleState.ACTIVE
+    assert epic.lifecycle_state == LifecycleState.ACTIVE
 
 
 async def test_maybe_complete_epic_guards_against_zero_non_archived_siblings(db_session):

@@ -6,10 +6,18 @@ the Deployer's own job, the git-level push, is done, but the card's overall
 completion isn't until CI actually confirms it. A red result does NOT attempt to
 revert anything on the default branch — an automated revert of a shared branch that
 may already have other work built on top of it is a bigger, riskier action than this
-watcher should take unattended. Instead it files a fresh follow-up card describing
-the failure, exactly like a human would open a bug report, and lets that flow
-through the ordinary PM -> Developer -> Tester -> Reviewer -> Deployer pipeline to
-fix it forward."""
+watcher should take unattended. Instead it reopens the same card and bounces it back
+to Developer to fix forward — not a fresh follow-up card. There's no mystery here
+for a new card to reinvestigate: this watcher already knows exactly which card's
+merge broke CI and, since it fetches the failing job's actual `##[error]` output (not
+just a check name and a link), exactly why. Filing a brand-new "diagnose and fix the
+regression" card sounds safe but in practice means every occurrence of the same root
+cause (e.g. one broken workflow file that fails every deploy the same way) spawns its
+own card, each rediscovering — and often misdiagnosing, with no more evidence than a
+check name and a URL — the same problem from scratch. Reopening the original card
+instead reuses its existing revision_count safety valve, so a fix that keeps
+re-breaking CI eventually BLOCKs for a human rather than growing an unbounded chain
+of look-alike cards."""
 
 import asyncio
 import logging
@@ -24,7 +32,6 @@ from built.db.models import Card, Project
 from built.domain import transitions
 from built.domain.enums import LifecycleState
 from built.sandbox import deploy_runner
-from built.services import card_service
 
 logger = logging.getLogger(__name__)
 
@@ -83,26 +90,22 @@ async def _check_one(session, card: Card) -> str:
 
     failing = [r for r in check_runs if r.conclusion in deploy_runner.FAILING_CONCLUSIONS]
     if failing:
-        lines = "\n".join(f"- {r.name}: {r.conclusion} ({r.html_url or 'no URL'})" for r in failing)
+        lines = []
+        for r in failing:
+            lines.append(f"- {r.name}: {r.conclusion} ({r.html_url or 'no URL'})")
+            error_text = await deploy_runner.fetch_job_error_lines(project, r.html_url)
+            if error_text:
+                indented = "\n".join(f"    {line}" for line in error_text.splitlines())
+                lines.append(f"  Error output:\n{indented}")
+        lines_text = "\n".join(lines)
         commit_sha = card.deploying_commit_sha
-        followup = await card_service.create_card(
-            session,
-            card.project_id,
-            title=f"Fix CI failure on {commit_sha[:8]} (from {card.title!r})",
-            raw_request=(
-                f"Card {card.id} ({card.title!r}) merged to {project.default_branch} and deployed, but CI "
-                f"failed on the resulting commit {commit_sha}:\n{lines}\n\n"
-                f"Diagnose and fix the regression on {project.default_branch}."
-            ),
-            source="ci_watcher",
+        feedback = (
+            f"This card's merge to {project.default_branch} deployed as commit {commit_sha[:8]}, but CI "
+            f"failed on it:\n{lines_text}\n\n"
+            f"Fix the regression on top of the current {project.default_branch} and resubmit — it'll be "
+            "redeployed and CI-checked again the same way."
         )
-        await transitions.confirm_ci_failed_with_followup(
-            session,
-            card,
-            note=f"CI failed on commit {commit_sha[:8]}:\n{lines}\n\nOpened follow-up card {followup.id} "
-            f"({followup.title!r}) to fix it.",
-        )
-        await _maybe_write_postmortem(session, project, card)
+        await transitions.reopen_after_ci_failure(session, card, project, feedback=feedback)
         return "ci_failed"
 
     await transitions.confirm_ci_passed(session, card, note=f"all {len(check_runs)} check(s) passed")

@@ -5,7 +5,7 @@ real toy git repo."""
 
 from built.db.models import Card, DeployConfig, Project
 from built.domain.enums import DeployKind, DeployMode
-from built.sandbox.deploy_runner import open_pull_request, parse_github_owner_repo
+from built.sandbox.deploy_runner import fetch_job_error_lines, open_pull_request, parse_github_owner_repo
 
 
 def test_parse_github_owner_repo_https():
@@ -63,6 +63,31 @@ async def test_open_pull_request_fails_cleanly_with_no_github_token_ref():
 
     assert result.success is False
     assert "no GitHub token configured" in result.message
+
+
+async def test_fetch_job_error_lines_returns_none_without_a_url():
+    assert await fetch_job_error_lines(_project(), None) is None
+
+
+async def test_fetch_job_error_lines_returns_none_for_a_non_actions_url():
+    project = _project()
+    project.deploy_config = DeployConfig(
+        project_id="p", kind=DeployKind.COMMAND, mode=DeployMode.AUTO_MAIN, github_token_ref="SOME_TOKEN"
+    )
+    assert await fetch_job_error_lines(project, "https://example.com/not-a-job-url") is None
+
+
+async def test_fetch_job_error_lines_returns_none_without_a_token(monkeypatch):
+    monkeypatch.delenv("SOME_UNSET_TOKEN_VAR", raising=False)
+    project = _project()
+    project.deploy_config = DeployConfig(
+        project_id="p",
+        kind=DeployKind.COMMAND,
+        mode=DeployMode.AUTO_MAIN,
+        github_token_ref="SOME_UNSET_TOKEN_VAR",
+    )
+    url = "https://github.com/octocat/hello-world/actions/runs/123/job/456"
+    assert await fetch_job_error_lines(project, url) is None
 
 
 async def test_open_pull_request_fails_cleanly_when_token_env_var_is_unset(monkeypatch):

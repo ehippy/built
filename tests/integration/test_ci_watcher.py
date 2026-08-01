@@ -56,12 +56,12 @@ async def test_all_checks_green_confirms_done(db_session, monkeypatch):
     assert card.deploying_since is None
 
 
-async def test_a_failing_check_confirms_done_and_opens_a_followup_card(db_session, monkeypatch):
-    """The merge and deploy themselves genuinely succeeded — that was this card's
-    job — so it still reaches DONE rather than getting reopened or blocked. Nothing
-    attempts to revert the shared default branch automatically; instead a fresh
-    card is opened describing the failure, exactly like a human filing a bug
-    report, so it flows through the ordinary pipeline to fix it forward."""
+async def test_a_failing_check_reopens_the_card_back_to_developer(db_session, monkeypatch):
+    """The push itself genuinely succeeded, but what it shipped is broken — and
+    unlike a bug a stranger might file, there's no mystery about which card's work
+    caused it. Reopen THIS card and bounce it to Developer with the diagnosis as
+    feedback, rather than leaving it DONE and filing a new card to reinvestigate
+    from scratch. No revert of the shared default branch happens either way."""
     card = await _make_pending_card(db_session)
     monkeypatch.setattr(
         deploy_runner,
@@ -78,20 +78,67 @@ async def test_a_failing_check_confirms_done_and_opens_a_followup_card(db_sessio
 
     assert counts == {"confirmed": 0, "ci_failed": 1, "timed_out": 0, "still_pending": 0}
     await db_session.refresh(card)
-    assert card.lifecycle_state == LifecycleState.DONE
+    assert card.column == Column.DEVELOPER
+    assert card.lifecycle_state == LifecycleState.ACTIVE
     assert card.deploying_commit_sha is None
     assert card.deploying_since is None
+    assert card.revision_count == 1
+    assert "abc123de" in card.latest_feedback
+    assert "e2e" in card.latest_feedback
+    assert "failure" in card.latest_feedback
 
     all_cards = await card_service.list_cards(db_session, card.project_id)
-    followups = [c for c in all_cards if c.id != card.id]
-    assert len(followups) == 1
-    followup = followups[0]
-    assert followup.column == Column.PM
-    assert followup.lifecycle_state == LifecycleState.ACTIVE
-    assert "abc123de" in followup.title
-    assert card.id in followup.raw_request
-    assert "e2e" in followup.raw_request
-    assert "failure" in followup.raw_request
+    assert len(all_cards) == 1  # no new follow-up card was filed
+
+
+async def test_reopened_card_feedback_includes_fetched_error_output(db_session, monkeypatch):
+    """The whole point of reopening the same card is that Developer gets handed the
+    actual failure text, not just a check name and a link — verify
+    fetch_job_error_lines' output actually lands in card.latest_feedback."""
+    card = await _make_pending_card(db_session)
+    monkeypatch.setattr(
+        deploy_runner,
+        "fetch_check_runs",
+        lambda project, sha: _async_result(
+            [CheckRun(name="deploy", status="completed", conclusion="failure", html_url="https://x/1")]
+        ),
+    )
+    monkeypatch.setattr(
+        deploy_runner,
+        "fetch_job_error_lines",
+        lambda project, html_url, **kwargs: _async_result(
+            "action.yml (Line: 21, Col: 11): The identifier 'deploy' may not be used more than once"
+        ),
+    )
+
+    await run_ci_watcher_once()
+
+    await db_session.refresh(card)
+    assert "identifier 'deploy' may not be used more than once" in card.latest_feedback
+
+
+async def test_repeated_ci_failures_eventually_block_for_a_human(db_session, monkeypatch):
+    """Reopening shares the same revision_count budget as Reviewer/Tester
+    rejections — a fix that keeps re-breaking CI must eventually stop bouncing
+    forever and surface to a human, the same safety valve as any other revision
+    loop, instead of growing an unbounded chain of look-alike cards."""
+    card = await _make_pending_card(db_session)
+    project = await project_service.get_project(db_session, card.project_id)
+    card.revision_count = project.max_revisions
+    await db_session.commit()
+    monkeypatch.setattr(
+        deploy_runner,
+        "fetch_check_runs",
+        lambda project, sha: _async_result(
+            [CheckRun(name="e2e", status="completed", conclusion="failure", html_url="https://x/1")]
+        ),
+    )
+
+    await run_ci_watcher_once()
+
+    await db_session.refresh(card)
+    assert card.lifecycle_state == LifecycleState.BLOCKED
+    assert card.column == Column.DEVELOPER
 
 
 async def test_still_running_checks_are_left_alone_within_the_timeout(db_session, monkeypatch):

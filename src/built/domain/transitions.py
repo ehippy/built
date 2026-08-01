@@ -304,9 +304,12 @@ async def complete_deployer_visit(
     own job — the git-level push / the PR opened — is genuinely finished, but the
     card's overall completion isn't: it stays ACTIVE with the external handoff
     tracked for orchestrator/ci_watcher.py (CI) or orchestrator/pr_watcher.py (PR
-    review) to poll, and only reaches DONE once that resolves (confirm_ci_passed /
-    confirm_ci_failed_with_followup / mark_ci_wait_timed_out, and confirm_pr_merged
-    / request_pr_changes / mark_pr_wait_timed_out below)."""
+    review) to poll. The CI side either confirms it DONE (confirm_ci_passed),
+    blocks it for a human if CI never resolves (mark_ci_wait_timed_out), or reopens
+    it back to Developer if CI comes back red (reopen_after_ci_failure below); the
+    PR side confirms it DONE (confirm_pr_merged), bounces it back to Developer on
+    review feedback (request_pr_changes), or blocks it for a human
+    (mark_pr_wait_timed_out and friends)."""
     if success:
         if deploy_url is not None:
             card.deploy_url = deploy_url
@@ -412,24 +415,38 @@ async def confirm_ci_passed(session: AsyncSession, card: Card, *, note: str) -> 
     return card
 
 
-async def confirm_ci_failed_with_followup(session: AsyncSession, card: Card, *, note: str) -> Card:
-    """orchestrator/ci_watcher.py: CI came back red on the commit this card's
-    auto_main deploy produced. The merge and deploy themselves genuinely
-    succeeded — that was this card's job, and it did it — so this still reaches
-    DONE rather than reopening the card or attempting to revert a commit the
-    default branch may already have other work built on top of (an automated
-    revert of shared history is a bigger, riskier action than this pipeline
-    should take unsupervised). The regression itself is a new, separate problem:
-    orchestrator/ci_watcher.py opens a fresh follow-up card for it — exactly like
-    a human filing a bug report — which flows through the ordinary pipeline to
-    fix it forward."""
-    card.lifecycle_state = LifecycleState.DONE
+async def reopen_after_ci_failure(
+    session: AsyncSession, card: Card, project: Project, *, feedback: str
+) -> Card:
+    """orchestrator/ci_watcher.py: CI came back red on the commit this card's own
+    auto_main deploy produced. The push itself genuinely succeeded, but the result
+    it shipped is broken — and unlike a bug a stranger might file, there's no
+    mystery about which card's work caused it or why: ci_watcher.py already fetched
+    the failing job's actual error output. So reopen THIS card and bounce it back
+    to Developer with that diagnosis as feedback, instead of leaving it DONE and
+    filing a new one to reinvestigate from zero evidence. This is deliberately NOT
+    a revert of default_branch (an automated revert of shared history that may
+    already have other work built on top of it is a bigger, riskier action than
+    this pipeline should take unsupervised) — it fixes forward, on the same branch,
+    the same way a Reviewer/Tester rejection or a Deployer merge-conflict bounce
+    does, and shares that revision_count budget: a card whose fix keeps re-breaking
+    CI eventually BLOCKs for a human instead of silently spawning an unbounded
+    chain of look-alike cards. Does NOT touch deploy_attempt_count — the deploy
+    mechanics themselves didn't fail, the code they shipped did."""
+    card.revision_count += 1
+    card.latest_feedback = feedback
+    card.column = Column.DEVELOPER
+    card.lifecycle_state = LifecycleState.ACTIVE
     card.deploying_commit_sha = None
     card.deploying_since = None
+    if card.revision_count > project.max_revisions:
+        card.lifecycle_state = LifecycleState.BLOCKED
     await append_event(
-        session, card_id=card.id, type=EventType.SYSTEM_NOTE, payload={"action": "ci_failed", "note": note}
+        session,
+        card_id=card.id,
+        type=EventType.SYSTEM_NOTE,
+        payload={"action": "ci_failed_reopened", "note": feedback},
     )
-    await _maybe_complete_epic(session, card)
     return card
 
 

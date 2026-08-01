@@ -13,6 +13,7 @@ from built.domain import transitions
 from built.domain.enums import Column, DeployKind, DeployMode, LifecycleState, VisitOutcome
 from built.llm.client import LLMResult, ToolCallRequest
 from built.orchestrator.ci_watcher import run_ci_watcher_once
+from built.orchestrator.pr_watcher import run_pr_watcher_once
 from built.sandbox import deploy_runner, worktree
 from built.sandbox.container import CommandResult
 from built.services import card_service, project_service
@@ -51,6 +52,11 @@ async def _postmortems_for(db_session, card_id: str) -> list[CardPostmortem]:
     return list(
         (await db_session.scalars(select(CardPostmortem).where(CardPostmortem.card_id == card_id))).all()
     )
+
+
+async def _async_result(value):
+    return value
+
 
 _RealAsyncClient = httpx.AsyncClient
 
@@ -385,10 +391,13 @@ async def test_deployer_loop_auto_main_deploy_failure_stays_active_under_cap(db_
 # --- Postmortem hook (agent/summarizer.py) -----------------------------------------
 
 
-async def test_deployer_pr_to_operator_done_writes_a_postmortem(db_session, toy_repo_remote, monkeypatch):
-    """pr_to_operator's success path reaches DONE synchronously inside
-    run_deployer_visit (no CI to wait on) — the postmortem must land in the same
-    visit, before the terminal handler returns."""
+async def test_deployer_pr_to_operator_defers_postmortem_until_merged(
+    db_session, toy_repo_remote, monkeypatch
+):
+    """pr_to_operator's success path lands in DEPLOYED_PENDING_PR, not DONE — a
+    human/pr_watcher review still has to happen — so the postmortem must not fire
+    yet; it only fires once orchestrator/pr_watcher.py confirms the PR merged,
+    matching where DONE itself happens (domain.transitions.confirm_pr_merged)."""
     _allow_push_to_checked_out_branch(toy_repo_remote)
     project, card, wt_path = await _make_deployer_card(
         db_session, toy_repo_remote, mode=DeployMode.PR_TO_OPERATOR
@@ -399,7 +408,10 @@ async def test_deployer_pr_to_operator_done_writes_a_postmortem(db_session, toy_
     _stub_postmortem_llm(monkeypatch, went_well="clean PR", struggles="none")
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(201, json={"html_url": "https://github.com/owner/repo/pull/7"})
+        if request.method == "GET":
+            # existing-PR lookup: no open PR for this branch yet
+            return httpx.Response(200, json=[])
+        return httpx.Response(201, json={"html_url": "https://github.com/owner/repo/pull/7", "number": 7})
 
     _mock_github(monkeypatch, handler)
 
@@ -428,7 +440,19 @@ async def test_deployer_pr_to_operator_done_writes_a_postmortem(db_session, toy_
         mode=DeployMode.PR_TO_OPERATOR,
     )
 
-    assert result.lifecycle_state == LifecycleState.DONE
+    assert result.lifecycle_state == LifecycleState.ACTIVE
+    assert result.pr_number == 7
+    assert await _postmortems_for(db_session, card.id) == []
+
+    monkeypatch.setattr(
+        deploy_runner,
+        "fetch_pr_status",
+        lambda project, card: _async_result(deploy_runner.PullRequestStatus(merged=True, state="closed")),
+    )
+    await run_pr_watcher_once()
+    await db_session.refresh(card)
+
+    assert card.lifecycle_state == LifecycleState.DONE
     postmortems = await _postmortems_for(db_session, card.id)
     assert len(postmortems) == 1
     assert postmortems[0].outcome == LifecycleState.DONE

@@ -1022,6 +1022,32 @@ async def test_board_curation_pause_resume_and_kind_toggle_round_trip(db_session
         assert 'id="curation-enabled-bug_sweep" name="enabled" value="true" checked' in after_recheck.text
 
 
+async def test_curation_toggle_over_htmx_swaps_the_panel_instead_of_redirecting(
+    db_session, toy_repo_remote
+):
+    """The curation modal's checkbox submits via htmx (see _curation_panel.html.j2's
+    onchange="this.form.requestSubmit()") — a 303 redirect would force a full page
+    reload and close the Bootstrap modal, since its open/closed state lives only in
+    client-side JS/DOM, not anything the server re-renders. An htmx request must get
+    the refreshed panel fragment back, not a redirect."""
+    project, _ = await _make_project(db_session, toy_repo_remote, _n="18")
+    await db_session.commit()
+
+    async with _client() as client:
+        resp = await client.post(
+            f"/ui/projects/{project.id}/curation/kinds/bug_sweep",
+            data={},
+            headers={"HX-Request": "true"},
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 200
+    assert resp.text.strip().startswith('<div id="curation-panel">')
+    assert "off — not on the automatic schedule" in resp.text
+    # A fragment, not a full page — none of the surrounding board chrome leaked in.
+    assert "<nav" not in resp.text
+
+
 # --- Event logging: what a pass writes for the curation dropdown to read ----------
 
 

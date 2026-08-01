@@ -1,7 +1,7 @@
 import asyncio
 
 from fastapi import APIRouter, Form, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 
 from built.api.deps import SessionDep
 from built.db.models import CurationEvent
@@ -76,12 +76,40 @@ async def _curation_statuses(session: SessionDep, project_id: str) -> list[dict]
     return statuses
 
 
+async def _curation_context(session: SessionDep, project_id: str) -> dict:
+    """Shared by the full board page and the curation modal's own htmx fragment
+    response — both render _curation_panel.html.j2 off the same data."""
+    curation_state = await project_service.get_curation_state(session, project_id)
+    return {
+        "statuses": await _curation_statuses(session, project_id),
+        "curation_running": _any_curation_running(project_id),
+        "curation_paused_at": curation_state.paused_at if curation_state else None,
+    }
+
+
+async def _curation_action_response(project_id: str, request: Request, session: SessionDep) -> Response:
+    """Every curation-panel form (pause/resume/kind-toggle/run-now) submits via
+    htmx now — on success, swap the refreshed panel fragment back in place rather
+    than redirecting the whole page, which would reload the document and lose the
+    Bootstrap modal's open state. Non-htmx submits (JS disabled) still fall back
+    to the old redirect-to-board behavior, same pattern as cards.py's
+    _card_action_response."""
+    if request.headers.get("HX-Request") == "true":
+        project = await project_service.get_project(session, project_id)
+        return templates.TemplateResponse(
+            request,
+            "_curation_panel.html.j2",
+            {"project": project, **await _curation_context(session, project_id)},
+        )
+    return RedirectResponse(
+        request.headers.get("referer") or f"/ui/projects/{project_id}/board", status_code=303
+    )
+
+
 @router.get("/projects/{project_id}/board")
 async def board(project_id: str, request: Request, session: SessionDep, show_archived: bool = False):
     project = await project_service.get_project(session, project_id)
     board = await card_service.get_board(session, project_id, include_archived=show_archived)
-    statuses = await _curation_statuses(session, project_id)
-    curation_state = await project_service.get_curation_state(session, project_id)
     epics = await card_service.list_epics(session, project_id)
     return templates.TemplateResponse(
         request,
@@ -90,11 +118,9 @@ async def board(project_id: str, request: Request, session: SessionDep, show_arc
             "project": project,
             "board": board,
             "show_archived": show_archived,
-            "statuses": statuses,
-            "curation_running": _any_curation_running(project_id),
-            "curation_paused_at": curation_state.paused_at if curation_state else None,
             "epics": epics,
             "current_epic_id": project.current_epic_id,
+            **await _curation_context(session, project_id),
         },
     )
 
@@ -165,19 +191,15 @@ async def archive_all_in_column(
 
 
 @router.post("/projects/{project_id}/curation/pause")
-async def pause_curation(project_id: str, session: SessionDep, request: Request) -> RedirectResponse:
+async def pause_curation(project_id: str, session: SessionDep, request: Request) -> Response:
     await project_service.pause_curation(session, project_id)
-    return RedirectResponse(
-        request.headers.get("referer") or f"/ui/projects/{project_id}/board", status_code=303
-    )
+    return await _curation_action_response(project_id, request, session)
 
 
 @router.post("/projects/{project_id}/curation/resume")
-async def resume_curation(project_id: str, session: SessionDep, request: Request) -> RedirectResponse:
+async def resume_curation(project_id: str, session: SessionDep, request: Request) -> Response:
     await project_service.resume_curation(session, project_id)
-    return RedirectResponse(
-        request.headers.get("referer") or f"/ui/projects/{project_id}/board", status_code=303
-    )
+    return await _curation_action_response(project_id, request, session)
 
 
 @router.post("/projects/{project_id}/curation/kinds/{kind}")
@@ -187,23 +209,21 @@ async def set_curation_kind_enabled(
     session: SessionDep,
     request: Request,
     enabled: bool = Form(False),
-) -> RedirectResponse:
+) -> Response:
     """Backs each kind's checkbox in the board's Curation panel. A checkbox omits
     its form field entirely when unchecked (not "false"), which is exactly what
     Form(False)'s default handles — no explicit off-value needed on the input."""
     await project_service.set_curation_kind_enabled(session, project_id, kind, enabled=enabled)
-    return RedirectResponse(
-        request.headers.get("referer") or f"/ui/projects/{project_id}/board", status_code=303
-    )
+    return await _curation_action_response(project_id, request, session)
 
 
 @router.post("/projects/{project_id}/curate/{kind}")
-async def curate(project_id: str, kind: ActivityKind, session: SessionDep) -> RedirectResponse:
+async def curate(project_id: str, kind: ActivityKind, request: Request, session: SessionDep) -> Response:
     """Kicks off one curation pass (agent/curation.py) in the background — a full
-    pass is an LLM agentic loop and can take a while, so this redirects immediately.
+    pass is an LLM agentic loop and can take a while, so this responds immediately.
     Any new cards appear on the board as they're created via the existing polling
     fragment."""
     await project_service.get_project(session, project_id)  # 404s early if missing
     if not is_curation_running(project_id, kind):
         asyncio.create_task(run_curation_activity(project_id, kind))
-    return RedirectResponse(f"/ui/projects/{project_id}/board", status_code=303)
+    return await _curation_action_response(project_id, request, session)

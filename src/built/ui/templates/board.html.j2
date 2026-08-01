@@ -62,44 +62,7 @@
       </div>
       <div class="modal-body">
         <p class="text-body-secondary">Run a focused pass over the repo and propose cards for whatever it finds — nothing is ever edited directly, every kind only ever proposes new cards. Uncheck a kind to take it off the automatic schedule; "Run now" always works regardless.</p>
-        <div class="d-flex align-items-center justify-content-between border rounded p-2 mb-2">
-          <span class="small">
-            {% if curation_paused_at %}Automatic curation paused since {{ curation_paused_at|timeago }}{% else %}Automatic curation is active{% endif %}
-          </span>
-          {% if curation_paused_at %}
-          <form method="post" action="/ui/projects/{{ project.id }}/curation/resume">
-            <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-play-fill"></i> Resume</button>
-          </form>
-          {% else %}
-          <form method="post" action="/ui/projects/{{ project.id }}/curation/pause">
-            <button class="btn btn-sm btn-outline-secondary" type="submit"><i class="bi bi-pause-fill"></i> Pause</button>
-          </form>
-          {% endif %}
-        </div>
-        {% for s in statuses %}
-        <div class="{% if not loop.first %}border-top pt-2 mt-2{% endif %}">
-          <div class="d-flex align-items-center gap-2">
-            <form method="post" action="/ui/projects/{{ project.id }}/curation/kinds/{{ s.kind }}" class="form-check form-switch mb-0 flex-grow-1">
-              <input class="form-check-input" type="checkbox" role="switch" id="curation-enabled-{{ s.kind }}" name="enabled" value="true" {% if s.enabled %}checked{% endif %} onchange="this.form.submit()">
-              <label class="form-check-label" for="curation-enabled-{{ s.kind }}">{{ s.label }}</label>
-            </form>
-            <form method="post" action="/ui/projects/{{ project.id }}/curate/{{ s.kind }}">
-              <button class="btn btn-sm btn-secondary" type="submit">Run now</button>
-            </form>
-          </div>
-          <div class="small text-body-secondary ps-4 text-truncate">
-            {% if not s.enabled %}off — not on the automatic schedule
-            {% elif s.running %}
-            <span class="spinner-border spinner-border-sm flex-shrink-0" role="status" title="Running now">
-              <span class="visually-hidden">Running…</span>
-            </span>
-            {{ s.current_activity or "starting…" }}
-            {% elif s.last_run_at %}{{ s.last_run_at|timeago }}{% if s.summary %} — {{ s.summary }}{% endif %}
-            {% else %}never run yet
-            {% endif %}
-          </div>
-        </div>
-        {% endfor %}
+        {% include "_curation_panel.html.j2" %}
       </div>
     </div>
   </div>

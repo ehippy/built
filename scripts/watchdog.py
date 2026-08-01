@@ -32,6 +32,9 @@ def git_head(ref: str) -> str | None:
 
 def main():
     before_head = git_head("HEAD")
+    if before_head is None:
+        log.error("Could not read local HEAD — is %s a git repo?", REPO_DIR)
+        sys.exit(1)
 
     # --- pull ---
     log.info("Pulling latest from %s", REMOTE_URL)
@@ -40,12 +43,16 @@ def main():
         capture_output=True, text=True, timeout=60,
     )
     if r.returncode != 0:
-        # Non-zero return is normal when already up to date; stderr may just be "Already up to date."
-        log.info("Pull result: %s", r.stdout.strip())
-        if r.stderr.strip():
-            log.debug("Pull stderr: %s", r.stderr.strip())
+        # A non-zero return here is a real failure: diverged branch, auth error,
+        # network error, etc. "Already up to date" exits 0, so this is never the
+        # normal case — don't let it look like a routine no-op.
+        log.error("git pull failed (exit %d): %s", r.returncode, r.stderr.strip() or r.stdout.strip())
+        sys.exit(1)
 
     after_head = git_head("HEAD")
+    if after_head is None:
+        log.error("Could not read local HEAD after pull")
+        sys.exit(1)
 
     # --- did we change? ---
     if before_head == after_head:
@@ -56,13 +63,13 @@ def main():
     log.info("Restarting built service…")
 
     r = subprocess.run(
-        ["systemctl", "restart", "built.service"],
+        ["sudo", "-n", "systemctl", "restart", "built.service"],
         capture_output=True, text=True, timeout=30,
     )
     if r.returncode == 0:
         log.info("built.service restarted successfully")
     else:
-        log.error("Failed to restart built.service: %s", r.stderr.strip())
+        log.error("Failed to restart built.service: %s", r.stderr.strip() or r.stdout.strip())
         sys.exit(1)
 
 

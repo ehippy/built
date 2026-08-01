@@ -9,7 +9,6 @@ Logs results to stdout (captured by systemd journal).
 import logging
 import subprocess
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_DIR = Path(__file__).resolve().parent.parent
@@ -32,7 +31,6 @@ def git_head(ref: str) -> str | None:
 
 
 def main():
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     before_head = git_head("HEAD")
 
     # --- pull ---

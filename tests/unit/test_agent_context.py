@@ -29,6 +29,23 @@ def _card(**overrides) -> Card:
     return Card(**defaults)
 
 
+def test_developer_prompt_tells_agent_how_to_bootstrap_a_missing_sandbox():
+    """Nothing writes Dockerfile.built-sandbox into a project by default (see
+    sandbox/container.py's _ensure_worktree_sandbox — it no-ops if the file isn't
+    there) — the system prompt is the only thing that can reliably point the
+    Developer at build_sandbox instead of it being a one-line tool description
+    the model may or may not connect to a missing-package failure on its own."""
+    system, _ = build_developer_prompt(_project(), _card())
+    assert "Dockerfile.built-sandbox" in system
+    assert "build_sandbox" in system
+
+
+def test_tester_prompt_tells_agent_how_to_bootstrap_a_missing_sandbox():
+    system, _ = build_tester_prompt(_project(), _card(), developer_summary="did stuff")
+    assert "Dockerfile.built-sandbox" in system
+    assert "build_sandbox" in system
+
+
 def test_pm_prompt_includes_retry_note_when_present():
     _, user = build_pm_prompt(_project(), _card(), retry_note="focus on the auth flow only")
     assert "focus on the auth flow only" in user

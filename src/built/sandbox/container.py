@@ -86,7 +86,9 @@ class DockerCommandExecutor:
         try:
             client = docker.from_env()
             try:
-                client.images.build(path=str(worktree), dockerfile=dockerfile.name, tag=tag, rm=True, forcerm=True)
+                client.images.build(
+                    path=str(worktree), dockerfile=dockerfile.name, tag=tag, rm=True, forcerm=True
+                )
             finally:
                 client.close()
         except docker.errors.DockerException as exc:
@@ -119,7 +121,28 @@ class DockerCommandExecutor:
                 "restart the service after changing its group membership. "
                 f"Docker reported: {exc}"
             ) from exc
-        self._ensure_worktree_sandbox(worktree)
+        try:
+            self._ensure_worktree_sandbox(worktree)
+        except DockerDaemonAccessError as exc:
+            # Unlike the docker.from_env() failure above (an ops problem no bash call
+            # can work around), a broken Dockerfile.built-sandbox is something the
+            # agent itself can fix — editing it and retrying. Reaching this point
+            # already proved the daemon itself is reachable (the from_env() call
+            # above succeeded), so this is the sandbox build failing, not the
+            # daemon being down. Returning an ordinary failed CommandResult instead
+            # of letting this propagate keeps it a recoverable tool-level failure,
+            # not one that blocks the whole card for a human via
+            # run_column_visit's outer exception handler.
+            client.close()
+            return CommandResult(
+                exit_code=1,
+                stdout="",
+                stderr=(
+                    f"{exc}\n\nThis command never ran because the project's sandbox image failed to "
+                    "build. Fix Dockerfile.built-sandbox (call build_sandbox after editing it to "
+                    "verify the fix) before retrying."
+                ),
+            )
         container = None
         try:
             container = client.containers.run(

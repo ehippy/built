@@ -65,6 +65,13 @@ ADDITIVE_COLUMNS = [
     ("projects", "tester_guidance", "TEXT"),
     ("projects", "reviewer_guidance", "TEXT"),
     ("projects", "deployer_guidance", "TEXT"),
+    # Nullable, no DEFAULT needed — every curation_events row written before
+    # CurationRun existed simply has no run to group into (see
+    # db/models.py's CurationEvent.run_id/tokens_in/tokens_out/latency_ms).
+    ("curation_events", "run_id", "TEXT"),
+    ("curation_events", "tokens_in", "INTEGER"),
+    ("curation_events", "tokens_out", "INTEGER"),
+    ("curation_events", "latency_ms", "INTEGER"),
 ]
 
 

@@ -46,11 +46,25 @@ async def append_event(
 
 
 async def append_curation_event(
-    session: AsyncSession, *, project_id: str, kind: ActivityKind, type: EventType, payload: dict
+    session: AsyncSession,
+    *,
+    project_id: str,
+    kind: ActivityKind,
+    type: EventType,
+    payload: dict,
+    run_id: str | None = None,
+    tokens_in: int | None = None,
+    tokens_out: int | None = None,
+    latency_ms: int | None = None,
 ) -> CurationEvent:
     """Same idea as append_event, scoped to (project_id, kind) instead of card_id —
     see CurationEvent's docstring for why curation can't just reuse CardEvent
-    directly."""
+    directly. run_id/tokens_in/tokens_out/latency_ms are optional (nullable —
+    events logged before CurationRun existed have none) but every caller in
+    agent/curation.py and agent/pm_triage.py passes them: without run_id, a run's
+    own transcript couldn't be filtered out of the (project, kind) stream, and
+    without the token counts, project_service.finish_curation_run would have
+    nothing to sum for that run's usage."""
     current_max = await session.scalar(
         select(func.max(CurationEvent.seq)).where(
             CurationEvent.project_id == project_id, CurationEvent.kind == kind
@@ -59,9 +73,13 @@ async def append_curation_event(
     event = CurationEvent(
         project_id=project_id,
         kind=kind,
+        run_id=run_id,
         seq=(current_max or 0) + 1,
         type=type,
         payload=_scrub_and_cap(payload),
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        latency_ms=latency_ms,
     )
     session.add(event)
     await session.flush()

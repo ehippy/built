@@ -1,4 +1,4 @@
-{% set state_color = {"active": "primary", "blocked": "warning", "done": "success", "failed": "danger", "paused": "secondary", "watching-ci": "info", "priority-high": "danger", "priority-low": "secondary", "waiting": "secondary", "epic": "info"} %}
+{% set state_color = {"active": "primary", "blocked": "warning", "done": "success", "failed": "danger", "paused": "secondary", "watching-ci": "info", "priority-high": "danger", "priority-low": "secondary", "waiting": "secondary", "epic": "info", "ok": "success", "no_change": "secondary", "gave_up": "warning", "error": "danger", "running": "primary", "interrupted": "warning"} %}
 
 {% macro badge(state, label=none) -%}
 <span class="badge text-bg-{{ state_color.get(state, "secondary") }}">{{ label or state }}</span>

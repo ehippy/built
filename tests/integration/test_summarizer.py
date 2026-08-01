@@ -344,6 +344,7 @@ async def test_curation_retro_proposes_a_card_from_recent_postmortems(db_session
         llm_client=llm,
         dispatcher=_dispatcher(dispatcher_wt),
         max_iterations=10,
+        run_id="test-run",
         extra_context="- [failed, 2 revision(s)] went well: (nothing notable) | struggles: Tester kept "
         "rejecting on the same flaky integration test",
     )

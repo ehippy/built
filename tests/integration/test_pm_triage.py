@@ -89,7 +89,12 @@ async def test_groom_backlog_reprioritizes_and_merges_duplicates(db_session, toy
     )
 
     summary = await run_pm_triage_pass(
-        db_session, project, llm_client=llm, dispatcher=_dispatcher(wt_path), max_iterations=5
+        db_session,
+        project,
+        llm_client=llm,
+        dispatcher=_dispatcher(wt_path),
+        max_iterations=5,
+        run_id="test-run",
     )
 
     assert "reprioritized 1" in summary
@@ -127,7 +132,12 @@ async def test_empty_groom_backlog_is_a_legitimate_no_op(db_session, toy_repo_re
     )
 
     summary = await run_pm_triage_pass(
-        db_session, project, llm_client=llm, dispatcher=_dispatcher(wt_path), max_iterations=5
+        db_session,
+        project,
+        llm_client=llm,
+        dispatcher=_dispatcher(wt_path),
+        max_iterations=5,
+        run_id="test-run",
     )
 
     assert summary == "no changes needed"
@@ -154,7 +164,12 @@ async def test_can_browse_the_repo_before_deciding(db_session, toy_repo_remote):
     )
 
     summary = await run_pm_triage_pass(
-        db_session, project, llm_client=llm, dispatcher=_dispatcher(wt_path), max_iterations=5
+        db_session,
+        project,
+        llm_client=llm,
+        dispatcher=_dispatcher(wt_path),
+        max_iterations=5,
+        run_id="test-run",
     )
 
     assert summary == "no changes needed"
@@ -201,7 +216,12 @@ async def test_a_card_outside_the_pm_column_is_never_touched(db_session, toy_rep
     )
 
     summary = await run_pm_triage_pass(
-        db_session, project, llm_client=llm, dispatcher=_dispatcher(wt_path), max_iterations=5
+        db_session,
+        project,
+        llm_client=llm,
+        dispatcher=_dispatcher(wt_path),
+        max_iterations=5,
+        run_id="test-run",
     )
 
     assert summary == "no changes needed"
@@ -235,7 +255,12 @@ async def test_keep_card_cannot_be_its_own_duplicate(db_session, toy_repo_remote
     )
 
     summary = await run_pm_triage_pass(
-        db_session, project, llm_client=llm, dispatcher=_dispatcher(wt_path), max_iterations=5
+        db_session,
+        project,
+        llm_client=llm,
+        dispatcher=_dispatcher(wt_path),
+        max_iterations=5,
+        run_id="test-run",
     )
 
     assert summary == "no changes needed"
@@ -276,7 +301,12 @@ async def test_a_card_claimed_by_two_groups_is_only_archived_once(db_session, to
     )
 
     summary = await run_pm_triage_pass(
-        db_session, project, llm_client=llm, dispatcher=_dispatcher(wt_path), max_iterations=5
+        db_session,
+        project,
+        llm_client=llm,
+        dispatcher=_dispatcher(wt_path),
+        max_iterations=5,
+        run_id="test-run",
     )
 
     assert "archived 1" in summary
@@ -286,9 +316,7 @@ async def test_a_card_claimed_by_two_groups_is_only_archived_once(db_session, to
     # card was dropped, not silently double-processed.
     events = await _events_for(db_session, contested.id)
     duplicate_of = [
-        e.payload["duplicate_of"]
-        for e in events
-        if e.payload.get("action") == "pm_triage_archived_duplicate"
+        e.payload["duplicate_of"] for e in events if e.payload.get("action") == "pm_triage_archived_duplicate"
     ]
     assert duplicate_of == [keep_a.id]
 
@@ -317,7 +345,12 @@ async def test_malformed_entries_are_skipped_not_applied(db_session, toy_repo_re
     )
 
     summary = await run_pm_triage_pass(
-        db_session, project, llm_client=llm, dispatcher=_dispatcher(wt_path), max_iterations=5
+        db_session,
+        project,
+        llm_client=llm,
+        dispatcher=_dispatcher(wt_path),
+        max_iterations=5,
+        run_id="test-run",
     )
 
     assert summary == "no changes needed"
@@ -348,7 +381,12 @@ async def test_no_op_reprioritization_is_not_applied_or_logged(db_session, toy_r
     )
 
     summary = await run_pm_triage_pass(
-        db_session, project, llm_client=llm, dispatcher=_dispatcher(wt_path), max_iterations=5
+        db_session,
+        project,
+        llm_client=llm,
+        dispatcher=_dispatcher(wt_path),
+        max_iterations=5,
+        run_id="test-run",
     )
 
     assert summary == "no changes needed"
@@ -372,7 +410,12 @@ async def test_nudges_when_no_tool_call_then_recovers(db_session, toy_repo_remot
     )
 
     summary = await run_pm_triage_pass(
-        db_session, project, llm_client=llm, dispatcher=_dispatcher(wt_path), max_iterations=5
+        db_session,
+        project,
+        llm_client=llm,
+        dispatcher=_dispatcher(wt_path),
+        max_iterations=5,
+        run_id="test-run",
     )
 
     assert summary == "no changes needed"
@@ -385,7 +428,12 @@ async def test_gives_up_gracefully_when_iterations_exhausted(db_session, toy_rep
     )
 
     summary = await run_pm_triage_pass(
-        db_session, project, llm_client=llm, dispatcher=_dispatcher(wt_path), max_iterations=3
+        db_session,
+        project,
+        llm_client=llm,
+        dispatcher=_dispatcher(wt_path),
+        max_iterations=3,
+        run_id="test-run",
     )
 
     assert "gave up" in summary
@@ -399,7 +447,12 @@ async def test_logs_an_error_event_on_unhandled_failure(db_session, toy_repo_rem
             raise RuntimeError("endpoint unreachable")
 
     summary = await run_pm_triage_pass(
-        db_session, project, llm_client=_BoomLLM(), dispatcher=_dispatcher(wt_path), max_iterations=5
+        db_session,
+        project,
+        llm_client=_BoomLLM(),
+        dispatcher=_dispatcher(wt_path),
+        max_iterations=5,
+        run_id="test-run",
     )
 
     assert "errored" in summary
@@ -415,7 +468,12 @@ async def test_pass_logs_curation_events_for_the_board_panel(db_session, toy_rep
     )
 
     await run_pm_triage_pass(
-        db_session, project, llm_client=llm, dispatcher=_dispatcher(wt_path), max_iterations=5
+        db_session,
+        project,
+        llm_client=llm,
+        dispatcher=_dispatcher(wt_path),
+        max_iterations=5,
+        run_id="test-run",
     )
 
     events = (

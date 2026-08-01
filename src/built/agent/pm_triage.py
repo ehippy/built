@@ -14,6 +14,7 @@ it isn't really: fully reversible via the existing unarchive path, same as a
 human's own "archive" button."""
 
 import json
+import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +28,8 @@ from built.llm.client import LLMClient
 from built.llm.tool_schemas import MAX_GROOM_ACTIONS, PM_TRIAGE_TERMINAL_TOOL, PM_TRIAGE_TOOLS
 from built.services import card_service
 from built.tools.dispatcher import ToolDispatcher
+
+logger = logging.getLogger(__name__)
 
 _KIND = ActivityKind.PM_TRIAGE
 
@@ -46,17 +49,20 @@ async def run_pm_triage_pass(
     llm_client: LLMClient,
     dispatcher: ToolDispatcher,
     max_iterations: int,
+    run_id: str,
     context_window_config: ContextWindowConfig | None = None,
     agents_doc: str | None = None,
     extra_context: str | None = None,
 ) -> str:
     """Runs one PM-triage pass and returns a short summary of what changed (for
-    project_service.record_activity_run — the same summary the board's Curation
+    project_service.finish_curation_run — the same summary the board's Curation
     panel displays for every other kind). Never raises — mirrors
     run_curation_pass's never-crash-the-worker contract. extra_context is recent
     board activity (visit outcomes + postmortems — orchestrator/curator.py's
     _needs_run), not the PM backlog itself: that's fetched fresh here, the same
-    live read _apply_groom_backlog re-checks everything against later."""
+    live read _apply_groom_backlog re-checks everything against later. run_id (the
+    CurationRun orchestrator/curator.py already opened before calling this) tags
+    every event the same way run_curation_pass does."""
     pm_cards = await card_service.list_pm_backlog(session, project.id)
     current_epic = await session.get(Card, project.current_epic_id) if project.current_epic_id else None
     system, user = build_pm_triage_prompt(
@@ -88,12 +94,16 @@ async def run_pm_triage_pass(
                 session,
                 project_id=project.id,
                 kind=_KIND,
+                run_id=run_id,
                 type=EventType.LLM_RESPONSE,
                 payload={
                     "iteration": iteration,
                     "content": result.content,
                     "tool_calls": [tc.name for tc in result.tool_calls],
                 },
+                tokens_in=result.tokens_in,
+                tokens_out=result.tokens_out,
+                latency_ms=result.latency_ms,
             )
             await session.commit()
 
@@ -135,6 +145,7 @@ async def run_pm_triage_pass(
                     session,
                     project_id=project.id,
                     kind=_KIND,
+                    run_id=run_id,
                     type=EventType.TOOL_CALL,
                     payload={
                         "name": tool_call.name,
@@ -156,6 +167,7 @@ async def run_pm_triage_pass(
                 session,
                 project_id=project.id,
                 kind=_KIND,
+                run_id=run_id,
                 type=EventType.TOOL_CALL,
                 payload={"name": terminal_call.name, "arguments": terminal_call.arguments, "result": summary},
             )
@@ -164,8 +176,16 @@ async def run_pm_triage_pass(
 
         return "no changes — gave up without calling groom_backlog"
     except Exception as exc:  # noqa: BLE001 — deliberate: a bad pass yields no changes, not a crash
+        # Logged (not just persisted) so it shows up on the Logs page in real time,
+        # not only after someone thinks to open this run's history.
+        logger.exception("pm_triage failed for project %s", project.id)
         await append_curation_event(
-            session, project_id=project.id, kind=_KIND, type=EventType.ERROR, payload={"error": str(exc)}
+            session,
+            project_id=project.id,
+            kind=_KIND,
+            run_id=run_id,
+            type=EventType.ERROR,
+            payload={"error": str(exc)},
         )
         await session.commit()
         return "no changes — pass errored"

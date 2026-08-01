@@ -8,6 +8,7 @@ Several kinds (ActivityKind), one mechanism: explore with read-only tools, decid
 call propose_tasks. See orchestrator/curator.py for scheduling and cadence."""
 
 import json
+import logging
 from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +33,8 @@ from built.llm.tool_schemas import (
 )
 from built.services import card_service
 from built.tools.dispatcher import ToolDispatcher
+
+logger = logging.getLogger(__name__)
 
 FilePolicy = Literal["file_all_above_bar", "file_best_only"]
 
@@ -69,6 +72,7 @@ async def run_curation_pass(
     llm_client: LLMClient,
     dispatcher: ToolDispatcher,
     max_iterations: int,
+    run_id: str,
     context_window_config: ContextWindowConfig | None = None,
     agents_doc: str | None = None,
     extra_context: str | None = None,
@@ -76,7 +80,11 @@ async def run_curation_pass(
     """Runs one curation pass and returns whatever new cards it created — possibly
     none, if the model never called propose_tasks within the iteration budget or an
     endpoint/tool failure ended the run early. Never raises for ordinary failures,
-    mirroring run_column_visit's never-crash-the-worker contract."""
+    mirroring run_column_visit's never-crash-the-worker contract. run_id (the
+    CurationRun orchestrator/curator.py already opened before calling this) tags
+    every event so project_service.finish_curation_run can later pull just this
+    invocation's transcript back out of the (project, kind) stream to sum its token
+    usage and detect whether it errored."""
     existing_titles = [c.title for c in await card_service.list_open_cards(session, project.id)]
     current_epic = await session.get(Card, project.current_epic_id) if project.current_epic_id else None
     system, user = build_curation_prompt(
@@ -115,12 +123,16 @@ async def run_curation_pass(
                 session,
                 project_id=project.id,
                 kind=kind,
+                run_id=run_id,
                 type=EventType.LLM_RESPONSE,
                 payload={
                     "iteration": iteration,
                     "content": result.content,
                     "tool_calls": [tc.name for tc in result.tool_calls],
                 },
+                tokens_in=result.tokens_in,
+                tokens_out=result.tokens_out,
+                latency_ms=result.latency_ms,
             )
             await session.commit()
 
@@ -159,6 +171,7 @@ async def run_curation_pass(
                     session,
                     project_id=project.id,
                     kind=kind,
+                    run_id=run_id,
                     type=EventType.TOOL_CALL,
                     payload={
                         "name": tool_call.name,
@@ -182,6 +195,7 @@ async def run_curation_pass(
                 session,
                 project_id=project.id,
                 kind=kind,
+                run_id=run_id,
                 type=EventType.TOOL_CALL,
                 payload={
                     "name": terminal_call.name,
@@ -204,9 +218,17 @@ async def run_curation_pass(
         return []
     except Exception as exc:  # noqa: BLE001 — deliberate: a bad curation run yields no cards, not a crash
         # Still record what happened — otherwise a broken endpoint just looks like
-        # the pass never ran at all, with no clue why in the status panel.
+        # the pass never ran at all, with no clue why in the status panel. Also
+        # logged (not just persisted) so it shows up on the Logs page in real
+        # time, not only after someone thinks to open this run's history.
+        logger.exception("curation %s failed for project %s", kind.value, project.id)
         await append_curation_event(
-            session, project_id=project.id, kind=kind, type=EventType.ERROR, payload={"error": str(exc)}
+            session,
+            project_id=project.id,
+            kind=kind,
+            run_id=run_id,
+            type=EventType.ERROR,
+            payload={"error": str(exc)},
         )
         await session.commit()
         return []

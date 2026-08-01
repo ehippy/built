@@ -144,7 +144,25 @@ class ActivityKind(StrEnum):
     REFACTOR_SWEEP = "refactor_sweep"  # decomposition candidates, layering violations, dead code, drift
     AGENTS_MD = "agents_md"  # proposes an AGENTS.md-update card; replaces the old Tender
     RETRO = "retro"  # mines recent CardPostmortems (agent/summarizer.py) for a recurring struggle
-    # Doesn't propose new cards or touch the repo — the one kind with authority to
-    # act on cards already sitting in the PM column: reprioritize (Priority) and
-    # archive genuine duplicates. Never touches a card that's moved past PM.
+    # Doesn't propose new cards — the one kind with authority to act on cards
+    # already sitting in the PM column: reprioritize (Priority) and archive genuine
+    # duplicates. Never touches a card that's moved past PM.
     PM_TRIAGE = "pm_triage"
+
+
+class CurationRunOutcome(StrEnum):
+    """How one CurationRun ended (db/models.py) — set once, when
+    orchestrator/curator.py's run_curation_activity closes the run out.
+    Deliberately coarser than VisitOutcome: every propose_tasks-based kind is
+    reduced to OK (created at least one card) or NO_CHANGE (didn't, whether
+    because nothing cleared the bar or because it gave up without ever calling
+    propose_tasks — that distinction isn't preserved for those kinds). PM_TRIAGE
+    gets the full distinction since its own return value already carries it. A
+    run still `None` (no ended_at yet) is either genuinely in progress or was
+    orphaned by a crash — orchestrator.curator.is_curation_running is what
+    disambiguates the two for display; it's never written here."""
+
+    OK = "ok"  # created card(s) (propose_tasks kinds), or groom_backlog reprioritized/merged something
+    NO_CHANGE = "no_change"  # legitimately nothing to do — not an error
+    GAVE_UP = "gave_up"  # exhausted iterations without ever calling its terminal tool (PM_TRIAGE only)
+    ERROR = "error"  # an unhandled exception during the pass (an EventType.ERROR CurationEvent exists)

@@ -95,6 +95,7 @@ async def test_curation_explores_then_proposes_tasks(db_session, toy_repo_remote
         ActivityKind.BUG_SWEEP,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
+        run_id="test-run",
         max_iterations=10,
     )
 
@@ -139,6 +140,7 @@ async def test_curation_nudges_on_empty_tasks_then_recovers(db_session, toy_repo
         ActivityKind.BUG_SWEEP,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
+        run_id="test-run",
         max_iterations=10,
     )
 
@@ -170,6 +172,7 @@ async def test_curation_caps_at_max_proposed_tasks(db_session, toy_repo_remote):
         ActivityKind.BUG_SWEEP,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
+        run_id="test-run",
         max_iterations=10,
     )
 
@@ -196,6 +199,7 @@ async def test_curation_returns_empty_when_iterations_exhausted(db_session, toy_
         ActivityKind.BUG_SWEEP,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
+        run_id="test-run",
         max_iterations=3,
     )
 
@@ -240,6 +244,7 @@ async def test_curation_prompt_lists_existing_card_titles_to_avoid_duplicates(db
         ActivityKind.OPPORTUNITY_BRAINSTORM,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
+        run_id="test-run",
         max_iterations=10,
     )
 
@@ -274,6 +279,7 @@ async def test_curation_polish_review_proposes_a_card(db_session, toy_repo_remot
         ActivityKind.POLISH_REVIEW,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
+        run_id="test-run",
         max_iterations=10,
     )
 
@@ -316,6 +322,7 @@ async def test_curation_new_kinds_propose_a_card(db_session, toy_repo_remote, ki
         kind,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
+        run_id="test-run",
         max_iterations=10,
     )
 
@@ -359,6 +366,7 @@ async def test_curation_agents_md_proposes_a_card_from_recent_outcomes(db_sessio
         ActivityKind.AGENTS_MD,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
+        run_id="test-run",
         max_iterations=10,
         extra_context="- [developer] Add tetris: sandbox needed HOME=/tmp for npm to work",
     )
@@ -450,6 +458,7 @@ async def test_bug_sweep_files_every_candidate_above_the_bar(db_session, toy_rep
         ActivityKind.BUG_SWEEP,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
+        run_id="test-run",
         max_iterations=10,
     )
 
@@ -488,6 +497,7 @@ async def test_opportunity_brainstorm_files_only_the_highest_severity_candidate(
         ActivityKind.OPPORTUNITY_BRAINSTORM,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
+        run_id="test-run",
         max_iterations=10,
     )
 
@@ -538,6 +548,7 @@ async def test_dedup_drops_a_candidate_flagged_as_duplicate(db_session, toy_repo
         ActivityKind.BUG_SWEEP,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
+        run_id="test-run",
         max_iterations=10,
     )
 
@@ -580,6 +591,7 @@ async def test_dedup_skips_the_llm_call_when_there_are_no_live_open_cards(db_ses
         ActivityKind.BUG_SWEEP,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
+        run_id="test-run",
         max_iterations=10,
     )
 
@@ -615,6 +627,7 @@ async def test_dedup_fails_open_on_llm_error_so_real_work_isnt_lost(db_session, 
         ActivityKind.BUG_SWEEP,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
+        run_id="test-run",
         max_iterations=10,
     )
 
@@ -1081,6 +1094,7 @@ async def test_curation_pass_logs_events_for_llm_responses_and_tool_calls(db_ses
         ActivityKind.BUG_SWEEP,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
+        run_id="test-run",
         max_iterations=10,
     )
 
@@ -1112,6 +1126,7 @@ async def test_curation_pass_logs_an_error_event_on_unhandled_failure(db_session
         ActivityKind.BUG_SWEEP,
         llm_client=_BoomLLM(),
         dispatcher=_dispatcher(wt_path),
+        run_id="test-run",
         max_iterations=10,
     )
 

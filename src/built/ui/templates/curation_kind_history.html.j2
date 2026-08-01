@@ -1,0 +1,52 @@
+{% extends "base.html.j2" %}
+{% import "macros.html.j2" as m %}
+{% block title %}{{ label }} · {{ project.name }}{% endblock %}
+{% block breadcrumb %}
+{{ super() }}
+<span class="navbar-text text-white-50 px-1">/</span>
+<span class="navbar-text py-0 fs-6">{{ label }}</span>
+{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h4 class="mb-0">{{ label }}</h4>
+    <p class="text-body-secondary mb-0">Past runs of this curation kind for this project, newest first.</p>
+  </div>
+  <form method="post" action="/ui/projects/{{ project.id }}/curate/{{ kind }}">
+    <button class="btn btn-primary" type="submit" {% if running %}disabled{% endif %}>
+      {% if running %}<span class="spinner-border spinner-border-sm" role="status"></span> Running…{% else %}Run now{% endif %}
+    </button>
+  </form>
+</div>
+
+{% if not runs %}
+<p class="text-body-secondary">No runs yet.</p>
+{% else %}
+<div class="table-responsive">
+  <table class="table table-hover align-middle">
+    <thead>
+      <tr>
+        <th>Started</th>
+        <th>Duration</th>
+        <th>Outcome</th>
+        <th>Summary</th>
+        <th>Tokens (in/out)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for run in runs %}
+      <tr class="{% if run.status in ('running', 'interrupted') %}table-{{ 'primary' if run.status == 'running' else 'warning' }}{% endif %}">
+        <td><a href="/ui/projects/{{ project.id }}/curation/{{ kind }}/runs/{{ run.id }}">{{ run.started_at|timeago }}</a></td>
+        <td>{{ run.started_at|duration(run.ended_at) }}</td>
+        <td>{{ m.badge(run.status) }}</td>
+        <td class="text-truncate" style="max-width: 28rem;">{{ run.summary or "—" }}</td>
+        <td class="text-body-secondary small">
+          {% if run.tokens_in or run.tokens_out %}{{ run.tokens_in or 0 }} / {{ run.tokens_out or 0 }}{% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

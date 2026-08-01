@@ -1,0 +1,55 @@
+{% extends "base.html.j2" %}
+{% import "macros.html.j2" as m %}
+{% set type_color = {"tool_call": "primary", "error": "danger", "llm_response": "secondary"} %}
+{% block title %}{{ label }} run · {{ project.name }}{% endblock %}
+{% block breadcrumb %}
+{{ super() }}
+<span class="navbar-text text-white-50 px-1">/</span>
+<a class="navbar-text py-0 fs-6" href="/ui/projects/{{ project.id }}/curation/{{ kind }}">{{ label }}</a>
+<span class="navbar-text text-white-50 px-1">/</span>
+<span class="navbar-text py-0 fs-6">{{ run.started_at|timeago }}</span>
+{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center gap-2 mb-2">
+  <h4 class="mb-0">{{ label }}</h4>
+  {{ m.badge(status) }}
+</div>
+<div class="text-body-secondary small mb-4 d-flex flex-wrap gap-3">
+  <span><i class="bi bi-stopwatch"></i> {{ run.started_at|duration(run.ended_at) }}</span>
+  <span>started {{ run.started_at|timeago }}</span>
+  {% if run.tokens_in or run.tokens_out %}<span>{{ run.tokens_in or 0 }} in / {{ run.tokens_out or 0 }} out tokens</span>{% endif %}
+</div>
+
+{% if run.summary %}<p class="text-body-secondary">{{ run.summary }}</p>{% endif %}
+
+<div class="d-flex flex-column gap-2">
+  {% for event in events|reverse %}
+  <div class="event card border-{{ type_color.get(event.type, "secondary") }}">
+    <div class="card-body py-2 px-3 small">
+      <div class="event-head d-flex justify-content-between text-body-secondary text-uppercase small mb-1">
+        <span>#{{ event.seq }} · {{ event.type }}</span>
+        <span>{{ event.created_at|timeago }}</span>
+      </div>
+      {% if event.type == "llm_response" %}
+        {% if event.payload.content %}<pre class="mb-0">{{ event.payload.content }}</pre>{% endif %}
+        {% if event.payload.tool_calls %}<div class="text-body-secondary">tool calls: {{ event.payload.tool_calls|join(", ") }}</div>{% endif %}
+      {% elif event.type == "tool_call" %}
+        {% set descriptor = event.payload.arguments|tool_descriptor %}
+        <div class="mb-1"><strong>{{ event.payload.name }}({{ descriptor }})</strong>{% if event.payload.is_error %} (error){% endif %}</div>
+        <details>
+          <summary class="text-body-secondary">Result{% if event.payload.is_error %} <i class="bi bi-exclamation-triangle-fill text-danger"></i>{% endif %}</summary>
+          <pre class="mb-0">{{ event.payload.result }}</pre>
+        </details>
+      {% elif event.type == "error" %}
+        <div class="mb-1 text-danger"><strong>Error</strong></div>
+        <pre class="mb-0">{{ event.payload.error }}</pre>
+      {% else %}
+        <pre class="mb-0">{{ event.payload }}</pre>
+      {% endif %}
+    </div>
+  </div>
+  {% else %}
+  <p class="text-body-secondary">No transcript for this run.</p>
+  {% endfor %}
+</div>
+{% endblock %}

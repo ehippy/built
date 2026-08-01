@@ -8,6 +8,7 @@ from built.db.base import Base
 from built.domain.enums import (
     ActivityKind,
     ChatRole,
+    CurationRunOutcome,
     DeployKind,
     DeployMode,
     EventType,
@@ -224,13 +225,48 @@ class ProjectCurationState(Base):
     disabled_kinds: Mapped[list[str]] = mapped_column(JSON, default=list)
 
 
+class CurationRun(Base):
+    """One row per curation pass invocation (orchestrator/curator.py's
+    run_curation_activity) — CurationEvent rows link into it via run_id, the same
+    relationship CardColumnVisit has to CardEvent. Gives the board a real
+    per-invocation history (started_at/ended_at/outcome/summary/token usage)
+    instead of only the single latest CurationEvent and one overwritten
+    ProjectActivityRun row. outcome/ended_at stay NULL while the run is in
+    progress; a row that's still NULL long after started_at, with
+    orchestrator.curator.is_curation_running now false for it, is a crash, not a
+    slow pass — see ui/routers/board.py's history view for that check."""
+
+    __tablename__ = "curation_runs"
+
+    id: Mapped[str] = mapped_column(primary_key=True, default=_new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    kind: Mapped[ActivityKind]
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    outcome: Mapped[CurationRunOutcome | None] = mapped_column(default=None)
+    summary: Mapped[str | None] = mapped_column(Text, default=None)
+    tokens_in: Mapped[int | None] = mapped_column(Integer, default=None)
+    tokens_out: Mapped[int | None] = mapped_column(Integer, default=None)
+    # Never populated yet — same as CardEvent.cost_estimate below; no per-model
+    # pricing table exists anywhere in this codebase. Kept for schema parity so
+    # whenever that's added, both event streams already have somewhere to put it.
+    cost_estimate: Mapped[float | None] = mapped_column(default=None)
+
+    events: Mapped[list["CurationEvent"]] = relationship(
+        back_populates="run", order_by="CurationEvent.seq", lazy="raise"
+    )
+
+
 class CurationEvent(Base):
     """Append-only transcript for curation passes (agent/curation.py) — mirrors
     CardEvent's shape, but scoped to (project, kind) rather than card_id: a
     curation pass isn't tied to any card until (and unless) propose_tasks actually
     creates one. seq is monotonic per (project_id, kind), across every pass, same as
     CardEvent's per-card seq — what lets the board page's status panel show what a
-    kind is doing right now, and what its last pass actually did."""
+    kind is doing right now, and what its last pass actually did. run_id groups
+    events by invocation (CurationRun) — nullable since it was added after this
+    table already had rows; historical events predating CurationRun just have
+    none."""
 
     __tablename__ = "curation_events"
     __table_args__ = (
@@ -240,10 +276,16 @@ class CurationEvent(Base):
     id: Mapped[str] = mapped_column(primary_key=True, default=_new_id)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
     kind: Mapped[ActivityKind]
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("curation_runs.id"), index=True, default=None)
     seq: Mapped[int] = mapped_column(Integer)
     type: Mapped[EventType]
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    tokens_in: Mapped[int | None] = mapped_column(Integer, default=None)
+    tokens_out: Mapped[int | None] = mapped_column(Integer, default=None)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    run: Mapped["CurationRun | None"] = relationship(back_populates="events", lazy="raise")
 
 
 class CardPostmortem(Base):

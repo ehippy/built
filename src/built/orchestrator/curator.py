@@ -19,7 +19,8 @@ from built.agent.pm_triage import run_pm_triage_pass
 from built.config import settings
 from built.db.base import async_session_factory
 from built.db.models import CardPostmortem, Project
-from built.domain.enums import ActivityKind, Column
+from built.domain.enums import ActivityKind, Column, EventType
+from built.domain.events import append_curation_event
 from built.llm.client import FallbackLLMClient
 from built.sandbox.container import DockerCommandExecutor
 from built.sandbox.worktree import ensure_tool_worktree, read_default_branch_file
@@ -155,6 +156,12 @@ async def run_curation_activity(
                 logger.warning("curation requested for missing project %s", project_id)
                 return
             logger.info("curation %s starting for project %s (%r)", kind.value, project_id, project.name)
+            # Opened before setup, not after: a setup failure (bad endpoint config,
+            # git clone failure) still closes out as a real ERROR run rather than
+            # leaving no history at all — see CurationRun's docstring.
+            run = await project_service.start_curation_run(session, project.id, kind)
+            await session.commit()
+
             try:
                 chain = await endpoint_service.get_resolved_chain(
                     session, project_id=project.id, role=Column.PM
@@ -163,8 +170,18 @@ async def run_curation_activity(
                 # Own dedicated worktree + branch, not Deployer's/Discovery's — git
                 # refuses to check out the same branch in two worktrees at once.
                 wt_path = await ensure_tool_worktree(project, tool="curator")
-            except Exception:
+            except Exception as exc:
                 logger.exception("curation setup failed for project %s", project_id)
+                await append_curation_event(
+                    session,
+                    project_id=project.id,
+                    kind=kind,
+                    run_id=run.id,
+                    type=EventType.ERROR,
+                    payload={"error": str(exc)},
+                )
+                await project_service.finish_curation_run(session, run.id, summary="setup failed")
+                await session.commit()
                 return
 
             executor_kwargs = {"image": project.sandbox_image} if project.sandbox_image else {}
@@ -192,13 +209,11 @@ async def run_curation_activity(
                     llm_client=llm_client,
                     dispatcher=dispatcher,
                     max_iterations=settings.curator_max_iterations,
+                    run_id=run.id,
                     agents_doc=agents_doc,
                     extra_context=extra_context,
                     context_window_config=context_window_config,
                 )
-                await project_service.record_activity_run(session, project.id, kind, summary=summary)
-                await session.commit()
-                logger.info("curation %s for project %s: %s", kind.value, project_id, summary)
             else:
                 created = await run_curation_pass(
                     session,
@@ -207,17 +222,17 @@ async def run_curation_activity(
                     llm_client=llm_client,
                     dispatcher=dispatcher,
                     max_iterations=settings.curator_max_iterations,
+                    run_id=run.id,
                     agents_doc=agents_doc,
                     extra_context=extra_context,
                     context_window_config=context_window_config,
                 )
-                await project_service.record_activity_run(
-                    session, project.id, kind, summary=f"created {len(created)} card(s)"
-                )
-                await session.commit()
-                logger.info(
-                    "curation %s for project %s created %d card(s)", kind.value, project_id, len(created)
-                )
+                summary = f"created {len(created)} card(s)"
+
+            await project_service.record_activity_run(session, project.id, kind, summary=summary)
+            await project_service.finish_curation_run(session, run.id, summary=summary)
+            await session.commit()
+            logger.info("curation %s for project %s: %s", kind.value, project_id, summary)
     finally:
         _curation_in_progress.discard((project_id, kind))
 

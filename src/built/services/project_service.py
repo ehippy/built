@@ -8,13 +8,14 @@ from sqlalchemy.orm import selectinload
 from built.config import settings
 from built.db.models import (
     CurationEvent,
+    CurationRun,
     DeployConfig,
     EpicLink,
     Project,
     ProjectActivityRun,
     ProjectCurationState,
 )
-from built.domain.enums import ActivityKind, DeployKind, DeployMode
+from built.domain.enums import ActivityKind, CurationRunOutcome, DeployKind, DeployMode, EventType
 
 
 class NotFoundError(Exception):
@@ -260,6 +261,73 @@ async def record_activity_run(
         run.last_run_at = datetime.now(UTC)
     run.last_result_summary = summary
     await session.flush()
+    return run
+
+
+async def start_curation_run(session: AsyncSession, project_id: str, kind: ActivityKind) -> CurationRun:
+    """Opens a new CurationRun row right before a pass actually starts (orchestrator/
+    curator.py's run_curation_activity) — visible immediately, with outcome/ended_at
+    still None, so a long-running or crashed pass is distinguishable from one that
+    simply hasn't started yet (see CurationRun's own docstring)."""
+    run = CurationRun(project_id=project_id, kind=kind)
+    session.add(run)
+    await session.flush()
+    return run
+
+
+async def finish_curation_run(session: AsyncSession, run_id: str, *, summary: str) -> CurationRun:
+    """Closes out a CurationRun: sums token usage from its own CurationEvent rows
+    and derives outcome from them plus the summary text. An ERROR-type event means
+    the pass hit an unhandled exception somewhere (agent/curation.py and
+    agent/pm_triage.py both log one before swallowing it); short of that,
+    PM_TRIAGE's own summary text distinguishes "gave up" from "nothing to do"
+    (its return value already carries that) — propose_tasks-based kinds don't
+    preserve that distinction, so both collapse to NO_CHANGE for them. See
+    CurationRunOutcome's docstring for the full reasoning."""
+    run = await session.get(CurationRun, run_id)
+    if run is None:
+        raise NotFoundError(f"no curation run {run_id!r}")
+    events = (await session.scalars(select(CurationEvent).where(CurationEvent.run_id == run_id))).all()
+
+    if any(e.type == EventType.ERROR for e in events):
+        outcome = CurationRunOutcome.ERROR
+    elif "gave up" in summary:
+        outcome = CurationRunOutcome.GAVE_UP
+    elif summary == "no changes needed" or summary.startswith("created 0"):
+        outcome = CurationRunOutcome.NO_CHANGE
+    else:
+        outcome = CurationRunOutcome.OK
+
+    run.ended_at = datetime.now(UTC)
+    run.outcome = outcome
+    run.summary = summary
+    run.tokens_in = sum(e.tokens_in for e in events if e.tokens_in) or None
+    run.tokens_out = sum(e.tokens_out for e in events if e.tokens_out) or None
+    await session.flush()
+    return run
+
+
+async def list_curation_runs(
+    session: AsyncSession, project_id: str, kind: ActivityKind, *, limit: int = 50
+) -> list[CurationRun]:
+    """Past invocations of one curation kind for a project, newest first — the
+    history table ui/routers/board.py's curation detail page renders."""
+    stmt = (
+        select(CurationRun)
+        .where(CurationRun.project_id == project_id, CurationRun.kind == kind)
+        .order_by(CurationRun.started_at.desc())
+        .limit(limit)
+    )
+    return list((await session.scalars(stmt)).all())
+
+
+async def get_curation_run(session: AsyncSession, run_id: str) -> CurationRun:
+    """One run with its own transcript eager-loaded — the detail page's full
+    per-run event log."""
+    stmt = select(CurationRun).where(CurationRun.id == run_id).options(selectinload(CurationRun.events))
+    run = await session.scalar(stmt)
+    if run is None:
+        raise NotFoundError(f"no curation run {run_id!r}")
     return run
 
 

@@ -228,3 +228,70 @@ async def curate(project_id: str, kind: ActivityKind, request: Request, session:
     if not is_curation_running(project_id, kind):
         asyncio.create_task(run_curation_activity(project_id, kind))
     return await _curation_action_response(project_id, request, session)
+
+
+def _run_status(run, *, is_running_now: bool) -> str:
+    """A run's outcome column value never written for a still-open row (see
+    CurationRun's own docstring) — is_curation_running (checked once per row by
+    the caller, true only for the single most-recently-started run of this kind,
+    if any) is what disambiguates "still going" from "the process died before it
+    could close this out"."""
+    if run.ended_at is not None:
+        return run.outcome.value if run.outcome else "ok"
+    return "running" if is_running_now else "interrupted"
+
+
+@router.get("/projects/{project_id}/curation/{kind}")
+async def curation_kind_history(project_id: str, kind: ActivityKind, request: Request, session: SessionDep):
+    project = await project_service.get_project(session, project_id)
+    runs = await project_service.list_curation_runs(session, project_id, kind)
+    running = is_curation_running(project_id, kind)
+    rows = [
+        {
+            "id": run.id,
+            "started_at": run.started_at,
+            "ended_at": run.ended_at,
+            "status": _run_status(run, is_running_now=running and i == 0),
+            "summary": run.summary,
+            "tokens_in": run.tokens_in,
+            "tokens_out": run.tokens_out,
+        }
+        for i, run in enumerate(runs)
+    ]
+    return templates.TemplateResponse(
+        request,
+        "curation_kind_history.html.j2",
+        {
+            "project": project,
+            "kind": kind.value,
+            "label": _CURATION_LABELS[kind],
+            "running": running,
+            "runs": rows,
+        },
+    )
+
+
+@router.get("/projects/{project_id}/curation/{kind}/runs/{run_id}")
+async def curation_run_detail(
+    project_id: str, kind: ActivityKind, run_id: str, request: Request, session: SessionDep
+):
+    project = await project_service.get_project(session, project_id)
+    run = await project_service.get_curation_run(session, run_id)
+    # is_curation_running only says "some run of this kind is in flight" — confirm
+    # THIS row is that one (not an older orphaned run) before calling it "running"
+    # rather than "interrupted".
+    most_recent = await project_service.list_curation_runs(session, project_id, kind, limit=1)
+    is_the_current_run = bool(most_recent) and most_recent[0].id == run.id
+    running = is_curation_running(project_id, kind) and is_the_current_run
+    return templates.TemplateResponse(
+        request,
+        "curation_run_detail.html.j2",
+        {
+            "project": project,
+            "kind": kind.value,
+            "label": _CURATION_LABELS[kind],
+            "run": run,
+            "status": _run_status(run, is_running_now=running),
+            "events": run.events,
+        },
+    )

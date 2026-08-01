@@ -23,6 +23,7 @@
       <form method="post" action="/ui/projects/{{ project.id }}/curate/{{ s.kind }}" hx-post="/ui/projects/{{ project.id }}/curate/{{ s.kind }}" hx-target="#curation-panel" hx-swap="outerHTML">
         <button class="btn btn-sm btn-secondary" type="submit">Run now</button>
       </form>
+      <a class="btn btn-sm btn-outline-secondary" href="/ui/projects/{{ project.id }}/curation/{{ s.kind }}" title="Run history"><i class="bi bi-clock-history"></i></a>
     </div>
     <div class="small text-body-secondary ps-4 text-truncate">
       {% if not s.enabled %}off — not on the automatic schedule

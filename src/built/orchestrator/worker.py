@@ -388,23 +388,30 @@ async def run_one_card(session: AsyncSession, card: Card) -> None:
 
 async def _worker_loop(worker_id: str, *, stop_event: asyncio.Event, poll_interval: float) -> None:
     while not stop_event.is_set():
-        async with async_session_factory() as session:
-            card = await claim_next_card(session, worker_id)
-            if card is not None:
-                try:
-                    await run_one_card(session, card)
-                except Exception:
-                    # Crash-isolation safety net: run_one_card already converts
-                    # ordinary run failures into a blocked card internally, so
-                    # reaching here means something unexpected broke. Don't let one
-                    # bad card take down the rest of the pool.
-                    logger.exception("worker %s: unhandled error running card %s", worker_id, card.id)
-                    await session.rollback()
-                    async with async_session_factory() as cleanup_session:
-                        fresh_card = await cleanup_session.get(Card, card.id)
-                        if fresh_card is not None:
-                            await release_claim(cleanup_session, fresh_card)
-                continue  # immediately look for more work, no idle wait
+        try:
+            async with async_session_factory() as session:
+                card = await claim_next_card(session, worker_id)
+                if card is not None:
+                    try:
+                        await run_one_card(session, card)
+                    except Exception:
+                        # Crash-isolation safety net: run_one_card already converts
+                        # ordinary run failures into a blocked card internally, so
+                        # reaching here means something unexpected broke. Don't let one
+                        # bad card take down the rest of the pool.
+                        logger.exception("worker %s: unhandled error running card %s", worker_id, card.id)
+                        await session.rollback()
+                        async with async_session_factory() as cleanup_session:
+                            fresh_card = await cleanup_session.get(Card, card.id)
+                            if fresh_card is not None:
+                                await release_claim(cleanup_session, fresh_card)
+                    continue  # immediately look for more work, no idle wait
+        except Exception:
+            # Same crash-isolation net, but for the claim step itself — e.g. a
+            # transient "database is locked" on the claim UPDATE. Without this,
+            # an error here silently kills this worker's loop forever instead of
+            # just costing it one poll tick.
+            logger.exception("worker %s: unhandled error claiming next card", worker_id)
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=poll_interval)
         except TimeoutError:

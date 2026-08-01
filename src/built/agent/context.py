@@ -119,9 +119,10 @@ def build_curation_prompt(
     """Returns (system_prompt, initial_user_message) for one curation pass. Never
     tied to any card, and never able to edit the repo — the only thing any kind can
     do is call propose_tasks, exactly like a human PM filing a ticket (see
-    agent/curation.py, orchestrator/curator.py). agents_md is shaped differently
-    from the other three: its context is a summary of recently closed work
-    (extra_context), not a live repo browse, and it proposes at most one card."""
+    agent/curation.py, orchestrator/curator.py). agents_md and retro are each
+    shaped differently from the rest: their context is pre-digested material
+    (extra_context) rather than a live repo browse, and each proposes at most one
+    card."""
     if kind == ActivityKind.AGENTS_MD:
         system = (
             "You are the agent that keeps this project's AGENTS.md up to date. Below is a summary of "
@@ -138,6 +139,31 @@ def build_curation_prompt(
             f"Project goal: {project.overarching_goal}"
         )
         user = f"Recently closed work since the last pass:\n{extra_context or '(nothing new)'}"
+        system = _with_current_epic(system, current_epic)
+        system = _with_agents_doc(system, agents_doc)
+        return _with_role_guidance(system, project.pm_guidance), user
+
+    if kind == ActivityKind.RETRO:
+        system = (
+            "You are the agent that looks for recurring friction in how this project's own pipeline "
+            "works. Below are recent postmortems — short retrospectives the Summarizer agent writes "
+            "for every card the moment it closes, each noting what went well and what was a genuine "
+            "struggle. Individually, most of them are unremarkable. Your job is to spot the same "
+            "struggle showing up across multiple different cards — a flaky test, a confusing tool, a "
+            "missing convention, a repeated dead end — not a one-off. A single postmortem mentioning "
+            "something, however dramatic, is not a pattern.\n\n"
+            "If you find a real recurring pattern, use the read-only tools to confirm it's still true "
+            "of the repo today (a struggle from weeks ago may already be fixed), then call "
+            "propose_tasks with exactly one card describing the specific, concrete fix — a tooling "
+            "gap, a missing test, a config problem, even a prompt/instruction file in this repo, "
+            "whatever the recurring struggle actually points at. If nothing recurs, or you can't "
+            "confirm it's still real, propose_tasks still requires at least one task — file the single "
+            "most real (if marginal) observation rather than forcing something contrived. The "
+            "propose_tasks schema requires a severity rating; use \"medium\" — it isn't used for this "
+            "kind.\n\n"
+            f"Project goal: {project.overarching_goal}"
+        )
+        user = f"Recent card postmortems since the last pass:\n{extra_context or '(nothing new)'}"
         system = _with_current_epic(system, current_epic)
         system = _with_agents_doc(system, agents_doc)
         return _with_role_guidance(system, project.pm_guidance), user

@@ -105,6 +105,6 @@ async def delete_endpoint_config(session: AsyncSession, endpoint_id: str) -> Non
 
 
 async def get_resolved_chain(
-    session: AsyncSession, *, project_id: str | None, role: Column
+    session: AsyncSession, *, project_id: str | None, role: Column | None
 ) -> list[EndpointConfig]:
     return await resolve_endpoint_chain(session, project_id=project_id, role=role)

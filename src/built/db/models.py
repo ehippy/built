@@ -246,6 +246,36 @@ class CurationEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class CardPostmortem(Base):
+    """Written once by agent/summarizer.py, right as a card reaches a terminal
+    lifecycle_state (DONE or FAILED) — see the terminal handlers in agent/loop.py
+    and the CI-confirmation paths in orchestrator/ci_watcher.py, both of which call
+    write_card_postmortem before the transition that closes the card actually
+    commits. No unique constraint on card_id: a card that fails, gets retried, and
+    later succeeds accumulates one row per closure, which is exactly the history
+    ActivityKind.RETRO wants to mine, not something to collapse to a single row.
+
+    Deliberately not folded into CardEvent: CardEvent is an append-only transcript
+    scoped to one card for the dashboard to tail, while this is small, structured,
+    cross-card data a periodic pass reads in bulk (services/card_service.py's
+    list_recent_postmortems) — a shape closer to CurationEvent's role than
+    CardEvent's."""
+
+    __tablename__ = "card_postmortems"
+
+    id: Mapped[str] = mapped_column(primary_key=True, default=_new_id)
+    card_id: Mapped[str] = mapped_column(ForeignKey("cards.id"), index=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    outcome: Mapped[LifecycleState]
+    went_well: Mapped[str] = mapped_column(Text)
+    struggles: Mapped[str] = mapped_column(Text)
+    # Denormalized off Card at write time so a later mining pass can reason about
+    # "how much friction did this card cost" without joining back to cards.
+    revision_count: Mapped[int] = mapped_column(Integer, default=0)
+    deploy_attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class ChatMessage(Base):
     """One row per turn in a project's single, ongoing brainstorming chat (agent/
     chat.py) — unlike CardEvent/CurationEvent, this must be exactly replayable back

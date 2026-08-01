@@ -21,6 +21,7 @@ _CURATION_LABELS: dict[ActivityKind, str] = {
     ActivityKind.COVERAGE_SWEEP: "Coverage sweep",
     ActivityKind.REFACTOR_SWEEP: "Refactor sweep",
     ActivityKind.AGENTS_MD: "Tend AGENTS.md",
+    ActivityKind.RETRO: "Retro",
 }
 
 

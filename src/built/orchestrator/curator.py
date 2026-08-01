@@ -14,7 +14,7 @@ from built.agent.context_window import ContextWindowConfig
 from built.agent.curation import run_curation_pass
 from built.config import settings
 from built.db.base import async_session_factory
-from built.db.models import Project
+from built.db.models import CardPostmortem, Project
 from built.domain.enums import ActivityKind, Column
 from built.llm.client import FallbackLLMClient
 from built.sandbox.container import DockerCommandExecutor
@@ -47,8 +47,10 @@ _CURATION_INTERVALS: dict[ActivityKind, float] = {
     ActivityKind.STAY_DRY: 21600,
     ActivityKind.REFACTOR_SWEEP: 21600,
     ActivityKind.COVERAGE_SWEEP: 21600,
-    # agents_md: no entry — falls back to curator_poll_interval_seconds as a floor;
-    # its own closed-work gate below is the stricter, real throttle in practice.
+    # agents_md/retro: no entry — falls back to curator_poll_interval_seconds as a
+    # floor; each has its own "anything new since last run" gate below (closed
+    # visits for agents_md, fresh postmortems for retro) that's the stricter, real
+    # throttle in practice.
 }
 
 
@@ -58,6 +60,18 @@ def is_curation_running(project_id: str, kind: ActivityKind) -> bool:
 
 def _format_recent_outcomes(outcomes: list[dict]) -> str:
     lines = [f"- [{o['column']}] {o['card_title']}: {o['summary']}" for o in outcomes if o.get("summary")]
+    return "\n".join(lines) or "(nothing new)"
+
+
+def _format_recent_postmortems(postmortems: list[CardPostmortem]) -> str:
+    lines = []
+    for p in postmortems:
+        went_well = p.went_well or "(nothing notable)"
+        struggles = p.struggles or "(nothing notable)"
+        lines.append(
+            f"- [{p.outcome.value}, {p.revision_count} revision(s)] went well: {went_well} | "
+            f"struggles: {struggles}"
+        )
     return "\n".join(lines) or "(nothing new)"
 
 
@@ -71,11 +85,11 @@ async def _needs_run(session, project: Project, kind: ActivityKind) -> tuple[boo
     backlog WIP limit, checked first for every kind — cheapest, and there's no
     point computing cadence for a kind that can't propose anywhere useful anyway;
     (2) a uniform per-kind interval (_CURATION_INTERVALS, falling back to
-    curator_poll_interval_seconds) since this kind's last run; (3) agents_md only,
-    an *additional* "anything closed since last run" gate stacked on top of (2) —
-    the natural throttle for its sparse-signal activity. None of this gates a
-    human's manual "run now" (run_curation_activity called directly) — only the
-    automatic scheduler loop below reads this."""
+    curator_poll_interval_seconds) since this kind's last run; (3) agents_md and
+    retro each get an *additional* "anything new since last run" gate stacked on
+    top of (2) — the natural throttle for their sparse-signal activity. None of
+    this gates a human's manual "run now" (run_curation_activity called directly)
+    — only the automatic scheduler loop below reads this."""
     pm_backlog = await card_service.count_column_backlog(session, project.id, Column.PM)
     if pm_backlog >= settings.curator_max_pm_backlog:
         return False, None
@@ -85,12 +99,19 @@ async def _needs_run(session, project: Project, kind: ActivityKind) -> tuple[boo
     if last_run is not None and (datetime.now(UTC) - _as_utc(last_run)).total_seconds() < interval:
         return False, None
 
-    if kind != ActivityKind.AGENTS_MD:
-        return True, None
-    outcomes = await card_service.list_recent_visit_outcomes(session, project.id, since=last_run)
-    if not outcomes:
-        return False, None
-    return True, _format_recent_outcomes(outcomes)
+    if kind == ActivityKind.AGENTS_MD:
+        outcomes = await card_service.list_recent_visit_outcomes(session, project.id, since=last_run)
+        if not outcomes:
+            return False, None
+        return True, _format_recent_outcomes(outcomes)
+
+    if kind == ActivityKind.RETRO:
+        postmortems = await card_service.list_recent_postmortems(session, project.id, since=last_run)
+        if not postmortems:
+            return False, None
+        return True, _format_recent_postmortems(postmortems)
+
+    return True, None
 
 
 async def run_curation_activity(

@@ -7,7 +7,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from built.config import settings
-from built.db.models import Card, CardColumnVisit, CardDependency, CardEvent, EpicLink, Project
+from built.db.models import (
+    Card,
+    CardColumnVisit,
+    CardDependency,
+    CardEvent,
+    CardPostmortem,
+    EpicLink,
+    Project,
+)
 from built.domain import transitions
 from built.domain.enums import Column, EventType, LifecycleState, Priority
 from built.domain.events import append_event
@@ -560,6 +568,25 @@ async def list_recent_visit_outcomes(
     ]
 
 
+async def list_recent_postmortems(
+    session: AsyncSession, project_id: str, *, since=None, limit: int = 50
+) -> list[CardPostmortem]:
+    """CardPostmortems for a project, newest first — ActivityKind.RETRO's raw
+    material for spotting a struggle that keeps recurring across cards. Same
+    since/limit shape as list_recent_visit_outcomes, for the same reason: a pass
+    with nothing new since its last run should be skippable without an LLM call."""
+    stmt = (
+        select(CardPostmortem)
+        .join(Card, Card.id == CardPostmortem.card_id)
+        .where(Card.project_id == project_id)
+        .order_by(CardPostmortem.created_at.desc())
+        .limit(limit)
+    )
+    if since is not None:
+        stmt = stmt.where(CardPostmortem.created_at > since)
+    return list((await session.scalars(stmt)).all())
+
+
 async def list_column_visits(session: AsyncSession, card_id: str) -> list[CardColumnVisit]:
     await get_card(session, card_id)
     stmt = (
@@ -593,6 +620,35 @@ def _describe_tool_call_event(payload: dict) -> str:
     return f"- {name}({descriptor!r}) [{status}]: {result}"
 
 
+async def get_visit_activity(session: AsyncSession, visit_id: str) -> tuple[str | None, list[CardEvent]]:
+    """The detail behind one CardColumnVisit's one-line summary: the full feedback
+    text from its TRANSITION event, if it was a rejection (otherwise only reachable
+    via card.latest_feedback, which the next reviewer down the line can overwrite),
+    and its tool-call events, oldest first. Shared by get_previous_attempt_recap (a
+    role checking its own prior attempt before retrying) and agent/summarizer.py's
+    get_visit_detail tool (the Summarizer digging into a visit whose summary hints
+    at real trouble) — same underlying data, each caller phrases it for its own
+    audience."""
+    transition_payload = await session.scalar(
+        select(CardEvent.payload)
+        .where(CardEvent.column_visit_id == visit_id, CardEvent.type == EventType.TRANSITION)
+        .limit(1)
+    )
+    feedback_text = (transition_payload or {}).get("feedback")
+    events = list(
+        (
+            await session.scalars(
+                select(CardEvent)
+                .where(CardEvent.column_visit_id == visit_id, CardEvent.type == EventType.TOOL_CALL)
+                .order_by(CardEvent.seq.desc())
+                .limit(_RECAP_EVENT_LIMIT)
+            )
+        ).all()
+    )
+    events.reverse()
+    return feedback_text, events
+
+
 async def get_previous_attempt_recap(
     session: AsyncSession, card_id: str, column: Column, *, before_attempt: int
 ) -> str | None:
@@ -616,17 +672,7 @@ async def get_previous_attempt_recap(
     if prev_visit is None:
         return None
 
-    events = list(
-        (
-            await session.scalars(
-                select(CardEvent)
-                .where(CardEvent.column_visit_id == prev_visit.id, CardEvent.type == EventType.TOOL_CALL)
-                .order_by(CardEvent.seq.desc())
-                .limit(_RECAP_EVENT_LIMIT)
-            )
-        ).all()
-    )
-    events.reverse()
+    feedback_text, events = await get_visit_activity(session, prev_visit.id)
 
     outcome = prev_visit.outcome.value if prev_visit.outcome else "unknown"
     lines = [
@@ -639,12 +685,6 @@ async def get_previous_attempt_recap(
     # a Tester/Reviewer re-invoked after its own rejection has no way to check whether its
     # own specific findings were actually addressed — it can only start a generically fresh
     # review and hope it re-derives the same list.
-    transition_payload = await session.scalar(
-        select(CardEvent.payload)
-        .where(CardEvent.column_visit_id == prev_visit.id, CardEvent.type == EventType.TRANSITION)
-        .limit(1)
-    )
-    feedback_text = (transition_payload or {}).get("feedback")
     if feedback_text:
         lines.append(
             f"Your own detailed feedback from that attempt (verify each item was addressed):\n"

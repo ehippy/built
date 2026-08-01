@@ -136,3 +136,4 @@ class ActivityKind(StrEnum):
     COVERAGE_SWEEP = "coverage_sweep"  # code paths/behaviors with no test verifying them; files, doesn't fix
     REFACTOR_SWEEP = "refactor_sweep"  # decomposition candidates, layering violations, dead code, drift
     AGENTS_MD = "agents_md"  # proposes an AGENTS.md-update card; replaces the old Tender
+    RETRO = "retro"  # mines recent CardPostmortems (agent/summarizer.py) for a recurring struggle

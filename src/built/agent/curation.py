@@ -41,8 +41,8 @@ FilePolicy = Literal["file_all_above_bar", "file_best_only"]
 # elsewhere (domain/run_attempts.py for Developer/Tester/Deployer transitions).
 # file_all_above_bar: file every candidate rated critical/high, drop medium/low.
 # file_best_only: file just the single highest-severity candidate from the batch.
-# agents_md has no entry — _whittle_tasks skips severity filtering for any kind
-# not listed here (its own prompt already caps it at one card).
+# agents_md and retro have no entry — _whittle_tasks skips severity filtering for
+# any kind not listed here (each of their own prompts already caps it at one card).
 _CURATION_FILE_POLICY: dict[ActivityKind, FilePolicy] = {
     ActivityKind.BUG_SWEEP: "file_all_above_bar",
     ActivityKind.SECURITY_SWEEP: "file_all_above_bar",

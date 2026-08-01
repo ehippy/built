@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from built.agent import summarizer
 from built.agent.context import (
     build_deployer_prompt,
     build_developer_prompt,
@@ -542,6 +543,8 @@ async def _deployer_abandon_handler(
     await transitions.complete_deployer_visit(
         session, card, visit, success=False, summary=f"abandoned: {reason}", endpoint_used=endpoint_used
     )
+    project = await session.get(Project, card.project_id)
+    await _maybe_write_postmortem(session, project, card)
     return TerminalHandlerResult(handled=True)
 
 
@@ -561,7 +564,22 @@ async def _deployer_open_pr_handler(
         deploy_url=result.url,
         endpoint_used=endpoint_used,
     )
+    await _maybe_write_postmortem(session, project, card)
     return TerminalHandlerResult(handled=True)
+
+
+async def _maybe_write_postmortem(session: AsyncSession, project: Project, card: Card) -> None:
+    """Call right after a Deployer terminal transition that might have closed the
+    card — DONE and FAILED are the only lifecycle states this ever fires for, since
+    BLOCKED is a safety valve a human/Reviver can still retry, not a real closure.
+    Runs (and, via write_card_postmortem's own session.flush(), stages its row)
+    before this handler returns — the caller's own commit afterward is what
+    actually makes DONE/FAILED visible, so the postmortem always lands in the same
+    commit as the closure it's about, holding the card open that one moment
+    longer rather than racing it."""
+    if card.lifecycle_state not in (LifecycleState.DONE, LifecycleState.FAILED):
+        return
+    await summarizer.write_card_postmortem(session, project, card, outcome=card.lifecycle_state)
 
 
 async def _record_bash_run_attempt(
@@ -802,6 +820,10 @@ async def run_deployer_visit(
                 pending_ci_commit_sha=result.commit_sha,
                 endpoint_used=endpoint_used,
             )
+            # No postmortem yet if this landed in DEPLOYED_PENDING_CI — the card
+            # isn't actually closed until orchestrator/ci_watcher.py confirms CI,
+            # which writes its own postmortem at that point instead.
+            await _maybe_write_postmortem(session, project, card)
             return TerminalHandlerResult(handled=True)
 
         terminal_handlers = {

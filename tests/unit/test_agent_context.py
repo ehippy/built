@@ -44,6 +44,25 @@ def test_developer_prompt_includes_retry_note_when_present():
     assert "rebase onto main first" in user
 
 
+def test_curation_prompt_retro_uses_postmortem_digest_not_repo_browse():
+    """retro is shaped like agents_md: fed extra_context (here, a postmortem
+    digest) instead of the generic 'explore the repo' instructions, and caps
+    itself at one proposed card."""
+    _, user = build_curation_prompt(
+        _project(),
+        ActivityKind.RETRO,
+        existing_titles=[],
+        extra_context="- [failed, 3 revision(s)] went well: (nothing notable) | struggles: Tester kept "
+        "rejecting on the same flaky integration test",
+    )
+    assert "Tester kept rejecting on the same flaky integration test" in user
+
+
+def test_curation_prompt_retro_reports_no_new_postmortems_when_extra_context_absent():
+    _, user = build_curation_prompt(_project(), ActivityKind.RETRO, existing_titles=[])
+    assert "(nothing new)" in user
+
+
 def test_developer_prompt_leads_with_rejection_feedback_not_appends_it():
     """card.latest_feedback used to be appended at the very end of the user
     message, after Card/Request/Spec/Acceptance criteria — same tier as

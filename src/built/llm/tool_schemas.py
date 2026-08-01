@@ -1,6 +1,6 @@
 """OpenAI-compatible function-calling tool schemas, one list per column role."""
 
-from built.domain.enums import DeployMode, Severity
+from built.domain.enums import Column, DeployMode, Severity
 
 READ_FILE = {
     "type": "function",
@@ -314,7 +314,12 @@ SUBMIT_FOR_TEST = {
             "properties": {
                 "summary": {
                     "type": "string",
-                    "description": "A short summary of what changed and why, for the Tester and the audit.",
+                    "description": (
+                        "A short summary of what changed and why, for the Tester and the audit. Also "
+                        "note how it went if it's worth knowing — dead ends, backtracking, anything "
+                        "that made this harder or easier than a normal card — not just the final "
+                        "result; a later pass mines these summaries for recurring friction."
+                    ),
                 }
             },
             "required": ["summary"],
@@ -602,6 +607,75 @@ REPORT_DUPLICATE_CANDIDATES = {
 CURATION_DEDUP_TOOLS = [REPORT_DUPLICATE_CANDIDATES]
 CURATION_DEDUP_TERMINAL_TOOL = "report_duplicate_candidates"
 
+# agent/summarizer.py's postmortem call: the card's column-visit map is handed in
+# directly, and get_visit_detail is the one narrow "explore" tool available — no
+# read/grep/bash, since there's nothing in the repo itself to look at here, just
+# more detail on a visit the map already summarized.
+GET_VISIT_DETAIL = {
+    "type": "function",
+    "function": {
+        "name": "get_visit_detail",
+        "description": (
+            "Look up the full detail behind one line of the column-visit map above — the complete "
+            "feedback text (if this visit was a rejection) and what tools were actually called during "
+            "it. Use this when a visit's one-line summary hints at real trouble and the specifics "
+            "matter for an honest postmortem; skip it for visits that were routine — most are. You "
+            "can call this more than once, then call submit_postmortem when you're done."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "column": {
+                    "type": "string",
+                    "enum": [c.value for c in Column],
+                    "description": "The column, exactly as labeled in the map above (e.g. 'developer').",
+                },
+                "attempt_number": {
+                    "type": "integer",
+                    "description": "The attempt number, exactly as labeled in the map above.",
+                },
+            },
+            "required": ["column", "attempt_number"],
+        },
+    },
+}
+
+SUBMIT_POSTMORTEM = {
+    "type": "function",
+    "function": {
+        "name": "submit_postmortem",
+        "description": (
+            "Submit your postmortem for this now-closed card. Ends your turn — call this exactly "
+            "once."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "went_well": {
+                    "type": "string",
+                    "description": (
+                        "What worked smoothly, if anything specific stands out — a few sentences. "
+                        "'Nothing notable' is a completely fine answer; don't invent texture that "
+                        "wasn't there."
+                    ),
+                },
+                "struggles": {
+                    "type": "string",
+                    "description": (
+                        "What was a genuine struggle — retries, back-and-forth between columns, dead "
+                        "ends, confusing feedback loops — a few sentences. 'Nothing notable' is a "
+                        "completely fine answer."
+                    ),
+                },
+            },
+            "required": ["went_well", "struggles"],
+        },
+    },
+}
+SUMMARIZER_TOOLS = [SUBMIT_POSTMORTEM, GET_VISIT_DETAIL]
+SUMMARIZER_TERMINAL_TOOL = "submit_postmortem"
+SUMMARIZER_DETAIL_TOOL = "get_visit_detail"
+
 MAX_TICKETS_PER_CHAT_TURN = 5
 
 CREATE_TICKET = {
@@ -730,7 +804,16 @@ APPROVE = {
         ),
         "parameters": {
             "type": "object",
-            "properties": {"notes": {"type": "string", "description": "Brief notes for the audit log."}},
+            "properties": {
+                "notes": {
+                    "type": "string",
+                    "description": (
+                        "Brief notes for the audit log — not just that it passed, but how it went: "
+                        "clean, or did something about this card make it slower or trickier to verify "
+                        "than usual? A later pass mines these for recurring friction."
+                    ),
+                }
+            },
             "required": ["notes"],
         },
     },
@@ -794,7 +877,16 @@ REVIEWER_APPROVE = {
         ),
         "parameters": {
             "type": "object",
-            "properties": {"notes": {"type": "string", "description": "Brief notes for the audit log."}},
+            "properties": {
+                "notes": {
+                    "type": "string",
+                    "description": (
+                        "Brief notes for the audit log — not just that it passed, but how it went: "
+                        "clean, or did something about this card make it slower or trickier to verify "
+                        "than usual? A later pass mines these for recurring friction."
+                    ),
+                }
+            },
             "required": ["notes"],
         },
     },

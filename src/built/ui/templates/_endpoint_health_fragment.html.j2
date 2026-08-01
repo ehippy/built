@@ -1,0 +1,16 @@
+{% set color = {"ok": "success", "busy": "info", "error": "danger", "disabled": "secondary"}.get(health.state, "secondary") %}
+{% set label = {"ok": (health.latency_ms ~ "ms"), "busy": "busy", "error": "error", "disabled": "disabled"}.get(health.state, "unknown") %}
+{% set title = {
+  "ok": "Reachable (" ~ health.latency_ms ~ "ms)",
+  "busy": "At its max_concurrency limit right now — not treated as unhealthy, just skipped rather than queued",
+  "error": health.error or "Unreachable",
+  "disabled": "Endpoint is disabled — not probed",
+}.get(health.state, "Unknown") %}
+<span id="ep-health-{{ endpoint.id }}" class="d-inline-flex align-items-center gap-1">
+  <span class="d-inline-block rounded-circle bg-{{ color }} flex-shrink-0" style="width:.6rem;height:.6rem;" title="{{ title }}"></span>
+  <span class="small text-body-secondary" title="{{ title }}">{{ label }}</span>
+  <button type="button" class="btn btn-sm btn-link p-0 ms-1 text-body-secondary" title="Re-check"
+          hx-get="/ui/endpoint-configs/{{ endpoint.id }}/health" hx-target="#ep-health-{{ endpoint.id }}" hx-swap="outerHTML">
+    <i class="bi bi-arrow-clockwise"></i>
+  </button>
+</span>

@@ -128,7 +128,7 @@ class FallbackLLMClient:
             response = await litellm.acompletion(
                 model=f"openai/{endpoint.model}",
                 api_base=endpoint.base_url,
-                api_key=_resolve_api_key(endpoint.api_key_ref),
+                api_key=resolve_api_key(endpoint.api_key_ref),
                 messages=messages,
                 tools=tools or None,
                 num_retries=settings.llm_num_retries,
@@ -154,7 +154,7 @@ class FallbackLLMClient:
         )
 
 
-def _resolve_api_key(api_key_ref: str | None) -> str:
+def resolve_api_key(api_key_ref: str | None) -> str:
     """`api_key_ref` is an env var *name*, never a raw key — see EndpointConfig.
     litellm treats an empty string as "no credentials" and refuses to even send the
     request (`OpenAIException - Missing credentials`), which breaks self-hosted
@@ -163,6 +163,40 @@ def _resolve_api_key(api_key_ref: str | None) -> str:
     if not api_key_ref:
         return "not-needed"
     return os.environ.get(api_key_ref) or "not-needed"
+
+
+async def check_endpoint_health(endpoint: EndpointConfig) -> dict:
+    """Best-effort reachability probe for the endpoint-configs UI's health dot: a
+    minimal real completion, so "healthy" means "actually answers a request," not
+    just "port is open."
+
+    Goes through the same per-backend semaphore as real traffic (`_semaphore_for`)
+    so a probe can never push a max_concurrency=1 local server past what it's
+    configured to handle. But it only waits briefly for a slot rather than queuing
+    behind it — a backend that's simply busy serving a real card isn't unhealthy,
+    it's just busy, and a UI dot shouldn't block on that for minutes.
+    """
+    semaphore = _semaphore_for(endpoint)
+    try:
+        await asyncio.wait_for(semaphore.acquire(), timeout=2.0)
+    except TimeoutError:
+        return {"state": "busy", "latency_ms": None, "error": None}
+    try:
+        start = time.monotonic()
+        await litellm.acompletion(
+            model=f"openai/{endpoint.model}",
+            api_base=endpoint.base_url,
+            api_key=resolve_api_key(endpoint.api_key_ref),
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=1,
+            num_retries=0,
+            timeout=10,
+        )
+        return {"state": "ok", "latency_ms": int((time.monotonic() - start) * 1000), "error": None}
+    except Exception as exc:  # noqa: BLE001 — deliberate: reachability probe, any failure just means "down"
+        return {"state": "error", "latency_ms": None, "error": str(exc)}
+    finally:
+        semaphore.release()
 
 
 def _parse_arguments(raw: str) -> dict:

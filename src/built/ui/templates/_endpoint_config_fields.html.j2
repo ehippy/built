@@ -1,0 +1,48 @@
+{% set p = ep.id if ep else "new" %}
+<div class="row g-2 mb-3">
+  <div class="col">
+    <label class="form-label" for="role-{{ p }}">Role</label>
+    <select class="form-select" id="role-{{ p }}" name="role">
+      <option value="" {{ "selected" if not (ep and ep.role) }}>All roles</option>
+      <option value="pm" {{ "selected" if ep and ep.role == "pm" }}>Product Manager</option>
+      <option value="developer" {{ "selected" if ep and ep.role == "developer" }}>Developer</option>
+      <option value="tester" {{ "selected" if ep and ep.role == "tester" }}>Tester</option>
+      <option value="reviewer" {{ "selected" if ep and ep.role == "reviewer" }}>Reviewer</option>
+      <option value="deployer" {{ "selected" if ep and ep.role == "deployer" }}>Deployer</option>
+    </select>
+  </div>
+  <div class="col">
+    <label class="form-label" for="priority-{{ p }}">Priority</label>
+    <input class="form-control" type="number" id="priority-{{ p }}" name="priority" value="{{ ep.priority if ep else 0 }}">
+  </div>
+</div>
+<div class="mb-3">
+  <label class="form-label" for="base_url-{{ p }}">Base URL</label>
+  <input class="form-control" type="text" id="base_url-{{ p }}" name="base_url" required placeholder="http://localhost:11434/v1" value="{{ ep.base_url if ep else '' }}">
+</div>
+<div class="mb-3">
+  <label class="form-label" for="model-{{ p }}">Model</label>
+  <input class="form-control" type="text" id="model-{{ p }}" name="model" required placeholder="Qwen3.6-35B-A3B-GGUF" value="{{ ep.model if ep else '' }}">
+</div>
+<div class="mb-3">
+  <label class="form-label" for="api_key_ref-{{ p }}">API key env var (optional)</label>
+  <input class="form-control" type="text" id="api_key_ref-{{ p }}" name="api_key_ref" placeholder="OPENAI_API_KEY" value="{{ ep.api_key_ref if ep else '' }}">
+  <div class="form-text">Name of an environment variable on the server — never the raw key.</div>
+</div>
+<div class="row g-2 mb-3">
+  <div class="col">
+    <label class="form-label" for="max_concurrency-{{ p }}">Max concurrency</label>
+    <input class="form-control" type="number" id="max_concurrency-{{ p }}" name="max_concurrency" min="1" value="{{ ep.max_concurrency if ep else 1 }}">
+    <div class="form-text">Max simultaneous requests this backend should ever receive from this app, shared across every project/role that resolves to it. A single local model instance can rarely usefully handle more than 1 at once; raise it for a hosted/scaled endpoint.</div>
+  </div>
+  <div class="col">
+    <label class="form-label" for="context_window-{{ p }}">Context window (optional)</label>
+    <input class="form-control" type="number" id="context_window-{{ p }}" name="context_window" min="1" placeholder="app default: {{ default_max_tokens }}" value="{{ ep.context_window if ep and ep.context_window else '' }}">
+    <div class="form-text">Total tokens this model actually supports. Left blank, projects resolving to this endpoint cap at the app default ({{ default_max_tokens }}) regardless of the model's real capacity.</div>
+  </div>
+</div>
+<div class="form-check">
+  <input class="form-check-input" type="checkbox" id="supports_tool_calling-{{ p }}" name="supports_tool_calling" value="true" {% if not ep or ep.supports_tool_calling %}checked{% endif %}>
+  <label class="form-check-label" for="supports_tool_calling-{{ p }}">Supports tool calling</label>
+  <div class="form-text">Must stay on for any of the five pipeline roles (PM/Developer/Tester/Reviewer/Deployer) — every one of them requires tool calls, and an endpoint with this off is silently dropped from their fallback chains.</div>
+</div>

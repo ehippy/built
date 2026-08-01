@@ -67,6 +67,37 @@ async def update_endpoint_config(session: AsyncSession, endpoint_id: str, **fiel
     return endpoint
 
 
+async def edit_endpoint_config(
+    session: AsyncSession,
+    endpoint_id: str,
+    *,
+    base_url: str,
+    model: str,
+    role: Column | None,
+    priority: int,
+    api_key_ref: str | None,
+    max_concurrency: int,
+    context_window: int | None,
+    supports_tool_calling: bool,
+) -> EndpointConfig:
+    """Full-row edit for the UI's edit form. Unlike `update_endpoint_config` — whose
+    "skip None" semantics exist so the JSON PATCH API can treat an omitted field as
+    "leave unchanged" — every field here is always overwritten, so clearing
+    api_key_ref/context_window back to unset, or role back to "all roles", actually
+    takes effect instead of silently no-oping."""
+    endpoint = await get_endpoint_config(session, endpoint_id)
+    endpoint.base_url = base_url
+    endpoint.model = model
+    endpoint.role = role
+    endpoint.priority = priority
+    endpoint.api_key_ref = api_key_ref
+    endpoint.max_concurrency = max_concurrency
+    endpoint.context_window = context_window
+    endpoint.supports_tool_calling = supports_tool_calling
+    await session.flush()
+    return endpoint
+
+
 async def delete_endpoint_config(session: AsyncSession, endpoint_id: str) -> None:
     endpoint = await get_endpoint_config(session, endpoint_id)
     await session.delete(endpoint)

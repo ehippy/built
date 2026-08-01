@@ -191,6 +191,41 @@ async def test_pause_and_resume_project_via_api():
         assert missing_resp.status_code == 404
 
 
+async def test_project_role_guidance_round_trips_via_api():
+    async with _client() as client:
+        create_resp = await client.post(
+            "/api/v1/projects",
+            json={
+                "name": "Guidance Project",
+                "overarching_goal": "goal",
+                "repo_remote_url": "https://example.invalid/guidance-project.git",
+                "pm_guidance": "File tickets in small batches.",
+            },
+            headers=AUTH,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        project = create_resp.json()
+        assert project["pm_guidance"] == "File tickets in small batches."
+        assert project["developer_guidance"] is None
+
+        update_resp = await client.patch(
+            f"/api/v1/projects/{project['id']}",
+            json={
+                "developer_guidance": "Never touch the legacy billing module.",
+                "reviewer_guidance": "Reject anything that adds a new npm dependency.",
+            },
+            headers=AUTH,
+        )
+        assert update_resp.status_code == 200, update_resp.text
+        updated = update_resp.json()
+        assert updated["pm_guidance"] == "File tickets in small batches."
+        assert updated["developer_guidance"] == "Never touch the legacy billing module."
+        assert updated["reviewer_guidance"] == "Reject anything that adds a new npm dependency."
+
+        reread_resp = await client.get(f"/api/v1/projects/{project['id']}")
+        assert reread_resp.json()["developer_guidance"] == "Never touch the legacy billing module."
+
+
 async def test_endpoint_config_fallback_chain_resolution():
     async with _client() as client:
         project_resp = await client.post(

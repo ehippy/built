@@ -6,6 +6,7 @@ from built.api.schemas import (
     CardCreate,
     CardEditIn,
     CardEventOut,
+    CardNudgeIn,
     CardOut,
     CardPriorityIn,
     CardRetryIn,
@@ -76,6 +77,20 @@ async def retry_card(
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return CardOut.model_validate(card)
+
+
+@router.post("/cards/{card_id}/nudge", response_model=CardOut)
+async def nudge_card(card_id: str, body: CardNudgeIn, session: SessionDep, _: RequireApiKey) -> CardOut:
+    """Drop a note in for whichever agent is (or will next be) working this card —
+    the only human touchpoint that doesn't need the card blocked/failed first, and
+    doesn't reset any safety-valve counter the way retry does. Picked up within one
+    iteration if a visit is actively running (see agent/loop.py's run_column_visit),
+    or at the start of the next one otherwise."""
+    try:
+        card = await card_service.add_nudge(session, card_id, note=body.note)
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     return CardOut.model_validate(card)
 
 

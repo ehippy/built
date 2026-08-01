@@ -17,10 +17,12 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
+from built.agent import summarizer
 from built.config import settings
 from built.db.base import async_session_factory
 from built.db.models import Card, Project
 from built.domain import transitions
+from built.domain.enums import LifecycleState
 from built.sandbox import deploy_runner
 from built.services import card_service
 
@@ -31,6 +33,16 @@ def _as_utc(dt: datetime) -> datetime:
     # SQLite doesn't reliably round-trip tzinfo — see card_service._as_utc for the
     # same guard against the same issue elsewhere in this codebase.
     return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+async def _maybe_write_postmortem(session, project: Project, card: Card) -> None:
+    """Same postmortem hook as agent/loop.py's deploy terminal handlers — this is
+    the other place a card can reach DONE/FAILED (an auto_main deploy that had CI
+    to wait on), so it needs the same call. mark_ci_wait_timed_out (BLOCKED) never
+    reaches here since it isn't terminal — a human/Reviver can still retry it."""
+    if card.lifecycle_state not in (LifecycleState.DONE, LifecycleState.FAILED):
+        return
+    await summarizer.write_card_postmortem(session, project, card, outcome=card.lifecycle_state)
 
 
 async def _check_one(session, card: Card) -> str:
@@ -50,12 +62,14 @@ async def _check_one(session, card: Card) -> str:
             card,
             note="no CI status available (no GitHub token configured, or not a github.com repo)",
         )
+        await _maybe_write_postmortem(session, project, card)
         return "confirmed"
 
     if not check_runs:
         if elapsed < settings.ci_watcher_grace_period_seconds:
             return "still_pending"  # give GitHub a moment to register the push
         await transitions.confirm_ci_passed(session, card, note="no CI checks reported for this commit")
+        await _maybe_write_postmortem(session, project, card)
         return "confirmed"
 
     if any(run.status != "completed" for run in check_runs):
@@ -88,9 +102,11 @@ async def _check_one(session, card: Card) -> str:
             note=f"CI failed on commit {commit_sha[:8]}:\n{lines}\n\nOpened follow-up card {followup.id} "
             f"({followup.title!r}) to fix it.",
         )
+        await _maybe_write_postmortem(session, project, card)
         return "ci_failed"
 
     await transitions.confirm_ci_passed(session, card, note=f"all {len(check_runs)} check(s) passed")
+    await _maybe_write_postmortem(session, project, card)
     return "confirmed"
 
 

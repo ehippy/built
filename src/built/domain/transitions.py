@@ -337,6 +337,54 @@ async def complete_deployer_visit(
     return card
 
 
+async def complete_deployer_visit_conflict(
+    session: AsyncSession,
+    card: Card,
+    visit: CardColumnVisit,
+    *,
+    conflicted_paths: list[str],
+    endpoint_used: str | None = None,
+) -> Card:
+    """Deployer's run_deploy hit a merge conflict against default_branch. Rather
+    than have the Deployer agent guess at a resolution with no bash/test tools and
+    no further Tester/Reviewer pass (see sandbox/deploy_runner.py's
+    DeployRunResult.conflict), bounce the card back to Developer — sharing the same
+    revision_count budget as Reviewer/Tester's request_changes, since it's still
+    'another round of Developer work needed' against the same safety valve. This
+    does NOT count against max_deploy_attempts: the merge/push/deploy itself never
+    ran, so it isn't a deploy failure.
+
+    The next Developer visit's own branch-sync step (orchestrator/worker.py +
+    sandbox/worktree.sync_card_branch_with_default) reproduces this same conflict
+    directly in the card's own worktree, where Developer has the full read/write/
+    bash toolset — and its test gate — to actually fix and re-verify it. Because it
+    flows through submit_for_test again, Tester and Reviewer both see the fix too,
+    unlike the old in-place Deployer resolution this replaces."""
+    project = await session.get(Project, card.project_id)
+    feedback = (
+        f"An automatic deploy attempt failed: merging this card's branch into "
+        f"{project.default_branch} produced a conflict in: {', '.join(conflicted_paths)}. Someone "
+        f"else's change landed on {project.default_branch} since this branch was last synced with "
+        f"it. Resolve the conflict against the current {project.default_branch}, re-verify the "
+        "tests still pass, and resubmit."
+    )
+    summary = f"deploy blocked on a merge conflict in {', '.join(conflicted_paths)} — sent back to Developer"
+    card.revision_count += 1
+    card.latest_feedback = feedback
+    card.column = Column.DEVELOPER
+    if card.revision_count > project.max_revisions:
+        card.lifecycle_state = LifecycleState.BLOCKED
+    await _close_visit(
+        session,
+        visit,
+        outcome=VisitOutcome.DEPLOY_CONFLICT,
+        summary=summary,
+        endpoint_used=endpoint_used,
+        feedback=feedback,
+    )
+    return card
+
+
 async def confirm_ci_passed(session: AsyncSession, card: Card, *, note: str) -> Card:
     """orchestrator/ci_watcher.py: CI came back green, or the repo turned out to
     have no CI at all for this commit — either way, the deploy this card produced

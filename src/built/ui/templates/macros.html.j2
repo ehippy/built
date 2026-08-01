@@ -5,7 +5,9 @@
 {%- endmacro %}
 
 {% macro card_tile(card) -%}
-<a class="card mb-2 text-decoration-none border-{{ state_color.get(card.lifecycle_state, "secondary") }} {% if card.archived_at %}opacity-50{% endif %}" href="/ui/cards/{{ card.id }}">
+<a class="card mb-2 text-decoration-none border-{{ state_color.get(card.lifecycle_state, "secondary") }} {% if card.archived_at %}opacity-50{% endif %}" href="/ui/cards/{{ card.id }}"
+   hx-get="/ui/cards/{{ card.id }}/panel" hx-target="#card-offcanvas-body" hx-swap="innerHTML"
+   onclick="if (event.ctrlKey || event.metaKey || event.button === 1) return; bootstrap.Offcanvas.getOrCreateInstance(document.getElementById('card-offcanvas')).show();">
   <div class="card-body py-2 px-3">
     <div class="d-flex align-items-center gap-2 fw-semibold">
       {{ card.title }}

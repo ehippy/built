@@ -16,8 +16,12 @@ _CURATION_LABELS: dict[ActivityKind, str] = {
     ActivityKind.BUG_SWEEP: "Bug sweep",
     ActivityKind.OPPORTUNITY_BRAINSTORM: "Opportunities",
     ActivityKind.POLISH_REVIEW: "Polish review",
-    ActivityKind.STAY_DRY: "Stay DRY",
+    ActivityKind.STAY_DRY: "Duplication sweep",
+    ActivityKind.SECURITY_SWEEP: "Security sweep",
+    ActivityKind.COVERAGE_SWEEP: "Coverage sweep",
+    ActivityKind.REFACTOR_SWEEP: "Refactor sweep",
     ActivityKind.AGENTS_MD: "Tend AGENTS.md",
+    ActivityKind.RETRO: "Retro",
 }
 
 
@@ -37,6 +41,13 @@ def _describe_curation_event(event: CurationEvent) -> str:
     if tool_calls:
         return f"calling {tool_calls[0]}…"
     return "thinking…"
+
+
+def _any_curation_running(project_id: str) -> bool:
+    """Cheap, in-memory-only check (is_curation_running just tests set membership,
+    no DB query) — used to drive the Curation button's spinner on the board's
+    existing 3s poll without adding a DB round trip to that cadence."""
+    return any(is_curation_running(project_id, kind) for kind in ActivityKind)
 
 
 async def _curation_statuses(session: SessionDep, project_id: str) -> list[dict]:
@@ -80,6 +91,7 @@ async def board(project_id: str, request: Request, session: SessionDep, show_arc
             "board": board,
             "show_archived": show_archived,
             "statuses": statuses,
+            "curation_running": _any_curation_running(project_id),
             "curation_paused_at": curation_state.paused_at if curation_state else None,
             "epics": epics,
             "current_epic_id": project.current_epic_id,
@@ -94,7 +106,13 @@ async def board_fragment(project_id: str, request: Request, session: SessionDep,
     return templates.TemplateResponse(
         request,
         "_board_fragment.html.j2",
-        {"project": project, "board": board, "show_archived": show_archived},
+        {
+            "project": project,
+            "board": board,
+            "show_archived": show_archived,
+            "curation_running": _any_curation_running(project_id),
+            "is_polling_fragment": True,
+        },
     )
 
 

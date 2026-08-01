@@ -5,13 +5,15 @@ mechanics (using bug_sweep as the representative kind), the agents_md kind's
 different shape (context from recent visit outcomes, not a repo browse), and the
 orchestrator layer: cadence gating, pause-skipping, and the in-progress guard."""
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
+from built.agent import curation
 from built.agent.curation import run_curation_pass
 from built.db.models import CurationEvent
 from built.domain import transitions
-from built.domain.enums import ActivityKind, Column, EventType, LifecycleState
+from built.domain.enums import ActivityKind, Column, EventType, LifecycleState, Severity
 from built.domain.events import append_curation_event
 from built.llm.client import LLMResult, ToolCallRequest
 from built.llm.tool_schemas import MAX_PROPOSED_TASKS
@@ -73,7 +75,11 @@ async def test_curation_explores_then_proposes_tasks(db_session, toy_repo_remote
                         name="propose_tasks",
                         arguments={
                             "tasks": [
-                                {"title": "Fix divide-by-zero", "raw_request": "greet() crashes on None."},
+                                {
+                                    "title": "Fix divide-by-zero",
+                                    "severity": "high",
+                                    "raw_request": "greet() crashes on None.",
+                                },
                             ]
                         },
                     )
@@ -115,7 +121,11 @@ async def test_curation_nudges_on_empty_tasks_then_recovers(db_session, toy_repo
                     ToolCallRequest(
                         id="call_2",
                         name="propose_tasks",
-                        arguments={"tasks": [{"title": "Add mod()", "raw_request": "Add a mod(a, b)."}]},
+                        arguments={
+                            "tasks": [
+                                {"title": "Add mod()", "severity": "high", "raw_request": "Add a mod(a, b)."}
+                            ]
+                        },
                     )
                 ],
                 endpoint_used="fake::model",
@@ -139,7 +149,8 @@ async def test_curation_caps_at_max_proposed_tasks(db_session, toy_repo_remote):
     project, wt_path = await _make_project(db_session, toy_repo_remote, _n="3")
 
     too_many = [
-        {"title": f"Task {i}", "raw_request": f"Do thing {i}."} for i in range(MAX_PROPOSED_TASKS + 5)
+        {"title": f"Task {i}", "severity": "critical", "raw_request": f"Do thing {i}."}
+        for i in range(MAX_PROPOSED_TASKS + 5)
     ]
     llm = ScriptedLLMClient(
         [
@@ -204,11 +215,22 @@ async def test_curation_prompt_lists_existing_card_titles_to_avoid_duplicates(db
                     ToolCallRequest(
                         id="call_1",
                         name="propose_tasks",
-                        arguments={"tasks": [{"title": "Add divide()", "raw_request": "r"}]},
+                        arguments={
+                            "tasks": [{"title": "Add divide()", "severity": "medium", "raw_request": "r"}]
+                        },
                     )
                 ],
                 endpoint_used="fake::model",
-            )
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_2", name="report_duplicate_candidates", arguments={"duplicates": []}
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
         ]
     )
 
@@ -259,6 +281,49 @@ async def test_curation_polish_review_proposes_a_card(db_session, toy_repo_remot
     assert events[0].payload["source"] == "curation:polish_review"
 
 
+@pytest.mark.parametrize(
+    ("kind", "title"),
+    [
+        (ActivityKind.SECURITY_SWEEP, "Sanitize template input in report renderer"),
+        (ActivityKind.COVERAGE_SWEEP, "Add test for empty-cart checkout path"),
+        (ActivityKind.REFACTOR_SWEEP, "Split oversized handler in routes.py"),
+    ],
+)
+async def test_curation_new_kinds_propose_a_card(db_session, toy_repo_remote, kind, title):
+    """Proves the three new kinds (security_sweep, coverage_sweep, refactor_sweep)
+    are wired correctly — full mechanics already covered above via bug_sweep."""
+    project, wt_path = await _make_project(db_session, toy_repo_remote, _n=f"6-{kind.value}")
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_1",
+                        name="propose_tasks",
+                        arguments={"tasks": [{"title": title, "severity": "high", "raw_request": "r"}]},
+                    )
+                ],
+                endpoint_used="fake::model",
+            )
+        ]
+    )
+
+    created = await run_curation_pass(
+        db_session,
+        project,
+        kind,
+        llm_client=llm,
+        dispatcher=_dispatcher(wt_path),
+        max_iterations=10,
+    )
+
+    assert [c.title for c in created] == [title]
+    events = await card_service.list_events(db_session, created[0].id)
+    assert events[0].payload["source"] == f"curation:{kind.value}"
+
+
 # --- agents_md kind: different context, proposes a card instead of editing --------
 
 
@@ -305,6 +370,266 @@ async def test_curation_agents_md_proposes_a_card_from_recent_outcomes(db_sessio
     assert "HOME=/tmp" in sent_user_message
 
 
+# --- Severity-based whittling (agent/curation.py) ----------------------------------
+
+
+def test_parsed_severity_handles_valid_invalid_and_missing():
+    assert curation._parsed_severity({"severity": "critical"}) == Severity.CRITICAL
+    assert curation._parsed_severity({"severity": "  HIGH  "}) == Severity.HIGH
+    assert curation._parsed_severity({"severity": "urgent"}) is None
+    assert curation._parsed_severity({}) is None
+
+
+async def test_apply_file_policy_all_above_bar_keeps_only_critical_and_high(db_session, toy_repo_remote):
+    project, _ = await _make_project(db_session, toy_repo_remote, _n="20")
+    tasks = [
+        {"title": "a", "severity": "critical", "raw_request": "r"},
+        {"title": "b", "severity": "high", "raw_request": "r"},
+        {"title": "c", "severity": "medium", "raw_request": "r"},
+        {"title": "d", "severity": "low", "raw_request": "r"},
+        {"title": "e", "raw_request": "r"},  # missing severity — treated as not clearing the bar
+    ]
+    kept = await curation._apply_file_policy(
+        db_session, project, ActivityKind.BUG_SWEEP, tasks, "file_all_above_bar"
+    )
+    assert [t["title"] for t in kept] == ["a", "b"]
+
+
+async def test_apply_file_policy_best_only_keeps_the_single_highest_severity(db_session, toy_repo_remote):
+    project, _ = await _make_project(db_session, toy_repo_remote, _n="21")
+    tasks = [
+        {"title": "low-one", "severity": "low", "raw_request": "r"},
+        {"title": "the-critical-one", "severity": "critical", "raw_request": "r"},
+        {"title": "high-one", "severity": "high", "raw_request": "r"},
+    ]
+    kept = await curation._apply_file_policy(
+        db_session, project, ActivityKind.POLISH_REVIEW, tasks, "file_best_only"
+    )
+    assert [t["title"] for t in kept] == ["the-critical-one"]
+
+
+async def test_apply_file_policy_best_only_breaks_ties_by_original_order(db_session, toy_repo_remote):
+    project, _ = await _make_project(db_session, toy_repo_remote, _n="22")
+    tasks = [
+        {"title": "first-high", "severity": "high", "raw_request": "r"},
+        {"title": "second-high", "severity": "high", "raw_request": "r"},
+    ]
+    kept = await curation._apply_file_policy(
+        db_session, project, ActivityKind.POLISH_REVIEW, tasks, "file_best_only"
+    )
+    assert [t["title"] for t in kept] == ["first-high"]
+
+
+async def test_bug_sweep_files_every_candidate_above_the_bar(db_session, toy_repo_remote):
+    project, wt_path = await _make_project(db_session, toy_repo_remote, _n="23")
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_1",
+                        name="propose_tasks",
+                        arguments={
+                            "tasks": [
+                                {"title": "critical-bug", "severity": "critical", "raw_request": "r"},
+                                {"title": "medium-bug", "severity": "medium", "raw_request": "r"},
+                                {"title": "low-bug", "severity": "low", "raw_request": "r"},
+                            ]
+                        },
+                    )
+                ],
+                endpoint_used="fake::model",
+            )
+        ]
+    )
+
+    created = await run_curation_pass(
+        db_session,
+        project,
+        ActivityKind.BUG_SWEEP,
+        llm_client=llm,
+        dispatcher=_dispatcher(wt_path),
+        max_iterations=10,
+    )
+
+    assert [c.title for c in created] == ["critical-bug"]
+
+
+async def test_opportunity_brainstorm_files_only_the_highest_severity_candidate(db_session, toy_repo_remote):
+    """Candidates are proposed out of severity order (critical isn't first) —
+    proves ranking drives selection, not just truncation to the first item."""
+    project, wt_path = await _make_project(db_session, toy_repo_remote, _n="24")
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_1",
+                        name="propose_tasks",
+                        arguments={
+                            "tasks": [
+                                {"title": "low-one", "severity": "low", "raw_request": "r"},
+                                {"title": "the-critical-one", "severity": "critical", "raw_request": "r"},
+                                {"title": "high-one", "severity": "high", "raw_request": "r"},
+                            ]
+                        },
+                    )
+                ],
+                endpoint_used="fake::model",
+            )
+        ]
+    )
+
+    created = await run_curation_pass(
+        db_session,
+        project,
+        ActivityKind.OPPORTUNITY_BRAINSTORM,
+        llm_client=llm,
+        dispatcher=_dispatcher(wt_path),
+        max_iterations=10,
+    )
+
+    assert [c.title for c in created] == ["the-critical-one"]
+
+
+# --- Live-DB duplicate detection (agent/curation.py) -------------------------------
+
+
+async def test_dedup_drops_a_candidate_flagged_as_duplicate(db_session, toy_repo_remote):
+    project, wt_path = await _make_project(db_session, toy_repo_remote, _n="25")
+    existing = await card_service.create_card(db_session, project.id, title="Existing card", raw_request="r")
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_1",
+                        name="propose_tasks",
+                        arguments={
+                            "tasks": [{"title": "Dup of existing", "severity": "high", "raw_request": "r"}]
+                        },
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_2",
+                        name="report_duplicate_candidates",
+                        arguments={
+                            "duplicates": [{"candidate_index": 0, "duplicate_of_card_id": existing.id}]
+                        },
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+        ]
+    )
+
+    created = await run_curation_pass(
+        db_session,
+        project,
+        ActivityKind.BUG_SWEEP,
+        llm_client=llm,
+        dispatcher=_dispatcher(wt_path),
+        max_iterations=10,
+    )
+
+    assert created == []
+    events = (
+        await db_session.scalars(
+            select(CurationEvent)
+            .where(CurationEvent.project_id == project.id, CurationEvent.kind == ActivityKind.BUG_SWEEP)
+            .order_by(CurationEvent.seq)
+        )
+    ).all()
+    dedup_events = [e for e in events if e.payload.get("stage") == "dedup"]
+    assert dedup_events and dedup_events[0].payload["dropped"] == ["Dup of existing"]
+
+
+async def test_dedup_skips_the_llm_call_when_there_are_no_live_open_cards(db_session, toy_repo_remote):
+    """A fresh project has nothing to compare against, so the dedup call must never
+    fire — only one response is scripted; if dedup fired anyway, ScriptedLLMClient
+    would raise on the unscripted second call."""
+    project, wt_path = await _make_project(db_session, toy_repo_remote, _n="26")
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_1",
+                        name="propose_tasks",
+                        arguments={"tasks": [{"title": "New idea", "severity": "high", "raw_request": "r"}]},
+                    )
+                ],
+                endpoint_used="fake::model",
+            )
+        ]
+    )
+
+    created = await run_curation_pass(
+        db_session,
+        project,
+        ActivityKind.BUG_SWEEP,
+        llm_client=llm,
+        dispatcher=_dispatcher(wt_path),
+        max_iterations=10,
+    )
+
+    assert [c.title for c in created] == ["New idea"]
+
+
+async def test_dedup_fails_open_on_llm_error_so_real_work_isnt_lost(db_session, toy_repo_remote):
+    """The dedup call's own failure (here: no second response scripted, so
+    ScriptedLLMClient raises) must not lose an otherwise-valid candidate — it's
+    logged as an ERROR event and the candidate still gets filed."""
+    project, wt_path = await _make_project(db_session, toy_repo_remote, _n="27")
+    await card_service.create_card(db_session, project.id, title="Some existing card", raw_request="r")
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_1",
+                        name="propose_tasks",
+                        arguments={"tasks": [{"title": "New idea", "severity": "high", "raw_request": "r"}]},
+                    )
+                ],
+                endpoint_used="fake::model",
+            )
+        ]
+    )
+
+    created = await run_curation_pass(
+        db_session,
+        project,
+        ActivityKind.BUG_SWEEP,
+        llm_client=llm,
+        dispatcher=_dispatcher(wt_path),
+        max_iterations=10,
+    )
+
+    assert [c.title for c in created] == ["New idea"]
+    events = (
+        await db_session.scalars(
+            select(CurationEvent)
+            .where(CurationEvent.project_id == project.id, CurationEvent.kind == ActivityKind.BUG_SWEEP)
+            .order_by(CurationEvent.seq)
+        )
+    ).all()
+    error_events = [e for e in events if e.type == EventType.ERROR and e.payload.get("stage") == "dedup"]
+    assert error_events
+
+
 # --- Orchestrator layer: cadence, pause-skipping, in-progress guard ----------------
 
 
@@ -327,10 +652,10 @@ async def test_needs_run_agents_md_gated_by_new_visit_outcomes(db_session, toy_r
     assert extra_context is not None and "c" in extra_context
 
 
-async def test_needs_run_explore_kinds_have_no_cooldown(db_session, toy_repo_remote):
-    """bug_sweep/opportunity_brainstorm/polish_review are always due — no flat
-    cadence gate, unlike agents_md. curator_poll_interval_seconds is the only
-    pacing, so the project keeps getting fed new proposals every scheduler wake."""
+async def test_needs_run_bug_sweep_respects_the_global_interval(db_session, toy_repo_remote):
+    """bug_sweep has no _CURATION_INTERVALS override (it equals the global default),
+    so it's gated by curator_poll_interval_seconds since its last run — not
+    immediately due again just because the scheduler woke up."""
     project, _ = await _make_project(db_session, toy_repo_remote, _n="9")
 
     should_run, _ = await curator._needs_run(db_session, project, ActivityKind.BUG_SWEEP)
@@ -338,9 +663,35 @@ async def test_needs_run_explore_kinds_have_no_cooldown(db_session, toy_repo_rem
 
     await project_service.record_activity_run(db_session, project.id, ActivityKind.BUG_SWEEP)
 
-    # Still due immediately after running — no cooldown.
+    # Not due again immediately — the interval hasn't elapsed.
     should_run, _ = await curator._needs_run(db_session, project, ActivityKind.BUG_SWEEP)
-    assert should_run is True
+    assert should_run is False
+
+    # Due again once the interval is (effectively) zero.
+    curator._CURATION_INTERVALS[ActivityKind.BUG_SWEEP] = 0
+    try:
+        should_run, _ = await curator._needs_run(db_session, project, ActivityKind.BUG_SWEEP)
+        assert should_run is True
+    finally:
+        curator._CURATION_INTERVALS[ActivityKind.BUG_SWEEP] = 1800
+
+
+async def test_needs_run_polish_review_uses_its_own_longer_interval(db_session, toy_repo_remote):
+    """polish_review (a file_best_only, backlog-grooming kind) is configured with a
+    longer interval than the global default — confirms _needs_run actually reads
+    the per-kind entry rather than falling back to curator_poll_interval_seconds."""
+    project, _ = await _make_project(db_session, toy_repo_remote, _n="9c")
+    await project_service.record_activity_run(db_session, project.id, ActivityKind.POLISH_REVIEW)
+
+    should_run, _ = await curator._needs_run(db_session, project, ActivityKind.POLISH_REVIEW)
+    assert should_run is False
+
+    curator._CURATION_INTERVALS[ActivityKind.POLISH_REVIEW] = 0
+    try:
+        should_run, _ = await curator._needs_run(db_session, project, ActivityKind.POLISH_REVIEW)
+        assert should_run is True
+    finally:
+        curator._CURATION_INTERVALS[ActivityKind.POLISH_REVIEW] = 21600
 
 
 async def test_needs_run_blocked_once_pm_backlog_hits_the_cap(db_session, toy_repo_remote, monkeypatch):
@@ -690,7 +1041,7 @@ async def test_curation_pass_logs_events_for_llm_responses_and_tool_calls(db_ses
                     ToolCallRequest(
                         id="call_2",
                         name="propose_tasks",
-                        arguments={"tasks": [{"title": "t", "raw_request": "r"}]},
+                        arguments={"tasks": [{"title": "t", "severity": "high", "raw_request": "r"}]},
                     )
                 ],
                 endpoint_used="fake::model",

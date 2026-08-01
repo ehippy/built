@@ -65,7 +65,10 @@ curl -s -X POST "$BUILT_URL/api/v1/projects" \
 ```
 
 Optional fields on create/update: `sandbox_image`, `test_command`, `max_revisions`,
-`max_deploy_attempts`, `max_iterations_per_run`, `max_tokens`.
+`max_deploy_attempts`, `max_iterations_per_run`, `max_tokens`, and per-role prompt guidance
+(`pm_guidance`, `developer_guidance`, `tester_guidance`, `reviewer_guidance`, `deployer_guidance`)
+— free text appended to that role's system prompt for this project only; `pm_guidance` also
+applies to curation passes and project chat.
 
 ```bash
 curl -s "$BUILT_URL/api/v1/projects" | jq                       # list (add ?include_archived=true)
@@ -142,6 +145,14 @@ Mutate a card:
 curl -s -X POST "$BUILT_URL/api/v1/cards/$CARD_ID/retry" \
   -H "X-API-Key: $BUILT_KEY" -H "Content-Type: application/json" \
   -d '{"note": "Try again, the flaky test was unrelated"}' | jq
+
+# Drop a note in for whichever agent is (or will next be) working this card — no
+# state restriction like retry has, and doesn't touch any safety-valve counter.
+# Reaches an actively-running visit within one iteration; otherwise it's picked
+# up at the start of the next one.
+curl -s -X POST "$BUILT_URL/api/v1/cards/$CARD_ID/nudge" \
+  -H "X-API-Key: $BUILT_KEY" -H "Content-Type: application/json" \
+  -d '{"note": "Skip the payments module, that one is handled elsewhere"}' | jq
 
 curl -s -X POST "$BUILT_URL/api/v1/cards/$CARD_ID/cancel"    -H "X-API-Key: $BUILT_KEY" | jq
 curl -s -X POST "$BUILT_URL/api/v1/cards/$CARD_ID/archive"   -H "X-API-Key: $BUILT_KEY" | jq

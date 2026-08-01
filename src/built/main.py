@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 # Imported for its side effect: registers all ORM models on Base.metadata before
@@ -105,6 +106,10 @@ def create_app() -> FastAPI:
     app = FastAPI(title="built", description="Agentic software factory", lifespan=lifespan)
 
     app.mount("/ui/static", StaticFiles(directory=str(STATIC_DIR)), name="ui-static")
+
+    @app.get("/")
+    async def root() -> RedirectResponse:
+        return RedirectResponse("/ui/projects", status_code=303)
 
     app.include_router(health.router)
     app.include_router(api_projects.router)

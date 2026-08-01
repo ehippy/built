@@ -1,4 +1,5 @@
 import asyncio
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -154,3 +155,55 @@ async def test_concurrency_cap_is_shared_across_endpointconfig_rows_with_the_sam
     )
 
     assert peak[0] == 1
+
+
+async def test_check_endpoint_health_ok(monkeypatch):
+    endpoint = _endpoint(base_url="https://healthy.invalid", model="m", max_concurrency=1)
+    fake_acompletion = _tracking_acompletion([0], [0], hold_seconds=0)
+    monkeypatch.setattr(llm_client_module.litellm, "acompletion", fake_acompletion)
+
+    result = await llm_client_module.check_endpoint_health(endpoint)
+
+    assert result["state"] == "ok"
+    assert result["error"] is None
+    assert isinstance(result["latency_ms"], int)
+
+
+async def test_check_endpoint_health_error(monkeypatch):
+    endpoint = _endpoint(base_url="https://down.invalid", model="m", max_concurrency=1)
+
+    async def _failing_acompletion(**kwargs):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(llm_client_module.litellm, "acompletion", _failing_acompletion)
+
+    result = await llm_client_module.check_endpoint_health(endpoint)
+
+    assert result == {"state": "error", "latency_ms": None, "error": "connection refused"}
+
+
+async def test_check_endpoint_health_reports_busy_without_waiting_on_real_work(monkeypatch):
+    """A max_concurrency=1 endpoint that's mid-flight on a real card shouldn't make
+    the health dot hang for however long that real work takes: "busy" is a distinct,
+    non-alarming state the probe reports quickly, not something it queues behind."""
+    endpoint = _endpoint(base_url="https://busy.invalid", model="m", max_concurrency=1)
+    release = asyncio.Event()
+
+    async def _slow_acompletion(**kwargs):
+        await release.wait()
+        return _fake_response()
+
+    monkeypatch.setattr(llm_client_module.litellm, "acompletion", _slow_acompletion)
+    client = FallbackLLMClient([endpoint])
+    occupying = asyncio.create_task(client.complete(messages=[], tools=[]))
+    await asyncio.sleep(0.05)  # let the occupying call acquire the semaphore first
+
+    start = time.monotonic()
+    result = await llm_client_module.check_endpoint_health(endpoint)
+    elapsed = time.monotonic() - start
+
+    assert result == {"state": "busy", "latency_ms": None, "error": None}
+    assert elapsed < 3.0  # bounded by the probe's own ~2s acquire timeout, not the slow call
+
+    release.set()
+    await occupying

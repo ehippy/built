@@ -4,8 +4,11 @@ else real, including the actual merge/push (auto_main) and push+PR (pr_to_operat
 import subprocess
 
 import httpx
+from sqlalchemy import select
 
+from built.agent import summarizer
 from built.agent.loop import run_deployer_visit
+from built.db.models import CardPostmortem
 from built.domain import transitions
 from built.domain.enums import Column, DeployKind, DeployMode, LifecycleState, VisitOutcome
 from built.llm.client import LLMResult, ToolCallRequest
@@ -17,6 +20,37 @@ from built.tools import git_tools
 from built.tools.base import ToolContext
 from built.tools.dispatcher import ToolDispatcher
 from tests.unit.fakes import FakeCommandExecutor, ScriptedLLMClient
+
+
+def _stub_postmortem_llm(monkeypatch, went_well: str = "n/a", struggles: str = "n/a") -> ScriptedLLMClient:
+    """agent/summarizer.py builds its own FallbackLLMClient internally when no
+    llm_client is injected (the production path from agent/loop.py and
+    orchestrator/ci_watcher.py never injects one) — patching the class it
+    constructs is the seam that lets these loop-level tests fake that call too,
+    without needing a real EndpointConfig row."""
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="pm_1",
+                        name="submit_postmortem",
+                        arguments={"went_well": went_well, "struggles": struggles},
+                    )
+                ],
+                endpoint_used="fake::model",
+            )
+        ]
+    )
+    monkeypatch.setattr(summarizer, "FallbackLLMClient", lambda chain: llm)
+    return llm
+
+
+async def _postmortems_for(db_session, card_id: str) -> list[CardPostmortem]:
+    return list(
+        (await db_session.scalars(select(CardPostmortem).where(CardPostmortem.card_id == card_id))).all()
+    )
 
 _RealAsyncClient = httpx.AsyncClient
 
@@ -173,10 +207,13 @@ async def test_deployer_loop_auto_main_happy_path_merges_and_deploys(db_session,
     assert card.deploying_commit_sha is None
 
 
-async def test_deployer_loop_auto_main_resolves_conflict_via_file_tools(db_session, toy_repo_remote):
-    """The actual point of this feature: run_deploy() hits a real merge conflict,
-    the agent uses write_file to fix it directly in the shared deployer worktree,
-    then calls run_deploy() again to complete the merge — no human involved."""
+async def test_deployer_loop_auto_main_conflict_bounces_card_back_to_developer(db_session, toy_repo_remote):
+    """The actual point of this feature: run_deploy() hitting a real merge conflict
+    is no longer something the Deployer agent resolves itself (it has no bash/test
+    tools to re-verify a fix). One run_deploy call is enough to end the visit —
+    the card goes straight back to Developer with feedback explaining why, and the
+    conflicted merge worktree is left clean, not sitting there waiting for a second
+    run_deploy call that will never come."""
     _allow_push_to_checked_out_branch(toy_repo_remote)
     project, card_b, wt_path = await _make_conflict_setup(db_session, toy_repo_remote)
     visit = await transitions.start_visit(db_session, card_b)
@@ -188,25 +225,6 @@ async def test_deployer_loop_auto_main_resolves_conflict_via_file_tools(db_sessi
                 tool_calls=[ToolCallRequest(id="call_1", name="run_deploy", arguments={})],
                 endpoint_used="fake::model",
             ),
-            LLMResult(
-                content=None,
-                tool_calls=[
-                    ToolCallRequest(
-                        id="call_2",
-                        name="write_file",
-                        arguments={
-                            "path": "app.py",
-                            "content": "def greet():\n    return 'hello from a and b'\n",
-                        },
-                    )
-                ],
-                endpoint_used="fake::model",
-            ),
-            LLMResult(
-                content=None,
-                tool_calls=[ToolCallRequest(id="call_3", name="run_deploy", arguments={})],
-                endpoint_used="fake::model",
-            ),
         ]
     )
 
@@ -216,46 +234,36 @@ async def test_deployer_loop_auto_main_resolves_conflict_via_file_tools(db_sessi
         card_b,
         visit,
         llm_client=llm,
-        dispatcher=_dispatcher(card_b.id, wt_path, auto_commit=False),
+        dispatcher=_dispatcher(card_b.id, wt_path),
         max_iterations=10,
         mode=DeployMode.AUTO_MAIN,
     )
 
+    assert result.column == Column.DEVELOPER
     assert result.lifecycle_state == LifecycleState.ACTIVE
-    assert result.deploying_commit_sha is not None
-    assert visit.outcome == VisitOutcome.DEPLOYED_PENDING_CI
-    assert "hello from a and b" in (toy_repo_remote / "app.py").read_text()
-    log = subprocess.run(
-        ["git", "log", "--oneline", "main"], cwd=toy_repo_remote, check=True, capture_output=True, text=True
-    ).stdout
-    assert "Merge" in log
-
-    counts = await run_ci_watcher_once()
-    assert counts["confirmed"] == 1
-    await db_session.refresh(card_b)
-    assert card_b.lifecycle_state == LifecycleState.DONE
-    assert card_b.deploying_commit_sha is None
+    assert result.revision_count == 1
+    assert result.deploy_attempt_count == 0
+    assert visit.outcome == VisitOutcome.DEPLOY_CONFLICT
+    assert result.latest_feedback is not None
+    assert "app.py" in result.latest_feedback
+    assert not await git_tools.merge_in_progress(wt_path)
+    assert await git_tools.status(wt_path) == ""
 
 
-async def test_deployer_loop_auto_main_abandon_deploy_on_unresolvable_conflict(db_session, toy_repo_remote):
+async def test_deployer_loop_auto_main_abandon_deploy(db_session, toy_repo_remote):
     _allow_push_to_checked_out_branch(toy_repo_remote)
-    project, card_b, wt_path = await _make_conflict_setup(db_session, toy_repo_remote)
-    visit = await transitions.start_visit(db_session, card_b)
+    project, card, wt_path = await _make_deployer_card(db_session, toy_repo_remote, mode=DeployMode.AUTO_MAIN)
+    visit = await transitions.start_visit(db_session, card)
 
     llm = ScriptedLLMClient(
         [
             LLMResult(
                 content=None,
-                tool_calls=[ToolCallRequest(id="call_1", name="run_deploy", arguments={})],
-                endpoint_used="fake::model",
-            ),
-            LLMResult(
-                content=None,
                 tool_calls=[
                     ToolCallRequest(
-                        id="call_2",
+                        id="call_1",
                         name="abandon_deploy",
-                        arguments={"reason": "conflicting product intent, needs a human"},
+                        arguments={"reason": "deploy config looks wrong, needs a human"},
                     )
                 ],
                 endpoint_used="fake::model",
@@ -266,10 +274,10 @@ async def test_deployer_loop_auto_main_abandon_deploy_on_unresolvable_conflict(d
     result = await run_deployer_visit(
         db_session,
         project,
-        card_b,
+        card,
         visit,
         llm_client=llm,
-        dispatcher=_dispatcher(card_b.id, wt_path, auto_commit=False),
+        dispatcher=_dispatcher(card.id, wt_path),
         max_iterations=10,
         mode=DeployMode.AUTO_MAIN,
     )
@@ -280,7 +288,7 @@ async def test_deployer_loop_auto_main_abandon_deploy_on_unresolvable_conflict(d
     assert result.lifecycle_state == LifecycleState.ACTIVE
     assert result.deploy_attempt_count == 1
     assert visit.outcome == VisitOutcome.FAILED
-    assert "abandoned: conflicting product intent" in visit.summary
+    assert "abandoned: deploy config looks wrong" in visit.summary
 
 
 async def test_deployer_loop_pr_to_operator_happy_path_opens_pr(db_session, toy_repo_remote, monkeypatch):
@@ -362,3 +370,155 @@ async def test_deployer_loop_auto_main_deploy_failure_stays_active_under_cap(db_
     assert result.lifecycle_state == LifecycleState.ACTIVE
     assert result.deploy_attempt_count == 1
     assert visit.outcome == VisitOutcome.FAILED
+
+
+# --- Postmortem hook (agent/summarizer.py) -----------------------------------------
+
+
+async def test_deployer_pr_to_operator_done_writes_a_postmortem(db_session, toy_repo_remote, monkeypatch):
+    """pr_to_operator's success path reaches DONE synchronously inside
+    run_deployer_visit (no CI to wait on) — the postmortem must land in the same
+    visit, before the terminal handler returns."""
+    _allow_push_to_checked_out_branch(toy_repo_remote)
+    project, card, wt_path = await _make_deployer_card(
+        db_session, toy_repo_remote, mode=DeployMode.PR_TO_OPERATOR
+    )
+    project.repo_remote_url = "https://github.com/owner/repo.git"
+    visit = await transitions.start_visit(db_session, card)
+    monkeypatch.setenv("TEST_GH_TOKEN", "fake-token")
+    _stub_postmortem_llm(monkeypatch, went_well="clean PR", struggles="none")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(201, json={"html_url": "https://github.com/owner/repo/pull/7"})
+
+    _mock_github(monkeypatch, handler)
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_1", name="open_pull_request", arguments={"summary": "adds farewell()"}
+                    )
+                ],
+                endpoint_used="fake::model",
+            )
+        ]
+    )
+
+    result = await run_deployer_visit(
+        db_session,
+        project,
+        card,
+        visit,
+        llm_client=llm,
+        dispatcher=_dispatcher(card.id, wt_path),
+        max_iterations=5,
+        mode=DeployMode.PR_TO_OPERATOR,
+    )
+
+    assert result.lifecycle_state == LifecycleState.DONE
+    postmortems = await _postmortems_for(db_session, card.id)
+    assert len(postmortems) == 1
+    assert postmortems[0].outcome == LifecycleState.DONE
+    assert postmortems[0].went_well == "clean PR"
+
+
+async def test_deployer_auto_main_pending_ci_defers_postmortem_until_confirmed(
+    db_session, toy_repo_remote, monkeypatch
+):
+    """auto_main's success path lands in DEPLOYED_PENDING_CI, not DONE — the
+    postmortem must not fire yet; it only fires once orchestrator/ci_watcher.py
+    actually confirms the card, matching where DONE itself happens."""
+    _allow_push_to_checked_out_branch(toy_repo_remote)
+    project, card, wt_path = await _make_deployer_card(db_session, toy_repo_remote, mode=DeployMode.AUTO_MAIN)
+    visit = await transitions.start_visit(db_session, card)
+    _stub_postmortem_llm(monkeypatch, went_well="merged cleanly", struggles="none")
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[ToolCallRequest(id="call_1", name="run_deploy", arguments={})],
+                endpoint_used="fake::model",
+            )
+        ]
+    )
+
+    result = await run_deployer_visit(
+        db_session,
+        project,
+        card,
+        visit,
+        llm_client=llm,
+        dispatcher=_dispatcher(card.id, wt_path),
+        max_iterations=5,
+        mode=DeployMode.AUTO_MAIN,
+    )
+
+    assert result.lifecycle_state == LifecycleState.ACTIVE
+    assert await _postmortems_for(db_session, card.id) == []
+
+    await run_ci_watcher_once()
+    await db_session.refresh(card)
+
+    assert card.lifecycle_state == LifecycleState.DONE
+    postmortems = await _postmortems_for(db_session, card.id)
+    assert len(postmortems) == 1
+    assert postmortems[0].went_well == "merged cleanly"
+
+
+async def test_deployer_failed_over_cap_writes_a_postmortem(db_session, toy_repo_remote, monkeypatch):
+    """Under the cap (first abandon), no postmortem yet — the card can still
+    retry. Only once deploy_attempt_count reaches max_deploy_attempts and
+    lifecycle_state actually flips to FAILED does one get written."""
+    _allow_push_to_checked_out_branch(toy_repo_remote)
+    project, card, wt_path = await _make_deployer_card(db_session, toy_repo_remote, mode=DeployMode.AUTO_MAIN)
+    _stub_postmortem_llm(monkeypatch, went_well="n/a", struggles="deploy config was never fixed")
+
+    def _abandon_llm() -> ScriptedLLMClient:
+        return ScriptedLLMClient(
+            [
+                LLMResult(
+                    content=None,
+                    tool_calls=[
+                        ToolCallRequest(id="call_1", name="abandon_deploy", arguments={"reason": "broken"})
+                    ],
+                    endpoint_used="fake::model",
+                )
+            ]
+        )
+
+    visit_1 = await transitions.start_visit(db_session, card)
+    result = await run_deployer_visit(
+        db_session,
+        project,
+        card,
+        visit_1,
+        llm_client=_abandon_llm(),
+        dispatcher=_dispatcher(card.id, wt_path),
+        max_iterations=5,
+        mode=DeployMode.AUTO_MAIN,
+    )
+    assert result.lifecycle_state == LifecycleState.ACTIVE
+    assert result.deploy_attempt_count == 1
+    assert await _postmortems_for(db_session, card.id) == []
+
+    visit_2 = await transitions.start_visit(db_session, card)
+    result = await run_deployer_visit(
+        db_session,
+        project,
+        card,
+        visit_2,
+        llm_client=_abandon_llm(),
+        dispatcher=_dispatcher(card.id, wt_path),
+        max_iterations=5,
+        mode=DeployMode.AUTO_MAIN,
+    )
+
+    assert result.lifecycle_state == LifecycleState.FAILED
+    assert result.deploy_attempt_count == 2
+    postmortems = await _postmortems_for(db_session, card.id)
+    assert len(postmortems) == 1
+    assert postmortems[0].outcome == LifecycleState.FAILED

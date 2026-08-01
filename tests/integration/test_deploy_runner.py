@@ -193,18 +193,20 @@ async def test_run_auto_main_deploy_merge_conflict_reports_conflicted_paths(
 
     assert second.success is False
     assert second.conflict is True
+    assert second.conflicted_paths == ["app.py"]
     assert "app.py" in second.message
     assert "Merge conflict in" in second.message
 
 
-async def test_run_auto_main_deploy_completes_after_conflict_is_resolved_in_place(
+async def test_run_auto_main_deploy_aborts_conflict_and_leaves_worktree_clean(
     db_session, deployable_repo_remote
 ):
-    """The exact flow the Deployer agent now drives: run_deploy() hits a conflict,
-    the caller fixes the file directly in the same worktree (standing in for the
-    agent's write_file/edit_file calls), then run_deploy() is called again with the
-    same wt_path and completes the merge — proving conflict state survives across
-    calls instead of being reset away."""
+    """Unlike the old behavior, a conflict is no longer left for the Deployer agent
+    to resolve in place (it has no bash/test tools to re-verify a fix, and doing so
+    here would ship straight to production with no further Tester/Reviewer pass —
+    see domain/transitions.complete_deployer_visit_conflict, which bounces the card
+    back to Developer instead). The merge is aborted immediately, so the worktree
+    is left exactly as clean as if run_deploy had never been attempted."""
     project = await _make_project(db_session, deployable_repo_remote)
     card_a = await _make_card_with_change(
         db_session, project, "change a", content="def greet():\n    return 'hello from a'\n"
@@ -214,44 +216,13 @@ async def test_run_auto_main_deploy_completes_after_conflict_is_resolved_in_plac
     )
     wt_path = await ensure_tool_worktree(project, tool="deployer")
     await deploy_runner.run_auto_main_deploy(project, card_a, wt_path)
-    conflicted = await deploy_runner.run_auto_main_deploy(project, card_b, wt_path)
-    assert conflicted.conflict is True
 
-    (wt_path / "app.py").write_text("def greet():\n    return 'hello from a and b'\n")
+    result = await deploy_runner.run_auto_main_deploy(project, card_b, wt_path)
 
-    resolved = await deploy_runner.run_auto_main_deploy(project, card_b, wt_path)
-
-    assert resolved.success is True
-    assert "deploy command succeeded" in resolved.message
-    log = subprocess.run(
-        ["git", "log", "--oneline", "main"],
-        cwd=deployable_repo_remote,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    assert "Merge" in log
-    assert "hello from a and b" in (deployable_repo_remote / "app.py").read_text()
-
-
-async def test_run_auto_main_deploy_reports_paths_still_conflicted(db_session, deployable_repo_remote):
-    """Calling run_deploy() again without actually fixing anything reports the same
-    conflict rather than silently completing a broken merge."""
-    project = await _make_project(db_session, deployable_repo_remote)
-    card_a = await _make_card_with_change(
-        db_session, project, "change a", content="def greet():\n    return 'hello from a'\n"
-    )
-    card_b = await _make_card_with_change(
-        db_session, project, "change b", content="def greet():\n    return 'hello from b'\n"
-    )
-    wt_path = await ensure_tool_worktree(project, tool="deployer")
-    await deploy_runner.run_auto_main_deploy(project, card_a, wt_path)
-    await deploy_runner.run_auto_main_deploy(project, card_b, wt_path)
-
-    still_conflicted = await deploy_runner.run_auto_main_deploy(project, card_b, wt_path)
-
-    assert still_conflicted.conflict is True
-    assert "Still conflicted" in still_conflicted.message
+    assert result.conflict is True
+    assert not await git_tools.merge_in_progress(wt_path)
+    assert await git_tools.status(wt_path) == ""
+    assert "hello from a" in (wt_path / "app.py").read_text()
 
 
 async def test_open_pull_request_success(db_session, deployable_repo_remote, monkeypatch):

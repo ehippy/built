@@ -1,4 +1,13 @@
 {% import "macros.html.j2" as m %}
+{% if is_polling_fragment %}
+<span id="curation-button-spinner" hx-swap-oob="true">
+  {% if curation_running %}
+  <span class="spinner-border spinner-border-sm" role="status">
+    <span class="visually-hidden">Running…</span>
+  </span>
+  {% endif %}
+</span>
+{% endif %}
 <div id="board-wrap" hx-get="/ui/projects/{{ project.id }}/board/fragment?show_archived={{ 'true' if show_archived else 'false' }}" hx-trigger="every 3s" hx-swap="outerHTML">
   <p class="mb-3">
     {% if show_archived %}

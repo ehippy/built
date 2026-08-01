@@ -4,6 +4,7 @@ from fastapi.responses import RedirectResponse
 from built.api.deps import SessionDep
 from built.config import settings
 from built.domain.enums import Column
+from built.llm.client import check_endpoint_health
 from built.services import endpoint_service
 from built.ui.templates import templates
 
@@ -30,6 +31,7 @@ async def create_global_endpoint_config(
     api_key_ref: str = Form(""),
     max_concurrency: int = Form(1),
     context_window: str = Form(""),
+    supports_tool_calling: bool = Form(True),
 ) -> RedirectResponse:
     await endpoint_service.create_endpoint_config(
         session,
@@ -41,8 +43,55 @@ async def create_global_endpoint_config(
         api_key_ref=api_key_ref or None,
         max_concurrency=max_concurrency,
         context_window=int(context_window) if context_window.strip() else None,
+        supports_tool_calling=supports_tool_calling,
     )
     return RedirectResponse("/ui/endpoint-configs", status_code=303)
+
+
+@router.post("/endpoint-configs/{endpoint_id}/edit")
+async def edit_endpoint_config(
+    endpoint_id: str,
+    session: SessionDep,
+    base_url: str = Form(...),
+    model: str = Form(...),
+    role: str = Form(""),
+    priority: int = Form(0),
+    api_key_ref: str = Form(""),
+    max_concurrency: int = Form(1),
+    context_window: str = Form(""),
+    supports_tool_calling: bool = Form(False),
+    next: str = "/ui/endpoint-configs",
+) -> RedirectResponse:
+    await endpoint_service.edit_endpoint_config(
+        session,
+        endpoint_id,
+        base_url=base_url,
+        model=model,
+        role=Column(role) if role else None,
+        priority=priority,
+        api_key_ref=api_key_ref or None,
+        max_concurrency=max_concurrency,
+        context_window=int(context_window) if context_window.strip() else None,
+        supports_tool_calling=supports_tool_calling,
+    )
+    return RedirectResponse(next, status_code=303)
+
+
+@router.get("/endpoint-configs/{endpoint_id}/health")
+async def endpoint_config_health(endpoint_id: str, request: Request, session: SessionDep):
+    """Backs the health dot's htmx fragment. Fired on row load and on manual
+    re-check click only — deliberately no auto-poll interval, since a real
+    completion call competes for the same scarce max_concurrency slot as actual
+    card work; see check_endpoint_health's own "busy" short-circuit for the other
+    half of that guard."""
+    endpoint = await endpoint_service.get_endpoint_config(session, endpoint_id)
+    if not endpoint.enabled:
+        health = {"state": "disabled", "latency_ms": None, "error": None}
+    else:
+        health = await check_endpoint_health(endpoint)
+    return templates.TemplateResponse(
+        request, "_endpoint_health_fragment.html.j2", {"endpoint": endpoint, "health": health}
+    )
 
 
 @router.post("/endpoint-configs/{endpoint_id}/context-window")

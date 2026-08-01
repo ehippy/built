@@ -1,6 +1,6 @@
 """OpenAI-compatible function-calling tool schemas, one list per column role."""
 
-from built.domain.enums import DeployMode
+from built.domain.enums import Column, DeployMode, Severity
 
 READ_FILE = {
     "type": "function",
@@ -327,7 +327,12 @@ SUBMIT_FOR_TEST = {
             "properties": {
                 "summary": {
                     "type": "string",
-                    "description": "A short summary of what changed and why, for the Tester and the audit.",
+                    "description": (
+                        "A short summary of what changed and why, for the Tester and the audit. Also "
+                        "note how it went if it's worth knowing — dead ends, backtracking, anything "
+                        "that made this harder or easier than a normal card — not just the final "
+                        "result; a later pass mines these summaries for recurring friction."
+                    ),
                 }
             },
             "required": ["summary"],
@@ -535,6 +540,19 @@ PROPOSE_TASKS = {
                         "type": "object",
                         "properties": {
                             "title": {"type": "string", "description": "A short title for the card."},
+                            "severity": {
+                                "type": "string",
+                                "enum": [s.value for s in Severity],
+                                "description": (
+                                    "How much this matters if left unaddressed — rate honestly, not "
+                                    "inflated. critical: actively broken/exploitable/data-loss risk. "
+                                    "high: clearly worth doing soon. medium: real but not urgent. "
+                                    "low: minor/cosmetic. A server-side policy uses this to decide "
+                                    "which candidates actually become cards, so an inflated rating "
+                                    "doesn't help this one get filed and just makes future ratings "
+                                    "less trustworthy."
+                                ),
+                            },
                             "raw_request": {
                                 "type": "string",
                                 "description": (
@@ -545,7 +563,7 @@ PROPOSE_TASKS = {
                                 ),
                             },
                         },
-                        "required": ["title", "raw_request"],
+                        "required": ["title", "severity", "raw_request"],
                     },
                 }
             },
@@ -555,11 +573,122 @@ PROPOSE_TASKS = {
 }
 
 # Shared by every curation kind (agent/curation.py) — bug_sweep, opportunity_brainstorm,
-# polish_review, and agents_md all explore read-only and end with propose_tasks. None
-# of them can write to the repo; the only thing any curation pass can do is create
-# new cards, exactly like a human PM filing a ticket.
+# polish_review, stay_dry, security_sweep, coverage_sweep, refactor_sweep, and agents_md
+# all explore read-only and end with propose_tasks. None of them can write to the repo;
+# the only thing any curation pass can do is create new cards, exactly like a human PM
+# filing a ticket.
 CURATION_TOOLS = [READ_FILE, LIST_FILES, GLOB_FILES, GREP_FILES, PROPOSE_TASKS]
 CURATION_TERMINAL_TOOL = "propose_tasks"
+
+# A separate, narrow tool for agent/curation.py's live-DB duplicate check — deliberately
+# not part of CURATION_TOOLS/the explore-then-propose loop above: this is a single
+# judgment call made server-side, after propose_tasks has already returned, comparing
+# severity-surviving candidates against the project's live open cards.
+REPORT_DUPLICATE_CANDIDATES = {
+    "type": "function",
+    "function": {
+        "name": "report_duplicate_candidates",
+        "description": (
+            "Report which numbered candidates duplicate an already-open card on the board — the "
+            "same underlying request, not just a similar topic. Call this exactly once; omit a "
+            "candidate entirely if it's genuinely new."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "duplicates": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "candidate_index": {
+                                "type": "integer",
+                                "description": "0-based index of the duplicate candidate, as numbered above.",
+                            },
+                            "duplicate_of_card_id": {
+                                "type": "string",
+                                "description": "id of the existing open card it duplicates.",
+                            },
+                        },
+                        "required": ["candidate_index", "duplicate_of_card_id"],
+                    },
+                }
+            },
+            "required": ["duplicates"],
+        },
+    },
+}
+CURATION_DEDUP_TOOLS = [REPORT_DUPLICATE_CANDIDATES]
+CURATION_DEDUP_TERMINAL_TOOL = "report_duplicate_candidates"
+
+# agent/summarizer.py's postmortem call: the card's column-visit map is handed in
+# directly, and get_visit_detail is the one narrow "explore" tool available — no
+# read/grep/bash, since there's nothing in the repo itself to look at here, just
+# more detail on a visit the map already summarized.
+GET_VISIT_DETAIL = {
+    "type": "function",
+    "function": {
+        "name": "get_visit_detail",
+        "description": (
+            "Look up the full detail behind one line of the column-visit map above — the complete "
+            "feedback text (if this visit was a rejection) and what tools were actually called during "
+            "it. Use this when a visit's one-line summary hints at real trouble and the specifics "
+            "matter for an honest postmortem; skip it for visits that were routine — most are. You "
+            "can call this more than once, then call submit_postmortem when you're done."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "column": {
+                    "type": "string",
+                    "enum": [c.value for c in Column],
+                    "description": "The column, exactly as labeled in the map above (e.g. 'developer').",
+                },
+                "attempt_number": {
+                    "type": "integer",
+                    "description": "The attempt number, exactly as labeled in the map above.",
+                },
+            },
+            "required": ["column", "attempt_number"],
+        },
+    },
+}
+
+SUBMIT_POSTMORTEM = {
+    "type": "function",
+    "function": {
+        "name": "submit_postmortem",
+        "description": (
+            "Submit your postmortem for this now-closed card. Ends your turn — call this exactly "
+            "once."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "went_well": {
+                    "type": "string",
+                    "description": (
+                        "What worked smoothly, if anything specific stands out — a few sentences. "
+                        "'Nothing notable' is a completely fine answer; don't invent texture that "
+                        "wasn't there."
+                    ),
+                },
+                "struggles": {
+                    "type": "string",
+                    "description": (
+                        "What was a genuine struggle — retries, back-and-forth between columns, dead "
+                        "ends, confusing feedback loops — a few sentences. 'Nothing notable' is a "
+                        "completely fine answer."
+                    ),
+                },
+            },
+            "required": ["went_well", "struggles"],
+        },
+    },
+}
+SUMMARIZER_TOOLS = [SUBMIT_POSTMORTEM, GET_VISIT_DETAIL]
+SUMMARIZER_TERMINAL_TOOL = "submit_postmortem"
+SUMMARIZER_DETAIL_TOOL = "get_visit_detail"
 
 MAX_TICKETS_PER_CHAT_TURN = 5
 
@@ -689,7 +818,16 @@ APPROVE = {
         ),
         "parameters": {
             "type": "object",
-            "properties": {"notes": {"type": "string", "description": "Brief notes for the audit log."}},
+            "properties": {
+                "notes": {
+                    "type": "string",
+                    "description": (
+                        "Brief notes for the audit log — not just that it passed, but how it went: "
+                        "clean, or did something about this card make it slower or trickier to verify "
+                        "than usual? A later pass mines these for recurring friction."
+                    ),
+                }
+            },
             "required": ["notes"],
         },
     },
@@ -753,7 +891,16 @@ REVIEWER_APPROVE = {
         ),
         "parameters": {
             "type": "object",
-            "properties": {"notes": {"type": "string", "description": "Brief notes for the audit log."}},
+            "properties": {
+                "notes": {
+                    "type": "string",
+                    "description": (
+                        "Brief notes for the audit log — not just that it passed, but how it went: "
+                        "clean, or did something about this card make it slower or trickier to verify "
+                        "than usual? A later pass mines these for recurring friction."
+                    ),
+                }
+            },
             "required": ["notes"],
         },
     },
@@ -807,11 +954,10 @@ RUN_DEPLOY = {
         "description": (
             "Merge this card's branch into the default branch, push it, and run the project's "
             "configured deploy command. Takes no arguments — the merge, push, and deploy command are "
-            "fixed by project configuration, not by you. If it reports a merge conflict, this does "
-            "NOT end your turn: resolve the listed files with read_file/write_file/edit_file, then "
-            "call run_deploy() again to pick up where it left off and complete the merge. Only ends "
-            "your turn on an actual outcome — success, a non-conflict failure, or you completing the "
-            "merge — there is no confirmation step after a real completion."
+            "fixed by project configuration, not by you. This always ends your turn: on success, on "
+            "an ordinary failure (push rejected, deploy command failed), and on a merge conflict too "
+            "— a conflict is not yours to resolve, the card is automatically sent back to Developer "
+            "to reconcile against the current default branch."
         ),
         "parameters": {"type": "object", "properties": {}},
     },
@@ -823,10 +969,10 @@ ABANDON_DEPLOY = {
     "function": {
         "name": "abandon_deploy",
         "description": (
-            "Give up on this deploy attempt and leave it for a human, instead of guessing. Use this "
-            "for a merge conflict you can't reasonably resolve yourself — e.g. the two sides make "
-            "genuinely conflicting product decisions about the same content, not just an overlapping "
-            "file — or any other situation your tools can't fix. This ends your turn."
+            "Give up on this deploy attempt and leave it for a human, instead of guessing — e.g. the "
+            "project's deploy configuration itself looks wrong, or something about this specific "
+            "deploy genuinely shouldn't be attempted unsupervised. (A merge conflict is handled for "
+            "you automatically — you don't need this tool for that.) This ends your turn."
         ),
         "parameters": {
             "type": "object",
@@ -866,19 +1012,16 @@ OPEN_PULL_REQUEST = {
 DEPLOYER_PR_TERMINAL_TOOL = "open_pull_request"
 
 _DEPLOYER_READ_TOOLS = [READ_FILE, LIST_FILES, GLOB_FILES, GREP_FILES]
-# auto_main only: real editing tools, scoped by the caller to the Deployer's merge
-# worktree (not the card's own worktree) — this is what actually lets the agent fix
-# a merge conflict instead of just detecting and reporting one.
-_DEPLOYER_CONFLICT_TOOLS = [WRITE_FILE, EDIT_FILE, GIT_STATUS, GIT_DIFF]
 
 
 def deployer_tools(mode: DeployMode) -> list[dict]:
-    """auto_main gets read tools, conflict-resolution editing tools, and both
-    terminal tools (run_deploy, abandon_deploy). pr_to_operator never merges, so it
-    only needs read tools plus its own single terminal tool — the model never sees a
-    tool it can't use."""
+    """auto_main gets read tools and both terminal tools (run_deploy, abandon_deploy)
+    — no editing tools, since a merge conflict is no longer resolved in-place here
+    (see sandbox/deploy_runner.py). pr_to_operator never merges, so it only needs
+    read tools plus its own single terminal tool — the model never sees a tool it
+    can't use."""
     if mode == DeployMode.AUTO_MAIN:
-        return [*_DEPLOYER_READ_TOOLS, *_DEPLOYER_CONFLICT_TOOLS, RUN_DEPLOY, ABANDON_DEPLOY]
+        return [*_DEPLOYER_READ_TOOLS, RUN_DEPLOY, ABANDON_DEPLOY]
     return [*_DEPLOYER_READ_TOOLS, OPEN_PULL_REQUEST]
 
 

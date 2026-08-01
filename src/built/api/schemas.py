@@ -24,6 +24,11 @@ class ProjectCreate(BaseModel):
     max_deploy_attempts: int | None = None
     max_iterations_per_run: int | None = None
     max_tokens: int | None = None
+    pm_guidance: str | None = None
+    developer_guidance: str | None = None
+    tester_guidance: str | None = None
+    reviewer_guidance: str | None = None
+    deployer_guidance: str | None = None
 
 
 class ProjectUpdate(BaseModel):
@@ -36,6 +41,11 @@ class ProjectUpdate(BaseModel):
     max_deploy_attempts: int | None = None
     max_iterations_per_run: int | None = None
     max_tokens: int | None = None
+    pm_guidance: str | None = None
+    developer_guidance: str | None = None
+    tester_guidance: str | None = None
+    reviewer_guidance: str | None = None
+    deployer_guidance: str | None = None
 
 
 class DeployConfigIn(BaseModel):
@@ -70,6 +80,11 @@ class ProjectOut(BaseModel):
     max_deploy_attempts: int
     max_iterations_per_run: int
     max_tokens: int | None
+    pm_guidance: str | None
+    developer_guidance: str | None
+    tester_guidance: str | None
+    reviewer_guidance: str | None
+    deployer_guidance: str | None
     created_at: datetime
     updated_at: datetime
     archived_at: datetime | None
@@ -141,6 +156,10 @@ class CardPriorityIn(BaseModel):
     priority: Priority
 
 
+class CardNudgeIn(BaseModel):
+    note: str
+
+
 class CardOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -157,6 +176,7 @@ class CardOut(BaseModel):
     acceptance_criteria: list[str]
     revision_count: int
     retry_note: str | None
+    pending_nudge: str | None
     latest_feedback: str | None
     deploy_attempt_count: int
     deploy_url: str | None

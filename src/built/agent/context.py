@@ -16,6 +16,17 @@ def _with_agents_doc(system: str, agents_doc: str | None) -> str:
     return f"{system}\n\nProject practices (from this repo's AGENTS.md):\n{agents_doc}"
 
 
+def _with_role_guidance(system: str, guidance: str | None) -> str:
+    """Appends this role's custom instructions (Project.pm_guidance/developer_guidance/
+    etc, set via project settings — services/project_service.py). Distinct from
+    _with_agents_doc: AGENTS.md is a convention the repo itself documents and every
+    role reads identically; this is a human's direct instruction targeted at one
+    specific role, entered in settings rather than committed to the repo."""
+    if not guidance:
+        return system
+    return f"{system}\n\nAdditional project-specific instructions for this role:\n{guidance}"
+
+
 def _with_current_epic(system: str, current_epic: Card | None) -> str:
     """A hint alongside Project.overarching_goal, never a replacement for it — and
     never consulted by orchestrator/worker.py's claim_next_card, which decides what
@@ -64,8 +75,34 @@ _CURATION_FOCUS: dict[ActivityKind, str] = {
         "copy-pasted blocks, parallel implementations of the same idea living in different files or "
         "functions. Name the specific files/functions involved and propose a concrete refactor that "
         "extracts or consolidates the shared code. Skip incidental similarity that isn't actually the "
-        "same concept, and skip pure style inconsistency (that's polish-review's job) — this is about "
-        "logic that's actually repeated."
+        "same concept; skip pure style inconsistency (polish-review's job) and skip structural/boundary "
+        "problems that aren't about repeated logic (refactor-sweep's job) — this is about logic that's "
+        "actually repeated."
+    ),
+    ActivityKind.SECURITY_SWEEP: (
+        "working in security-sweep mode: hunt for authorization gaps (a route or tool that skips a "
+        "check an equivalent one performs), injection risk (unsanitized input reaching a shell/SQL/"
+        "template sink), secrets or credentials leaking into code, logs, or config, and known-"
+        "vulnerable dependencies. Each finding needs the exact file and the exploitable condition, not "
+        "a generic 'could be more secure.' Leave general correctness bugs that carry no security "
+        "implication to bug-sweep."
+    ),
+    ActivityKind.COVERAGE_SWEEP: (
+        "working in coverage-sweep mode: find a code path, branch, or documented behavior with no test "
+        "that would catch it breaking — an error path never exercised, a public function with zero "
+        "tests, a documented edge case nothing asserts. Name the specific file/function and what a test "
+        "should verify. This is about missing verification, not missing correctness — if you notice an "
+        "actual bug while exploring, leave filing it to bug-sweep; propose a test-coverage card, not a "
+        "fix."
+    ),
+    ActivityKind.REFACTOR_SWEEP: (
+        "working in refactor-sweep mode: find structural decay — an overgrown function or module that "
+        "should split, a layering or boundary violation (e.g. a router doing DB queries directly, "
+        "logic that should live in services/ living elsewhere), dead code, or a convention that's "
+        "drifted (an enum or pattern applied at one call site but not its counterpart). Name the "
+        "specific files and the concrete restructuring, not a vague 'this could be cleaner.' Leave "
+        "textual/logic duplication to stay-DRY and purely cosmetic naming/formatting to polish-review "
+        "— this is about shape and boundaries, not what's repeated or how it reads."
     ),
 }
 
@@ -82,9 +119,10 @@ def build_curation_prompt(
     """Returns (system_prompt, initial_user_message) for one curation pass. Never
     tied to any card, and never able to edit the repo — the only thing any kind can
     do is call propose_tasks, exactly like a human PM filing a ticket (see
-    agent/curation.py, orchestrator/curator.py). agents_md is shaped differently
-    from the other three: its context is a summary of recently closed work
-    (extra_context), not a live repo browse, and it proposes at most one card."""
+    agent/curation.py, orchestrator/curator.py). agents_md and retro are each
+    shaped differently from the rest: their context is pre-digested material
+    (extra_context) rather than a live repo browse, and each proposes at most one
+    card."""
     if kind == ActivityKind.AGENTS_MD:
         system = (
             "You are the agent that keeps this project's AGENTS.md up to date. Below is a summary of "
@@ -96,12 +134,39 @@ def build_curation_prompt(
             "valuable one rather than folding them all into one sprawling update — the rest can "
             "surface on a future pass. propose_tasks requires at least one task, so if nothing feels "
             "truly worth flagging, propose the single most real (if marginal) observation rather than "
-            "forcing something contrived.\n\n"
+            "forcing something contrived. The propose_tasks schema requires a severity rating; use "
+            "\"medium\" — it isn't used for this kind.\n\n"
             f"Project goal: {project.overarching_goal}"
         )
         user = f"Recently closed work since the last pass:\n{extra_context or '(nothing new)'}"
         system = _with_current_epic(system, current_epic)
-        return _with_agents_doc(system, agents_doc), user
+        system = _with_agents_doc(system, agents_doc)
+        return _with_role_guidance(system, project.pm_guidance), user
+
+    if kind == ActivityKind.RETRO:
+        system = (
+            "You are the agent that looks for recurring friction in how this project's own pipeline "
+            "works. Below are recent postmortems — short retrospectives the Summarizer agent writes "
+            "for every card the moment it closes, each noting what went well and what was a genuine "
+            "struggle. Individually, most of them are unremarkable. Your job is to spot the same "
+            "struggle showing up across multiple different cards — a flaky test, a confusing tool, a "
+            "missing convention, a repeated dead end — not a one-off. A single postmortem mentioning "
+            "something, however dramatic, is not a pattern.\n\n"
+            "If you find a real recurring pattern, use the read-only tools to confirm it's still true "
+            "of the repo today (a struggle from weeks ago may already be fixed), then call "
+            "propose_tasks with exactly one card describing the specific, concrete fix — a tooling "
+            "gap, a missing test, a config problem, even a prompt/instruction file in this repo, "
+            "whatever the recurring struggle actually points at. If nothing recurs, or you can't "
+            "confirm it's still real, propose_tasks still requires at least one task — file the single "
+            "most real (if marginal) observation rather than forcing something contrived. The "
+            "propose_tasks schema requires a severity rating; use \"medium\" — it isn't used for this "
+            "kind.\n\n"
+            f"Project goal: {project.overarching_goal}"
+        )
+        user = f"Recent card postmortems since the last pass:\n{extra_context or '(nothing new)'}"
+        system = _with_current_epic(system, current_epic)
+        system = _with_agents_doc(system, agents_doc)
+        return _with_role_guidance(system, project.pm_guidance), user
 
     focus = _CURATION_FOCUS[kind]
     system = (
@@ -113,16 +178,20 @@ def build_curation_prompt(
         "issues, that's several tasks, not one task whose raw_request lists them all; never bundle "
         "unrelated findings together just to stay under the task limit below.\n\n"
         f"Project goal: {project.overarching_goal}\n\n"
-        f"When ready, call propose_tasks with 1 to {MAX_PROPOSED_TASKS} concrete, well-scoped tasks. "
-        "Each becomes a new card that flows through the same PM -> Developer -> Tester -> Deployer "
-        "pipeline as a human-submitted request. If you don't find anything worth proposing, call "
-        "propose_tasks with your single best idea rather than nothing — nobody is watching this run "
-        "interactively, so do not stop to ask a question."
+        f"When ready, call propose_tasks with 1 to {MAX_PROPOSED_TASKS} concrete, well-scoped tasks, "
+        "each rated with an honest severity (critical/high/medium/low) reflecting real-world impact if "
+        "left unaddressed — don't inflate every finding to critical just to avoid it being dropped; a "
+        "dishonest rating just means a genuinely urgent finding on a future pass gets lost in the "
+        "noise. Each becomes a new card that flows through the same PM -> Developer -> Tester -> "
+        "Deployer pipeline as a human-submitted request. If you don't find anything worth proposing, "
+        "call propose_tasks with your single best idea rather than nothing — nobody is watching this "
+        "run interactively, so do not stop to ask a question."
     )
     existing = "\n".join(f"- {t}" for t in existing_titles) or "(none yet)"
     user = f"Existing/recent card titles in this project — don't propose duplicates of these:\n{existing}"
     system = _with_current_epic(system, current_epic)
-    return _with_agents_doc(system, agents_doc), user
+    system = _with_agents_doc(system, agents_doc)
+    return _with_role_guidance(system, project.pm_guidance), user
 
 
 def build_chat_prompt(
@@ -155,7 +224,8 @@ def build_chat_prompt(
         f"Existing/recent card titles — check before proposing a duplicate:\n{existing}"
     )
     system = _with_current_epic(system, current_epic)
-    return _with_agents_doc(system, agents_doc)
+    system = _with_agents_doc(system, agents_doc)
+    return _with_role_guidance(system, project.pm_guidance)
 
 
 def build_developer_prompt(
@@ -165,6 +235,7 @@ def build_developer_prompt(
     retry_recap: str | None = None,
     retry_note: str | None = None,
     agents_doc: str | None = None,
+    sync_conflict_paths: list[str] | None = None,
 ) -> tuple[str, str]:
     """Returns (system_prompt, initial_user_message)."""
     if project.test_command:
@@ -186,10 +257,20 @@ def build_developer_prompt(
         "a card's spec against a git worktree already checked out on the card's branch. "
         "Every path you pass to a tool must be relative to the repo root — paths that "
         "escape the repo are rejected.\n\n"
-        "Bash runs in fresh, unprivileged containers. If a required package or tool is missing, create "
-        "a Dockerfile.built-sandbox in the repo root with the required dependencies, then call "
-        "build_sandbox and repeat the failed command. Whenever "
-        "that Dockerfile exists, the runner automatically uses its image instead of the configured default.\n\n"
+        "Every write_file/edit_file call, and every bash command that changes files, is "
+        "automatically committed for you the moment it succeeds — you never need to run git add, "
+        "git commit, or git init yourself, and 'committed' below just means 'the change is saved', "
+        "not something you need to act on separately. If you want to inspect the working tree, use "
+        "the git_status/git_diff tools, not bash: bash commands run inside an ephemeral sandboxed "
+        "container that does not have access to this repo's git history, so any git command you run "
+        "there (git status, git log, git init, etc.) will fail with something like 'not a git "
+        "repository' — that's expected sandbox isolation, not a bug to work around, and it's not a "
+        "signal that anything is actually wrong with the repo.\n\n"
+        "Before this visit started, your branch was automatically synced with the project's current "
+        "default branch, so you're not building on a stale snapshot of the repo — normally a silent "
+        "no-op. If that sync produced a merge conflict instead, it's called out at the top of your "
+        "task below and takes priority over everything else this visit: none of your other work "
+        "will actually get committed until it's resolved.\n\n"
         "Your task this visit is the card below — its spec and acceptance criteria are the entire "
         "job. This project's overarching goal appears further down for context only (it explains "
         "why the project exists, so you can make judgment calls consistent with it) — it is not "
@@ -208,12 +289,13 @@ def build_developer_prompt(
         "call has every step marked done — exploring is how you figure out what the plan should be, "
         "not a substitute for writing one or executing it, and planning is not a substitute for "
         "understanding what's actually there first.\n\n"
-        "If the user message below opens with rejection feedback, that's real: a previous attempt "
-        "was reviewed and specific, concrete problems were found in the actual prior work — not "
-        "hypothetical gaps in the spec. Your plan must include a step for every item in that "
-        "feedback, not just a fresh pass over the acceptance criteria as if this were the first "
-        "attempt. The feedback is the most authoritative, up-to-date signal of what's actually "
-        "wrong; treat it as higher-priority than re-deriving the same plan from the spec again.\n\n"
+        "If the user message below opens with feedback from a previous attempt, that's real: "
+        "specific, concrete detail about what actually went wrong last time (rejected by Tester or "
+        "Reviewer, or a deploy blocked on a merge conflict) — not a hypothetical gap in the spec. "
+        "Your plan must include a step for every item in that feedback, not just a fresh pass over "
+        "the acceptance criteria as if this were the first attempt. The feedback is the most "
+        "authoritative, up-to-date signal of what's actually wrong; treat it as higher-priority than "
+        "re-deriving the same plan from the spec again.\n\n"
         f"{test_gate}"
         "submit_for_test is also rejected if this visit hasn't actually changed any files yet, "
         "however thoroughly you've explored or planned. If you find the acceptance criteria are "
@@ -229,15 +311,30 @@ def build_developer_prompt(
 
     criteria = "\n".join(f"- {c}" for c in card.acceptance_criteria) or "(none specified)"
     user = "Your task for this visit — the only thing to work on, not the project's broader goal:\n\n"
+    if sync_conflict_paths:
+        # Leads even the revision-feedback block below: this is a blocking
+        # prerequisite for everything else, not just prioritized context. The
+        # dispatcher's auto-commit refuses to commit anything while any of these
+        # files still have raw conflict markers, so nothing else this visit does
+        # will actually be saved until it's cleared.
+        user += (
+            "BEFORE ANYTHING ELSE: your branch was just automatically synced with the current "
+            f"{project.default_branch} to keep it from going stale, and that produced a merge "
+            f"conflict in: {', '.join(sync_conflict_paths)}. Resolve it first — use read_file to see "
+            "the '<<<<<<<' / '=======' / '>>>>>>>' markers in each listed file, decide how to combine "
+            "both sides sensibly, and save the fix with write_file or edit_file. None of your work "
+            "this visit is actually committed until every conflicted file is clean, however many "
+            "turns that takes — then continue with the rest of the card below.\n\n"
+        )
     if card.latest_feedback:
         # Leads the message, not an afterthought appended at the end — this is the
         # most specific, most actionable, most up-to-date signal of what's actually
         # wrong, and it needs to survive contact with everything else below it.
         user += (
-            "THIS IS A REVISION — a previous attempt at this card was reviewed and rejected. "
+            "THIS IS A REVISION — a previous attempt at this card didn't make it through cleanly. "
             "Your update_plan must include a step for every item below, not just a fresh pass "
             "over the acceptance criteria as if this were attempt one:\n\n"
-            f"Rejection feedback (address every item):\n{card.latest_feedback}\n\n"
+            f"Feedback from the previous attempt (address every item):\n{card.latest_feedback}\n\n"
         )
     user += (
         f"Card: {card.title}\n\n"
@@ -250,6 +347,7 @@ def build_developer_prompt(
     if retry_note:
         user += f"\n\nA human left this instruction for this attempt:\n{retry_note}"
     system = _with_agents_doc(system, agents_doc)
+    system = _with_role_guidance(system, project.developer_guidance)
     return system, user
 
 
@@ -285,6 +383,16 @@ def build_pm_prompt(
         "are genuinely one card, including ones with several acceptance criteria — don't split "
         "or make an epic just to make the list shorter; only do either when the work doesn't "
         "actually converge in one coherent pass, not because it's long.\n\n"
+        "If the request touches existing tests (reorganizing, migrating frameworks, adding "
+        "coverage), actually read a sample of what's there before writing acceptance criteria. "
+        "'Preserve existing coverage' is about the behavior being verified, not the specific "
+        "assertion style — if what's there is shallow (string-matching against raw source, "
+        "asserting a file merely exists, tautologies) don't write acceptance criteria that "
+        "lock that weakness into the new structure too, especially when the request itself "
+        "invites modernizing (a new framework, real component mounting, etc.). Call out "
+        "specifically where assertions should verify actual behavior instead of just being "
+        "moved and reformatted — 'nothing should be lost' should never mean 'nothing should "
+        "improve.'\n\n"
         f"Project goal: {project.overarching_goal}\n\n"
         "When ready, call submit_spec — or, for a request too big for one card, "
         "split_into_subtasks or define_epic. Nobody is watching this run interactively — do "
@@ -297,6 +405,7 @@ def build_pm_prompt(
         user += f"\n\nA human left this instruction for this attempt:\n{retry_note}"
     system = _with_current_epic(system, current_epic)
     system = _with_agents_doc(system, agents_doc)
+    system = _with_role_guidance(system, project.pm_guidance)
     return system, user
 
 
@@ -318,20 +427,15 @@ def build_deployer_prompt(
         system = (
             intro + "Your first action must be run_deploy — before that, your worktree is just a "
             "clean checkout of the default branch, so the card's own files genuinely aren't there "
-            "yet; that's expected, not a problem to fix. Do NOT write or create any files before "
-            "calling run_deploy — write_file/edit_file exist only to fix a merge conflict run_deploy "
-            "actually reports, never to author or recreate content yourself; the implementation was "
-            "already built and approved by Developer and Tester.\n\n"
+            "yet; that's expected, not a problem to fix, and not something you have tools to change "
+            "— the implementation was already built and approved by Developer and Tester.\n\n"
             "run_deploy takes no arguments — the merge, push, and deploy command are fixed by "
-            "project configuration, not by you. If it reports a merge conflict, that does NOT end "
-            "your turn: it's telling you exactly which files are conflicted, still inside this same "
-            "worktree, with git's own conflict markers ('<<<<<<<', '=======', '>>>>>>>') in them. Use "
-            "read_file to see each one, decide how to combine both sides sensibly, then write_file or "
-            "edit_file to save the fix with no markers left behind. Once every conflicted file is "
-            "clean, call run_deploy again — it picks up where it left off and completes the merge, "
-            "push, and deploy command. If a conflict genuinely can't be resolved by you (the two "
-            "sides represent conflicting product decisions, not just overlapping files), call "
-            f"abandon_deploy with a specific reason instead of guessing or looping pointlessly.\n\n"
+            "project configuration, not by you. It always ends your turn: on success, on an "
+            "ordinary failure (push rejected, deploy command failed), and on a merge conflict too — "
+            "a conflict is not yours to resolve, the card is automatically sent back to Developer to "
+            "reconcile against the current default branch, and this visit ends right there. If you "
+            "believe deploying genuinely shouldn't be attempted at all, call abandon_deploy with a "
+            "specific reason instead of retrying pointlessly.\n\n"
             f"Project goal: {project.overarching_goal}\n\n"
             "Nobody is watching this run interactively — do not stop to ask a question."
         )
@@ -351,6 +455,7 @@ def build_deployer_prompt(
     if retry_note:
         user += f"\n\nA human left this instruction for this attempt:\n{retry_note}"
     system = _with_agents_doc(system, agents_doc)
+    system = _with_role_guidance(system, project.deployer_guidance)
     return system, user
 
 
@@ -378,7 +483,19 @@ def build_reviewer_prompt(
         "- Design and maintainability: is this a reasonable way to solve the problem, or does it bolt "
         "on complexity, duplicate existing logic, or leave the codebase harder to work in?\n"
         "- Real fit to the spec and acceptance criteria — including anything technically passing "
-        "tests but missing the actual intent of the request.\n\n"
+        "tests but missing the actual intent of the request.\n"
+        "- Test quality, when the diff touches tests: does each assertion actually verify "
+        "something, or could it pass regardless of behavior? Watch for tautologies (asserting a "
+        "literal constant), guard clauses that skip the real assertion instead of failing when a "
+        "precondition isn't met, and — specific to whatever language/framework this project uses "
+        "— any idiom that lets a combined or chained assertion silently stop checking after the "
+        "first one (one instance of the class: in JS/vitest, `expect(a).toContain(x) && "
+        "expect(a).toContain(y)` only runs the first check, since a passing matcher returns "
+        "`undefined` and `&&` short-circuits on it — other languages have their own shape of this "
+        "trap, so look for the local equivalent rather than this literal pattern). The Tester's "
+        "pass/fail count doesn't catch any of this; you're reading the actual assertions, so "
+        "you're the one who can. A test suite that grew without gaining real coverage is a "
+        "maintainability problem, not a nitpick — treat it as review-blocking.\n\n"
         "Start with review_diff to see the full change, then use read_file/grep_files/list_files/"
         "glob_files to pull in whatever surrounding context you need to judge it fairly (existing "
         "conventions, related code, what it touches). If the diff integrates a third-party API or "
@@ -401,6 +518,7 @@ def build_reviewer_prompt(
     if retry_note:
         user += f"\n\nA human left this instruction for this attempt:\n{retry_note}"
     system = _with_agents_doc(system, agents_doc)
+    system = _with_role_guidance(system, project.reviewer_guidance)
     return system, user
 
 
@@ -469,12 +587,19 @@ def build_tester_prompt(
         "yourself. If a test needs to assert real behavior of a third-party API (an error shape, a "
         "status code, a response field), use fetch_docs to confirm it against the real documentation "
         "rather than guessing.\n\n"
-        "Your test commands run in fresh sandbox containers. If a test reports a missing package or "
-        "tool, inspect Dockerfile.built-sandbox first. If it exists, call build_sandbox, then rerun "
-        "the exact test command; the rebuilt image is used automatically by later bash calls. If it "
-        "does not exist, you may create it solely to define the test environment (not to modify the "
-        "application), then call build_sandbox. Do not try pip --no-user: system site-packages are "
-        "read-only, and one-off package installs disappear with the container.\n\n"
+        "A passing suite is not the same as a suite that checks anything. Actually read the "
+        "assertions in tests the Developer added or touched, not just the pass/fail count — reject "
+        "on sight anything that can't fail regardless of the real behavior: tautologies (asserting "
+        "a literal constant, e.g. `assert True` or `expect(true).toBe(true)`), or a guard clause "
+        "that turns a failed precondition into a silent pass instead of a failure (e.g. `if (!thing) "
+        "return` before the real assertion ever runs). Also watch for this project's language/"
+        "framework having its own way for a combined or chained assertion to silently stop checking "
+        "after the first one — e.g. in JS/vitest, `expect(a).toContain(x) && expect(a).toContain(y)` "
+        "only ever runs the first check, because a passing matcher returns `undefined` and `&&` "
+        "short-circuits on it; other languages have their own version of this trap, so judge it "
+        "against the idioms actually in front of you, not this specific example. A bigger test "
+        "count with the same or less real verification is a test gap, exactly the kind you're here "
+        "to catch — send it back with request_changes.\n\n"
         f"{test_gate}"
         f"{request_changes_gate}"
         "Nobody is watching this run interactively.\n\n"
@@ -495,4 +620,5 @@ def build_tester_prompt(
     if retry_note:
         user += f"\n\nA human left this instruction for this attempt:\n{retry_note}"
     system = _with_agents_doc(system, agents_doc)
+    system = _with_role_guidance(system, project.tester_guidance)
     return system, user

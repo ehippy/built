@@ -6,11 +6,18 @@ from built.domain.enums import Column
 
 
 async def resolve_endpoint_chain(
-    session: AsyncSession, *, project_id: str | None, role: Column
+    session: AsyncSession, *, project_id: str | None, role: Column | None
 ) -> list[EndpointConfig]:
     """Resolve the fallback chain for (project, role): the first non-empty tier wins —
     tiers are never merged. Order: project+role rows -> project rows with role IS NULL
-    -> global rows (project_id IS NULL, any role)."""
+    -> global rows (project_id IS NULL, any role).
+
+    role=None (agent/summarizer.py's Summarizer, which isn't a Column — see its
+    module docstring) skips straight to "project rows with role IS NULL": the
+    `EndpointConfig.role == role` comparison in the first tier is equivalent to
+    `.is_(None)` when role is None (SQLAlchemy special-cases `== None`), so it
+    naturally collapses to the project's general-purpose chain, or the global
+    default if the project hasn't configured one."""
 
     async def _tier(*filters) -> list[EndpointConfig]:
         stmt = (

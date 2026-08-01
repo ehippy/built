@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from built.agent import summarizer
 from built.agent.context import (
     build_deployer_prompt,
     build_developer_prompt,
@@ -136,6 +137,30 @@ async def run_column_visit(
                 await transitions.abandon_visit_for_lifecycle_change(session, card, visit)
                 await session.commit()
                 return card
+
+            # A human can drop a note in at any time via the UI/API, independent of
+            # whatever this loop is doing — piggybacks on the refresh() above, the
+            # same way the cancellation check does, so a nudge reaches the model
+            # within one iteration of a running visit instead of waiting for the
+            # next column. Single slot, not a queue: cleared the moment it's seen.
+            if card.pending_nudge:
+                nudge_text = card.pending_nudge
+                card.pending_nudge = None
+                await append_event(
+                    session,
+                    card_id=card.id,
+                    column_visit_id=visit.id,
+                    type=EventType.SYSTEM_NOTE,
+                    payload={"action": "nudge", "note": nudge_text},
+                )
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": "A human just left this note — read it and factor it into what "
+                        f"you do next:\n\n{nudge_text}",
+                    }
+                )
+                await session.commit()
 
             # Renew the claim lease every iteration, piggybacking on whichever commit
             # this iteration makes first (below) rather than committing separately.
@@ -518,6 +543,8 @@ async def _deployer_abandon_handler(
     await transitions.complete_deployer_visit(
         session, card, visit, success=False, summary=f"abandoned: {reason}", endpoint_used=endpoint_used
     )
+    project = await session.get(Project, card.project_id)
+    await _maybe_write_postmortem(session, project, card)
     return TerminalHandlerResult(handled=True)
 
 
@@ -537,7 +564,22 @@ async def _deployer_open_pr_handler(
         deploy_url=result.url,
         endpoint_used=endpoint_used,
     )
+    await _maybe_write_postmortem(session, project, card)
     return TerminalHandlerResult(handled=True)
+
+
+async def _maybe_write_postmortem(session: AsyncSession, project: Project, card: Card) -> None:
+    """Call right after a Deployer terminal transition that might have closed the
+    card — DONE and FAILED are the only lifecycle states this ever fires for, since
+    BLOCKED is a safety valve a human/Reviver can still retry, not a real closure.
+    Runs (and, via write_card_postmortem's own session.flush(), stages its row)
+    before this handler returns — the caller's own commit afterward is what
+    actually makes DONE/FAILED visible, so the postmortem always lands in the same
+    commit as the closure it's about, holding the card open that one moment
+    longer rather than racing it."""
+    if card.lifecycle_state not in (LifecycleState.DONE, LifecycleState.FAILED):
+        return
+    await summarizer.write_card_postmortem(session, project, card, outcome=card.lifecycle_state)
 
 
 async def _record_bash_run_attempt(
@@ -621,9 +663,15 @@ async def run_developer_visit(
     retry_recap: str | None = None,
     retry_note: str | None = None,
     agents_doc: str | None = None,
+    sync_conflict_paths: list[str] | None = None,
 ) -> Card:
     system, user = build_developer_prompt(
-        project, card, retry_recap=retry_recap, retry_note=retry_note, agents_doc=agents_doc
+        project,
+        card,
+        retry_recap=retry_recap,
+        retry_note=retry_note,
+        agents_doc=agents_doc,
+        sync_conflict_paths=sync_conflict_paths,
     )
     return await run_column_visit(
         session,
@@ -752,12 +800,17 @@ async def run_deployer_visit(
             endpoint_used: str,
         ) -> TerminalHandlerResult:
             # Closure, not a free function: run_auto_main_deploy needs the exact
-            # worktree the dispatcher's file tools are scoped to, so a conflict fix
-            # made via write_file/edit_file in an earlier turn is the same worktree
-            # this looks at when the agent calls run_deploy() again.
+            # worktree the dispatcher's tools are scoped to.
             result = await deploy_runner.run_auto_main_deploy(project, card, dispatcher.ctx.worktree_root)
             if result.conflict:
-                return TerminalHandlerResult(handled=False, feedback=result.message)
+                await transitions.complete_deployer_visit_conflict(
+                    session,
+                    card,
+                    visit,
+                    conflicted_paths=result.conflicted_paths,
+                    endpoint_used=endpoint_used,
+                )
+                return TerminalHandlerResult(handled=True)
             await transitions.complete_deployer_visit(
                 session,
                 card,
@@ -767,6 +820,10 @@ async def run_deployer_visit(
                 pending_ci_commit_sha=result.commit_sha,
                 endpoint_used=endpoint_used,
             )
+            # No postmortem yet if this landed in DEPLOYED_PENDING_CI — the card
+            # isn't actually closed until orchestrator/ci_watcher.py confirms CI,
+            # which writes its own postmortem at that point instead.
+            await _maybe_write_postmortem(session, project, card)
             return TerminalHandlerResult(handled=True)
 
         terminal_handlers = {

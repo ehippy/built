@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from built.api.deps import SessionDep
 from built.config import settings
 from built.domain.enums import Column, DeployKind, DeployMode
+from built.sandbox import deploy_runner
 from built.services import card_service, endpoint_service, project_service
 from built.ui.templates import templates
 
@@ -45,6 +46,17 @@ async def projects_list_fragment(request: Request, session: SessionDep):
     return templates.TemplateResponse(request, "_projects_list_fragment.html.j2", {"rows": rows})
 
 
+@router.get("/projects/nav-fragment")
+async def projects_nav_fragment(request: Request, session: SessionDep):
+    """The nav bar's Projects dropdown fetches this itself (see base.html.j2) —
+    it's the same list on every page regardless of which route rendered it, so
+    it has no business being plumbed through every UI route's context by hand."""
+    all_projects = await project_service.list_projects(session)
+    return templates.TemplateResponse(
+        request, "_projects_nav_fragment.html.j2", {"all_projects": all_projects}
+    )
+
+
 @router.post("/projects")
 async def create_project(
     session: SessionDep,
@@ -71,6 +83,33 @@ async def create_project(
         max_iterations_per_run=max_iterations_per_run,
     )
     return RedirectResponse(f"/ui/projects/{project.id}/board", status_code=303)
+
+
+@router.get("/projects/{project_id}/ci-status")
+async def project_ci_status(project_id: str, request: Request, session: SessionDep):
+    """The nav bar's GitHub-icon status dot — polled by htmx, not computed on the
+    initial page render, so an external GitHub round-trip never blocks a normal
+    page load. Checked against the tip of default_branch (GitHub's check-runs
+    endpoint accepts a branch name as well as a sha), not any particular card's
+    deploying_commit_sha — this is "is the repo green right now", independent of
+    whether `built` itself is mid-deploy on anything."""
+    project = await project_service.get_project(session, project_id)
+    try:
+        check_runs = await deploy_runner.fetch_check_runs(project, project.default_branch)
+    except deploy_runner.CIStatusUnavailableError:
+        state = "unknown"
+    else:
+        if not check_runs:
+            state = "none"
+        elif any(run.status != "completed" for run in check_runs):
+            state = "pending"
+        elif any(run.conclusion in deploy_runner.FAILING_CONCLUSIONS for run in check_runs):
+            state = "failure"
+        else:
+            state = "success"
+    return templates.TemplateResponse(
+        request, "_ci_status_fragment.html.j2", {"project": project, "ci_state": state}
+    )
 
 
 @router.get("/projects/{project_id}/settings")
@@ -115,6 +154,28 @@ async def update_project_settings(
         max_iterations_per_run=max_iterations_per_run,
     )
     return RedirectResponse(f"/ui/projects/{project_id}/settings#details-pane", status_code=303)
+
+
+@router.post("/projects/{project_id}/prompts")
+async def update_project_prompts(
+    project_id: str,
+    session: SessionDep,
+    pm_guidance: str = Form(""),
+    developer_guidance: str = Form(""),
+    tester_guidance: str = Form(""),
+    reviewer_guidance: str = Form(""),
+    deployer_guidance: str = Form(""),
+) -> RedirectResponse:
+    await project_service.update_project(
+        session,
+        project_id,
+        pm_guidance=pm_guidance or None,
+        developer_guidance=developer_guidance or None,
+        tester_guidance=tester_guidance or None,
+        reviewer_guidance=reviewer_guidance or None,
+        deployer_guidance=deployer_guidance or None,
+    )
+    return RedirectResponse(f"/ui/projects/{project_id}/settings#prompts-pane", status_code=303)
 
 
 @router.post("/projects/{project_id}/archive")

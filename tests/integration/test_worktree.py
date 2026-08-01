@@ -55,6 +55,61 @@ async def test_create_card_worktree_and_commit_flow(toy_repo_remote):
     assert diff_output == ""  # committed, so nothing left unstaged/uncommitted
 
 
+async def test_sync_card_branch_with_default_picks_up_new_commits_cleanly(toy_repo_remote):
+    """The scenario this exists for: another card merges to main while this card's
+    worktree, branched off main at creation, has no way to see it on its own."""
+    # Distinct project/card ids from every other test in this file — data_dir is a
+    # single shared tmp dir for the whole test session (tests/conftest.py), keyed
+    # by these ids, so reusing _project()/_card()'s fixed ids here would silently
+    # fetch from a stale, unrelated toy_repo_remote left over from another test.
+    project = Project(id="proj-wt-sync-clean", repo_remote_url=str(toy_repo_remote), default_branch="main")
+    card = Card(id="card-wt-sync-clean", project_id=project.id, branch_name="card/sync-clean")
+    wt_path = await worktree.create_card_worktree(project, card)
+
+    # Someone else's card lands a change directly on the remote's main, unrelated
+    # to anything this card touches.
+    (toy_repo_remote / "other.py").write_text("value = 1\n")
+    subprocess.run(["git", "add", "-A"], cwd=toy_repo_remote, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "add other.py"], cwd=toy_repo_remote, check=True, capture_output=True
+    )
+    await worktree.ensure_managed_clone(project)
+
+    conflicted = await worktree.sync_card_branch_with_default(project, wt_path)
+
+    assert conflicted == []
+    assert (wt_path / "other.py").read_text() == "value = 1\n"
+    assert not await git_tools.merge_in_progress(wt_path)
+
+
+async def test_sync_card_branch_with_default_leaves_conflict_markers_for_developer(toy_repo_remote):
+    """A real conflict is left unresolved (MERGE_HEAD set, markers in the file) —
+    unlike Deployer's own merge attempt, nothing here aborts it: this is for a
+    caller (Developer, via orchestrator/worker.py) with its own read/write/bash
+    tools to actually fix it."""
+    project = Project(id="proj-wt-sync-conflict", repo_remote_url=str(toy_repo_remote), default_branch="main")
+    card = Card(id="card-wt-sync-conflict", project_id=project.id, branch_name="card/sync-conflict")
+    wt_path = await worktree.create_card_worktree(project, card)
+
+    # This card's own work changes app.py...
+    (wt_path / "app.py").write_text("def greet():\n    return 'from the card'\n")
+    await git_tools.commit_all(wt_path, message="card change")
+
+    # ...but another card already landed a conflicting change to the same file on
+    # main in the meantime.
+    (toy_repo_remote / "app.py").write_text("def greet():\n    return 'from main'\n")
+    subprocess.run(
+        ["git", "commit", "-aqm", "main change"], cwd=toy_repo_remote, check=True, capture_output=True
+    )
+    await worktree.ensure_managed_clone(project)
+
+    conflicted = await worktree.sync_card_branch_with_default(project, wt_path)
+
+    assert conflicted == ["app.py"]
+    assert await git_tools.merge_in_progress(wt_path)
+    assert "<<<<<<<" in (wt_path / "app.py").read_text()
+
+
 async def test_read_default_branch_file_returns_none_when_missing(toy_repo_remote):
     project = Project(id="proj-wt-read-1", repo_remote_url=str(toy_repo_remote), default_branch="main")
     content = await worktree.read_default_branch_file(project, "AGENTS.md")

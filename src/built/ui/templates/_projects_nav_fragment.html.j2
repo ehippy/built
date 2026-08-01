@@ -1,0 +1,5 @@
+<ul id="projects-nav-menu" class="dropdown-menu dropdown-menu-dark" hx-get="/ui/projects/nav-fragment" hx-trigger="every 30s" hx-swap="outerHTML">
+  {% for p in all_projects %}
+  <li><a class="dropdown-item" href="/ui/projects/{{ p.id }}/board">{{ p.name }}</a></li>
+  {% endfor %}
+</ul>

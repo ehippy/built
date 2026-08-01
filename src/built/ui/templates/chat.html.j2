@@ -9,8 +9,7 @@
 
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-3">
   <div>
-    <h1>{{ project.name }} <span class="fs-6 text-body-secondary">chat</span></h1>
-    <p class="text-body-secondary">Workshop ticket ideas with an LLM — it can browse the repo read-only and file or edit cards directly once you land on something concrete.</p>
+    <p class="text-body-secondary mb-0">Workshop ticket ideas with an LLM — it can browse the repo read-only and file or edit cards directly once you land on something concrete.</p>
   </div>
   <form method="post" action="/ui/projects/{{ project.id }}/chat/clear" onsubmit="return confirm('Clear this chat? The transcript stays in the database, but the conversation starts fresh.');">
     <button class="btn btn-outline-secondary btn-sm" type="submit"><i class="bi bi-arrow-counterclockwise"></i> Clear chat</button>

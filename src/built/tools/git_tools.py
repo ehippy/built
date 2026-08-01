@@ -2,6 +2,7 @@
 CLI's behavior is what we've actually verified empirically for bare-repo worktrees)."""
 
 import asyncio
+import base64
 import re
 from pathlib import Path
 
@@ -52,8 +53,24 @@ async def _run(*args: str, cwd: Path) -> tuple[int, str, str]:
     return process.returncode or 0, stdout.decode(), stderr.decode()
 
 
-async def run_git(*args: str, cwd: Path) -> str:
-    returncode, stdout, stderr = await _run(*args, cwd=cwd)
+def _token_auth_config(token: str) -> tuple[str, ...]:
+    """`-c` flags that make a single git invocation authenticate to github.com as
+    the given token, scoped to just this call and just github.com's http(s) remotes
+    — never written to any on-disk gitconfig. Overrides `credential.helper=` (empty)
+    too: without that, a host-level helper (e.g. `gh`'s, which may be configured for
+    a differently-scoped token) can still win over the explicit header for some git
+    versions/prompted flows, silently authenticating as the wrong identity instead
+    of the token this call was actually given."""
+    basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    return (
+        "-c", "credential.helper=",
+        "-c", f"http.https://github.com/.extraheader=AUTHORIZATION: basic {basic}",
+    )
+
+
+async def run_git(*args: str, cwd: Path, token: str | None = None) -> str:
+    extra = _token_auth_config(token) if token else ()
+    returncode, stdout, stderr = await _run(*extra, *args, cwd=cwd)
     if returncode != 0:
         raise GitCommandError(args, returncode, stdout, stderr)
     return stdout
@@ -108,7 +125,41 @@ async def conflicted_paths(worktree: Path) -> list[str]:
     return still_conflicted
 
 
-async def complete_merge(worktree: Path, *, message: str, author_name: str, author_email: str) -> str:
+async def attempt_merge(worktree: Path, ref: str, *, abort_on_conflict: bool) -> list[str]:
+    """Merges `ref` into the branch already checked out at `worktree`. Returns the
+    conflicted paths on a genuine conflict — empty on a clean merge, including a
+    no-op when already up to date. abort_on_conflict=True restores the worktree to
+    its pre-merge state (for a caller with no tools to resolve a conflict itself,
+    e.g. Deployer); False leaves MERGE_HEAD and the conflict markers in place (for
+    a caller with its own file tools to fix them, e.g. Developer — see
+    tools/dispatcher.py's merge-aware auto-commit, which won't complete this merge
+    until conflicted_paths() is empty). Always --no-ff: a plain fast-forward would
+    silently skip creating a merge commit, and callers (deploy history, the
+    Developer sync note) both rely on there being one to point at."""
+    try:
+        await run_git(
+            "-c",
+            f"user.name={_COMMIT_AUTHOR_NAME}",
+            "-c",
+            f"user.email={_COMMIT_AUTHOR_EMAIL}",
+            "merge",
+            "--no-ff",
+            "-m",
+            f"Merge {ref}",
+            ref,
+            cwd=worktree,
+        )
+        return []
+    except GitCommandError:
+        conflicted = await conflicted_paths(worktree)
+        if not conflicted:
+            raise
+        if abort_on_conflict:
+            await run_git("merge", "--abort", cwd=worktree)
+        return conflicted
+
+
+async def complete_merge(worktree: Path, *, message: str) -> str:
     """Stages everything and commits to finish an in-progress merge once
     conflicted_paths() is empty. Doesn't reuse commit_all's "anything to commit"
     short-circuit — a merge commit is required even when it introduces no content
@@ -117,9 +168,9 @@ async def complete_merge(worktree: Path, *, message: str, author_name: str, auth
     await run_git("add", "-A", cwd=worktree)
     await run_git(
         "-c",
-        f"user.name={author_name}",
+        f"user.name={_COMMIT_AUTHOR_NAME}",
         "-c",
-        f"user.email={author_email}",
+        f"user.email={_COMMIT_AUTHOR_EMAIL}",
         "commit",
         "-m",
         message,

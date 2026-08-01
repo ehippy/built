@@ -31,6 +31,19 @@ class Priority(StrEnum):
     LOW = "low"
 
 
+class Severity(StrEnum):
+    """A curation candidate's self-rated importance (llm/tool_schemas.py's
+    PROPOSE_TASKS) — never confused with Priority: Priority is a human's manual
+    signal on a Card, never touched by any agent. Severity is the model's own
+    rating of a not-yet-filed candidate, consumed only by agent/curation.py's
+    server-side file-policy whittling, then discarded — never written to a Card."""
+
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
 class LifecycleState(StrEnum):
     """Whether a card is currently claimable by the orchestrator."""
 
@@ -51,6 +64,8 @@ class VisitOutcome(StrEnum):
     DONE = "done"  # Deployer's run_deploy succeeded (pr_to_operator, or auto_main with no CI to watch)
     DEPLOYED_PENDING_CI = "deployed_pending_ci"  # auto_main run_deploy succeeded; CI still has to confirm
     FAILED = "failed"  # Deployer's run_deploy failed (this attempt, or terminally over cap)
+    DEPLOY_CONFLICT = "deploy_conflict"  # run_deploy hit a merge conflict — bounced back to Developer,
+    # not counted against max_deploy_attempts (see domain/transitions.complete_deployer_visit_conflict)
     ERROR = "error"  # iteration cap / endpoint chain exhausted / unhandled exception
     INTERRUPTED = "interrupted"  # process crashed mid-visit; orchestrator restarts fresh
     CANCELLED = "cancelled"  # a human cancelled the card while this visit was running
@@ -117,4 +132,8 @@ class ActivityKind(StrEnum):
     OPPORTUNITY_BRAINSTORM = "opportunity_brainstorm"
     POLISH_REVIEW = "polish_review"
     STAY_DRY = "stay_dry"  # looks for duplicated code and proposes shared-code refactors
+    SECURITY_SWEEP = "security_sweep"  # authz gaps, injection, secrets in code/logs/config, vuln deps
+    COVERAGE_SWEEP = "coverage_sweep"  # code paths/behaviors with no test verifying them; files, doesn't fix
+    REFACTOR_SWEEP = "refactor_sweep"  # decomposition candidates, layering violations, dead code, drift
     AGENTS_MD = "agents_md"  # proposes an AGENTS.md-update card; replaces the old Tender
+    RETRO = "retro"  # mines recent CardPostmortems (agent/summarizer.py) for a recurring struggle

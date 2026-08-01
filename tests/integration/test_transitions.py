@@ -158,6 +158,36 @@ async def test_reviewer_request_changes_bounces_to_developer_and_shares_revision
     assert card.revision_count == 2
 
 
+async def test_deployer_conflict_bounces_to_developer_and_shares_revision_cap(db_session):
+    """run_deploy hitting a merge conflict is not a deploy failure — the merge/push
+    never ran, so it doesn't count against max_deploy_attempts — it's 'another round
+    of Developer work needed', sharing the same revision_count budget as Reviewer/
+    Tester's request_changes."""
+    project = await _make_project(db_session, name="deployer-conflict-loop", max_revisions=1)
+    card = await card_service.create_card(db_session, project.id, title="Racy card", raw_request="do it")
+    card.column = Column.DEPLOYER
+    await db_session.flush()
+
+    visit = await transitions.start_visit(db_session, card)
+    await transitions.complete_deployer_visit_conflict(db_session, card, visit, conflicted_paths=["app.py"])
+
+    assert card.column == Column.DEVELOPER
+    assert card.lifecycle_state == LifecycleState.ACTIVE
+    assert card.revision_count == 1
+    assert card.deploy_attempt_count == 0
+    assert "app.py" in card.latest_feedback
+    assert visit.outcome == VisitOutcome.DEPLOY_CONFLICT
+
+    # A second conflict in a row goes over max_revisions=1, same safety valve as
+    # the Reviewer/Tester loop.
+    card.column = Column.DEPLOYER
+    await db_session.flush()
+    visit = await transitions.start_visit(db_session, card)
+    await transitions.complete_deployer_visit_conflict(db_session, card, visit, conflicted_paths=["app.py"])
+    assert card.lifecycle_state == LifecycleState.BLOCKED
+    assert card.revision_count == 2
+
+
 async def test_retry_with_a_note_stores_it_on_the_card(db_session):
     project = await _make_project(db_session, name="retry-note")
     card = await card_service.create_card(db_session, project.id, title="t", raw_request="r")

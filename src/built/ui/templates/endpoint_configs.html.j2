@@ -1,38 +1,67 @@
 {% extends "base.html.j2" %}
-{% block title %}Global Defaults{% endblock %}
+{% block title %}LLMs{% endblock %}
 {% block content %}
-<h1>Global default endpoints</h1>
-<p class="text-body-secondary">
-  Used by any project (and role) that doesn't define its own endpoint chain. Lower priority number = tried first;
-  if the first entry's request fails, the next one in the chain is tried automatically.
-</p>
+<div class="d-flex justify-content-between align-items-start mb-2">
+  <div>
+    <h1 class="mb-1">Global default endpoints</h1>
+    <p class="text-body-secondary mb-0">
+      Used by any project (and role) that doesn't define its own endpoint chain. Lower priority number = tried first;
+      if the first entry's request fails, the next one in the chain is tried automatically.
+    </p>
+  </div>
+  <button class="btn btn-primary text-nowrap ms-3" type="button" data-bs-toggle="modal" data-bs-target="#add-endpoint-modal">
+    <i class="bi bi-plus-lg"></i> Add endpoint
+  </button>
+</div>
 
 {% if endpoint_configs %}
 <div class="table-responsive">
 <table class="table table-striped align-middle">
-  <thead><tr><th>Role</th><th>Base URL</th><th>Model</th><th>Priority</th><th>Max concurrency</th><th>Context window</th><th>Enabled</th><th></th></tr></thead>
+  <thead>
+    <tr>
+      <th>Role</th><th>Base URL</th><th>Model</th><th>Priority</th><th>Max concurrency</th>
+      <th>Context window</th><th>Health</th><th>Enabled</th><th></th>
+    </tr>
+  </thead>
   <tbody>
   {% for ep in endpoint_configs %}
     <tr>
       <td>{{ ep.role or "All roles" }}</td>
-      <td>{{ ep.base_url }}</td>
+      <td class="text-break">{{ ep.base_url }}</td>
       <td>{{ ep.model }}</td>
       <td>{{ ep.priority }}</td>
       <td>{{ ep.max_concurrency }}</td>
       <td>
-        <form class="d-flex gap-1" method="post" action="/ui/endpoint-configs/{{ ep.id }}/context-window?next=/ui/endpoint-configs">
-          <input class="form-control form-control-sm" type="number" name="context_window" min="1" value="{{ ep.context_window or default_max_tokens }}" style="width: 8rem;">
-          <button class="btn btn-secondary btn-sm" type="submit">Save</button>
-        </form>
-        {% if not ep.context_window %}<div class="form-text">unset — using app default</div>{% endif %}
+        {% if ep.context_window %}{{ "{:,}".format(ep.context_window) }}{% else %}
+        <span class="text-body-secondary" title="unset — using app default of {{ '{:,}'.format(default_max_tokens) }}">app default</span>
+        {% endif %}
       </td>
-      <td>{{ "yes" if ep.enabled else "no" }}</td>
       <td>
+        <span id="ep-health-{{ ep.id }}" hx-get="/ui/endpoint-configs/{{ ep.id }}/health" hx-trigger="load" hx-swap="outerHTML">
+          <span class="spinner-border spinner-border-sm text-secondary" role="status"><span class="visually-hidden">Checking…</span></span>
+        </span>
+      </td>
+      <td>
+        {% if ep.enabled %}
+        <i class="bi bi-check-circle-fill text-success" title="Enabled"></i>
+        {% else %}
+        <i class="bi bi-dash-circle text-body-secondary" title="Disabled"></i>
+        {% endif %}
+      </td>
+      <td class="text-nowrap">
+        <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#edit-endpoint-{{ ep.id }}" title="Edit">
+          <i class="bi bi-pencil"></i>
+        </button>
         <form class="d-inline" method="post" action="/ui/endpoint-configs/{{ ep.id }}/toggle?next=/ui/endpoint-configs">
-          <button class="btn btn-secondary btn-sm" type="submit">{{ "Disable" if ep.enabled else "Enable" }}</button>
+          <button class="btn btn-outline-secondary btn-sm" type="submit" title="{{ 'Disable' if ep.enabled else 'Enable' }}">
+            <i class="bi {{ 'bi-pause-fill' if ep.enabled else 'bi-play-fill' }}"></i>
+          </button>
         </form>
-        <form class="d-inline" method="post" action="/ui/endpoint-configs/{{ ep.id }}/delete?next=/ui/endpoint-configs">
-          <button class="btn btn-danger btn-sm" type="submit">Delete</button>
+        <form class="d-inline" method="post" action="/ui/endpoint-configs/{{ ep.id }}/delete?next=/ui/endpoint-configs"
+              onsubmit="return confirm('Delete this endpoint ({{ ep.base_url }} / {{ ep.model }})? This can\'t be undone.');">
+          <button class="btn btn-outline-danger btn-sm" type="submit" title="Delete">
+            <i class="bi bi-trash"></i>
+          </button>
         </form>
       </td>
     </tr>
@@ -44,50 +73,45 @@
 <p class="text-body-secondary">No global endpoints configured yet.</p>
 {% endif %}
 
-<div class="card card-body mb-4">
-  <h2 class="h5">Add global endpoint</h2>
-  <form method="post" action="/ui/endpoint-configs">
-    <div class="row g-2 mb-3">
-      <div class="col">
-        <label class="form-label" for="role">Role</label>
-        <select class="form-select" id="role" name="role">
-          <option value="">All roles</option>
-          <option value="pm">Product Manager</option>
-          <option value="developer">Developer</option>
-          <option value="tester">Tester</option>
-          <option value="reviewer">Reviewer</option>
-          <option value="deployer">Deployer</option>
-        </select>
+<div class="modal fade" id="add-endpoint-modal" tabindex="-1" aria-labelledby="add-endpoint-modal-label" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="add-endpoint-modal-label">Add global endpoint</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
-      <div class="col">
-        <label class="form-label" for="priority">Priority</label>
-        <input class="form-control" type="number" id="priority" name="priority" value="0">
-      </div>
+      <form method="post" action="/ui/endpoint-configs">
+        <div class="modal-body">
+          {% include "_endpoint_config_fields.html.j2" with context %}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" type="button" data-bs-dismiss="modal">Cancel</button>
+          <button class="btn btn-primary" type="submit">Add endpoint</button>
+        </div>
+      </form>
     </div>
-    <div class="mb-3">
-      <label class="form-label" for="base_url">Base URL</label>
-      <input class="form-control" type="text" id="base_url" name="base_url" required placeholder="http://localhost:11434/v1">
-    </div>
-    <div class="mb-3">
-      <label class="form-label" for="model">Model</label>
-      <input class="form-control" type="text" id="model" name="model" required placeholder="Qwen3.6-35B-A3B-GGUF">
-    </div>
-    <div class="mb-3">
-      <label class="form-label" for="api_key_ref">API key env var (optional)</label>
-      <input class="form-control" type="text" id="api_key_ref" name="api_key_ref" placeholder="OPENAI_API_KEY">
-      <div class="form-text">Name of an environment variable on the server — never the raw key.</div>
-    </div>
-    <div class="mb-3">
-      <label class="form-label" for="max_concurrency">Max concurrency</label>
-      <input class="form-control" type="number" id="max_concurrency" name="max_concurrency" min="1" value="1">
-      <div class="form-text">Max simultaneous requests this backend should ever receive from this app, shared across every project/role that resolves to it. A single local model instance can rarely usefully handle more than 1 at once; raise it for a hosted/scaled endpoint.</div>
-    </div>
-    <div class="mb-3">
-      <label class="form-label" for="context_window">Context window (optional)</label>
-      <input class="form-control" type="number" id="context_window" name="context_window" min="1" placeholder="app default: {{ default_max_tokens }}">
-      <div class="form-text">Total tokens this model actually supports. Left blank, projects resolving to this endpoint cap at the app default ({{ default_max_tokens }}) regardless of the model's real capacity.</div>
-    </div>
-    <button class="btn btn-primary" type="submit">Add endpoint</button>
-  </form>
+  </div>
 </div>
+
+{% for ep in endpoint_configs %}
+<div class="modal fade" id="edit-endpoint-{{ ep.id }}" tabindex="-1" aria-labelledby="edit-endpoint-{{ ep.id }}-label" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="edit-endpoint-{{ ep.id }}-label">Edit endpoint</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <form method="post" action="/ui/endpoint-configs/{{ ep.id }}/edit?next=/ui/endpoint-configs">
+        <div class="modal-body">
+          {% include "_endpoint_config_fields.html.j2" with context %}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" type="button" data-bs-dismiss="modal">Cancel</button>
+          <button class="btn btn-primary" type="submit">Save changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endfor %}
 {% endblock %}

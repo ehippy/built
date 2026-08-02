@@ -30,6 +30,98 @@ def _normalize_command(command: str) -> str:
     return _TRAILING_REDIRECT_RE.sub("", stripped).strip()
 
 
+def _top_level_operator_spans(command: str) -> list[tuple[int, int, str]] | None:
+    """Scans `command` for top-level (outside quotes) `&&`, bare `;`, and bare `|`
+    occurrences — the only shell structure this module reasons about — and returns
+    each as (start, end, operator) in order of appearance. Returns None if the
+    command contains unbalanced quotes, or any construct outside that short list
+    (`||`, backgrounding `&`, subshells, command substitution): callers then fall
+    back to requiring a whole-string exact match, which is always safe, just
+    occasionally stricter than a human would insist on. Deliberately not a full
+    shell parser — wide enough to recognize the shapes agents actually produce,
+    narrow enough that "can't confidently parse it" is the default, not the
+    exception."""
+    spans: list[tuple[int, int, str]] = []
+    quote: str | None = None
+    i, n = 0, len(command)
+    while i < n:
+        ch = command[i]
+        if quote:
+            if quote == '"' and ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            i += 1
+            continue
+        if ch == "\\":
+            i += 2
+            continue
+        if ch in "()`":
+            return None
+        if ch == "$" and command[i : i + 2] == "$(":
+            return None
+        if command[i : i + 2] == "&&":
+            spans.append((i, i + 2, "&&"))
+            i += 2
+            continue
+        if ch == "&":
+            return None
+        if command[i : i + 2] == "||":
+            return None
+        if ch == "|":
+            spans.append((i, i + 1, "|"))
+            i += 1
+            continue
+        if ch == ";":
+            spans.append((i, i + 1, ";"))
+            i += 1
+            continue
+        i += 1
+    if quote is not None:
+        return None
+    return spans
+
+
+def _match_test_command_shape(command: str, test_command: str) -> str | None:
+    """Recognizes the shapes of `command` this module can safely verify against
+    `test_command`, beyond a plain whole-string match:
+    - "chained": test_command is the final `&&`/`;`-separated clause, with no pipe
+      in it — safe with no extra bookkeeping, since bash's own exit code after a
+      plain `&&`/`;` chain already reflects only the last command run, whether or
+      not something else ran first in the same call.
+    - "piped": test_command is the first stage of a pipe that is (or is the tail
+      of a `&&`/`;` chain and is) the last thing the call runs — the pipeline's
+      *overall* exit code reflects whatever ran last in the pipe, not
+      test_command's own, so this shape is only trustworthy when paired with a
+      captured $PIPESTATUS (see RunAttempt.pipestatus / sandbox/container.py's
+      _wrap_for_pipestatus) — callers must check pipestatus[0], not exit_code.
+    Returns None if `command` doesn't match test_command in any shape this module
+    understands — including whenever _top_level_operator_spans itself can't
+    confidently parse it, which fails closed to "not recognized" rather than
+    guessing."""
+    expected = _normalize_command(test_command)
+    if _normalize_command(command) == expected:
+        return "whole"
+    spans = _top_level_operator_spans(command)
+    if not spans:
+        return None
+    chain_spans = [s for s in spans if s[2] in ("&&", ";")]
+    clause_start = chain_spans[-1][1] if chain_spans else 0
+    pipe_spans = [s for s in spans if s[2] == "|" and s[0] >= clause_start]
+    if pipe_spans:
+        first_stage = command[clause_start : pipe_spans[0][0]]
+        return "piped" if _normalize_command(first_stage) == expected else None
+    last_clause = command[clause_start:]
+    if chain_spans and _normalize_command(last_clause) == expected:
+        return "chained"
+    return None
+
+
 async def record_run_attempt(
     session: AsyncSession,
     *,
@@ -40,6 +132,7 @@ async def record_run_attempt(
     stdout: str,
     stderr: str,
     card_event_seq: int | None = None,
+    pipestatus: list[int] | None = None,
 ) -> RunAttempt:
     prior = await session.scalar(
         select(func.count()).select_from(RunAttempt).where(RunAttempt.column_visit_id == column_visit_id)
@@ -55,6 +148,7 @@ async def record_run_attempt(
         stderr_ref=stderr[:20_000],
         ended_at=datetime.now(UTC),
         card_event_seq=card_event_seq,
+        pipestatus=pipestatus,
     )
     session.add(attempt)
     await session.flush()
@@ -83,10 +177,14 @@ async def diagnose_missing_passing_run(
     (`npm test | grep ...`) rather than the bare command the gate requires.
 
     Satisfied only if ALL of:
-    - the most recent bash call in this visit is, mod trailing redirection, exactly
-      the project's configured test_command (not just "some command exited 0" —
-      that was the old, gameable check: run the suite, see red, then run `true`);
-    - it exited 0;
+    - the most recent bash call in this visit runs test_command, in one of the
+      shapes _match_test_command_shape recognizes: verbatim; as the final
+      `&&`/`;`-separated clause; or as the first stage of a pipe that is (or ends)
+      the call — not just "some command exited 0", which was the old, gameable
+      check (run the suite, see red, then run `true`);
+    - the test command's own exit code — pipestatus[0] for the piped shape,
+      exit_code otherwise, since a pipeline's overall exit_code reflects whatever
+      ran last in it, not test_command's — was 0;
     - nothing has mutated the repo (write_file/edit_file, or a bash call that
       changed tracked files) since — otherwise a green run followed by an
       unverified edit would still read as "tested", which is exactly the failure
@@ -94,29 +192,49 @@ async def diagnose_missing_passing_run(
     attempt = await latest_run_attempt(session, column_visit_id)
     if attempt is None:
         return f"You haven't run the test command (`{test_command}`) via bash yet this visit."
-    if attempt.status != RunAttemptStatus.SUCCEEDED:
-        return (
-            f"Your most recent bash run (`{attempt.command_executed}`) exited "
-            f"{attempt.exit_code}, not 0 — fix the failure and rerun `{test_command}` before submitting."
-        )
-    if _normalize_command(attempt.command_executed or "") != _normalize_command(test_command):
+    command = attempt.command_executed or ""
+    shape = _match_test_command_shape(command, test_command)
+    if shape is None:
         culprit = ""
-        if "|" in attempt.command_executed:
+        if _top_level_operator_spans(command) is None:
             culprit = (
-                " — it's piped into something else. Piping changes whose exit code gets checked, "
-                "so it doesn't count as running the test command. If you need to trim a large "
-                f"suite's output, run `{test_command} > /tmp/test_output.txt 2>&1` bare first, then "
-                "a separate, later bash call can `grep`/`tail` that saved file — a read-only "
-                "follow-up like that doesn't touch tracked files, so it won't invalidate this run"
+                " — it uses shell features (background `&`, `||`, subshells, or command "
+                "substitution) this project can't safely verify piece-by-piece"
             )
-        elif "&&" in attempt.command_executed or ";" in attempt.command_executed:
+        elif "|" in command:
             culprit = (
-                " — it's chained with another command via `&&`/`;`. Run the test command "
-                "completely on its own, in its own bash call, with nothing else in the same call"
+                " — it's piped into something else, but the part before the first pipe isn't "
+                f"exactly `{test_command}`. The test command must be the very first stage of the "
+                "pipe for its own exit code to count, e.g. "
+                f"`{test_command} | grep ...` is fine, `... | {test_command}` is not"
+            )
+        elif "&&" in command or ";" in command:
+            culprit = (
+                " — it's chained with another command, but the final clause isn't exactly "
+                f"`{test_command}`. The test command must be the last thing the call runs, e.g. "
+                f"`edit-command && {test_command}` is fine, `{test_command} && other-command` is not"
             )
         return (
-            f"Your most recent bash call was `{attempt.command_executed}`, not the exact "
-            f"command `{test_command}`{culprit}."
+            f"Your most recent bash call was `{command}`, not the exact command `{test_command}`"
+            f"{culprit}."
+        )
+    if shape == "piped":
+        stage_rc = attempt.pipestatus[0] if attempt.pipestatus else None
+        if stage_rc is None:
+            return (
+                f"Your last bash call piped `{test_command}` into something else, but its own exit "
+                "code wasn't captured — rerun it."
+            )
+        if stage_rc != 0:
+            return (
+                f"Your last bash call piped `{test_command}` into something else, and the test "
+                f"command's own exit code was {stage_rc}, not 0 — the pipeline's overall exit code "
+                "doesn't count here, only the test command's own. Fix the failure and rerun."
+            )
+    elif attempt.status != RunAttemptStatus.SUCCEEDED:
+        return (
+            f"Your most recent bash run (`{command}`) exited "
+            f"{attempt.exit_code}, not 0 — fix the failure and rerun `{test_command}` before submitting."
         )
     if attempt.card_event_seq is None:
         return f"Your most recent `{test_command}` run wasn't recorded with an event — rerun it."

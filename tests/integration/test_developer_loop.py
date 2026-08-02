@@ -563,6 +563,48 @@ async def test_developer_loop_exceeds_iteration_cap_blocks_the_card(db_session, 
     assert "max_iterations_per_run" in (visit.summary or "")
 
 
+async def test_developer_loop_stuck_on_repeated_submit_rejections_fails_fast(db_session, toy_repo_remote):
+    """Regression test for a real incident: a Developer visit had submit_for_test
+    rejected 255 times over ~4 hours and 500+ iterations (out of a 1000-iteration
+    cap) before anything intervened, each time misreading the rejection and never
+    correcting course. agent/loop.py's STUCK_TERMINAL_REJECTION_LIMIT should fail
+    the visit well before the iteration cap once the same terminal tool has been
+    rejected that many times, regardless of how each rejection's wording differs."""
+    from built.agent.loop import STUCK_TERMINAL_REJECTION_LIMIT
+
+    project, card, wt_path = await _make_developer_card(
+        db_session, toy_repo_remote, max_iterations_per_run=100
+    )
+    visit = await transitions.start_visit(db_session, card)
+
+    # Never satisfies the plan/change/test-run gates — just keeps claiming done.
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(id=f"call_{i}", name="submit_for_test", arguments={"summary": "done"})
+                ],
+                endpoint_used="fake::model",
+            )
+            for i in range(1, STUCK_TERMINAL_REJECTION_LIMIT + 5)
+        ]
+    )
+    executor = FakeCommandExecutor(CommandResult(exit_code=0, stdout="", stderr=""))
+    dispatcher = ToolDispatcher(ctx=ToolContext(card_id=card.id, worktree_root=wt_path), executor=executor)
+
+    result = await run_developer_visit(
+        db_session, project, card, visit, llm_client=llm, dispatcher=dispatcher, max_iterations=100
+    )
+
+    assert result.lifecycle_state == LifecycleState.BLOCKED
+    assert visit.outcome == VisitOutcome.ERROR
+    assert "stuck" in (visit.summary or "")
+    assert f"rejected {STUCK_TERMINAL_REJECTION_LIMIT} times" in (visit.summary or "")
+    # Cut off at the limit, not ground all the way to the (much higher) iteration cap.
+    assert len(llm.calls) == STUCK_TERMINAL_REJECTION_LIMIT
+
+
 async def test_developer_loop_second_attempt_gets_a_recap_of_the_first(db_session, toy_repo_remote):
     project, card, wt_path = await _make_developer_card(db_session, toy_repo_remote, max_iterations_per_run=1)
 

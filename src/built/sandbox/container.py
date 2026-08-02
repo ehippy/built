@@ -14,6 +14,7 @@ unless a project needs full network isolation instead."""
 
 import asyncio
 import hashlib
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -43,12 +44,78 @@ class CommandResult:
     stdout: str
     stderr: str
     timed_out: bool = False
+    # bash's own $PIPESTATUS right after `command` ran — one exit code per top-level
+    # pipeline stage (e.g. [1, 0] for "npm test | grep ..." where the suite actually
+    # failed but grep still matched and exited 0). None if the command exited before
+    # reaching the capture (an explicit `exit` mid-script, a timeout) — never guess in
+    # that case, since domain/run_attempts.py treats None as "can't verify this way."
+    pipestatus: list[int] | None = None
 
 
 class CommandExecutor(Protocol):
     async def run(self, *, worktree: Path, command: str, timeout_seconds: int) -> CommandResult: ...
 
     async def build_sandbox(self, *, worktree: Path) -> str: ...
+
+
+# Appended to stderr (never stdout, so it can't get mixed into output a command
+# pipes/redirects) by _wrap_for_pipestatus, then stripped back out by
+# _extract_pipestatus before the model ever sees it. Always the very last thing
+# printed — the wrapper's `exit "$__built_rc"` immediately follows it and nothing in
+# the wrapped command can run after that within the same invocation — so even if the
+# command's own output happens to contain this exact text earlier, anchoring the
+# regex on end-of-string (see _extract_pipestatus) means only the genuine trailing
+# one is ever trusted.
+_PIPESTATUS_MARKER = "__BUILT_PIPESTATUS__:"
+_PIPESTATUS_TRAILER_RE = re.compile(re.escape(_PIPESTATUS_MARKER) + r"([0-9 ]*)\n?\Z")
+
+
+def _wrap_for_pipestatus(command: str) -> str:
+    """Runs `command` exactly as given, then reports bash's $PIPESTATUS for
+    whatever pipeline it last ran, without changing the invocation's own exit code
+    or its stdout. This only works because these extra lines are appended to the
+    *same* script rather than run via a separate `bash file.sh` — PIPESTATUS is
+    shell-instance-scoped and wouldn't survive a fork into a child process.
+
+    The `set -- "$?" "${PIPESTATUS[@]}"` line is doing something specific and not
+    obvious: capturing $? into its own variable first (`__built_rc=$?`, on its own
+    line, then reading ${PIPESTATUS[@]} separately afterward) was the first thing
+    tried here, and is wrong — confirmed empirically against both this project's
+    actual sandbox base image (python:3.12-slim's bash 5.2) and a local bash: a
+    bare assignment is itself a simple command, and bash updates $PIPESTATUS the
+    moment *any* simple command finishes (collapsing it to that command's own
+    one-element status) — so by the time the following line reads
+    ${PIPESTATUS[@]}, `command`'s real per-stage array is already gone, replaced
+    by the assignment's own trivial [0]. `set --` sidesteps this because both
+    parameter expansions — $? and ${PIPESTATUS[@]} — are evaluated as `set`'s
+    arguments *before* `set` itself runs and does its own PIPESTATUS update, so
+    both land safely in $1.. as plain positional parameters, immune to whatever
+    PIPESTATUS becomes afterward."""
+    return (
+        f"{command}\n"
+        'set -- "$?" "${PIPESTATUS[@]}"\n'
+        '__built_rc="$1"; shift\n'
+        f'printf "\\n{_PIPESTATUS_MARKER}%s\\n" "$*" 1>&2\n'
+        'exit "$__built_rc"\n'
+    )
+
+
+def _extract_pipestatus(stderr: str) -> tuple[str, list[int] | None]:
+    """Reverses _wrap_for_pipestatus's stderr trailer. Returns (stderr, None) if the
+    marker isn't there at all (the wrapped command exited before reaching it — an
+    explicit `exit` mid-script, a timeout) or isn't parseable — never fabricate a
+    pipestatus the command didn't actually report."""
+    match = _PIPESTATUS_TRAILER_RE.search(stderr)
+    if match is None:
+        return stderr, None
+    codes_text = match.group(1).strip()
+    if not codes_text:
+        return stderr, None
+    try:
+        codes = [int(part) for part in codes_text.split()]
+    except ValueError:
+        return stderr, None
+    return stderr[: match.start()].rstrip("\n"), codes
 
 
 class DockerCommandExecutor:
@@ -147,7 +214,7 @@ class DockerCommandExecutor:
         try:
             container = client.containers.run(
                 self.image,
-                ["bash", "-lc", command],
+                ["bash", "-lc", _wrap_for_pipestatus(command)],
                 working_dir="/workspace",
                 volumes={str(worktree): {"bind": "/workspace", "mode": "rw"}},
                 # HOME defaults to a path under the read-only root FS (e.g. /home/node) —
@@ -169,8 +236,11 @@ class DockerCommandExecutor:
                 wait_result = container.wait(timeout=timeout_seconds)
                 exit_code = wait_result.get("StatusCode", -1)
                 stdout = container.logs(stdout=True, stderr=False).decode(errors="replace")
-                stderr = container.logs(stdout=False, stderr=True).decode(errors="replace")
-                return CommandResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
+                raw_stderr = container.logs(stdout=False, stderr=True).decode(errors="replace")
+                stderr, pipestatus = _extract_pipestatus(raw_stderr)
+                return CommandResult(
+                    exit_code=exit_code, stdout=stdout, stderr=stderr, pipestatus=pipestatus
+                )
             except Exception:
                 container.kill()
                 return CommandResult(

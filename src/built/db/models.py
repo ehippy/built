@@ -575,5 +575,13 @@ class RunAttempt(Base):
     # has_passing_run_since_last_change() tell whether a file was touched (a later
     # tool_call event with a commit_sha) after this run, without a timestamp join.
     card_event_seq: Mapped[int | None] = mapped_column(Integer, default=None)
+    # bash's own $PIPESTATUS after this command ran, one entry per top-level pipeline
+    # stage (e.g. [1, 0] for `npm test | grep ...` where the suite actually failed but
+    # grep still matched something and exited 0). Only ever populated for a command
+    # domain/run_attempts.py recognizes as "the configured test_command piped into
+    # something else" — lets that gate check the test command's own exit code
+    # (pipestatus[0]) instead of the pipeline's overall exit_code, which reflects
+    # whatever ran last and is not trustworthy for this. None for every other command.
+    pipestatus: Mapped[list[int] | None] = mapped_column(JSON, default=None)
 
     column_visit: Mapped["CardColumnVisit"] = relationship(back_populates="run_attempts", lazy="raise")

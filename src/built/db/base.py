@@ -72,6 +72,9 @@ ADDITIVE_COLUMNS = [
     ("curation_events", "tokens_in", "INTEGER"),
     ("curation_events", "tokens_out", "INTEGER"),
     ("curation_events", "latency_ms", "INTEGER"),
+    # Nullable, no DEFAULT needed — every run_attempts row recorded before pipestatus
+    # capture existed simply has none (see db/models.py's RunAttempt.pipestatus).
+    ("run_attempts", "pipestatus", "TEXT"),
 ]
 
 

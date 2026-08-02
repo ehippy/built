@@ -79,6 +79,21 @@ async def _maybe_compact(
     )
 
 
+# A terminal tool (submit_for_test, approve, ...) rejected this many times in a
+# single visit — regardless of whether the reason text is identical each time —
+# fails the visit rather than grinding on toward max_iterations. Confirmed in
+# production: a Developer visit had submit_for_test rejected 255 times over ~4
+# hours and 500+ iterations (a 1000-iteration cap) before anything intervened,
+# because each rejection's specific wording differed (different bash command
+# quoted each time) even though the underlying cause never changed. Counting
+# rejections of the same terminal tool rather than requiring identical feedback
+# text catches that shape of stuck loop; 15 is generous enough that a card
+# genuinely iterating through distinct real problems won't trip it, since real
+# progress that's ever going to happen has essentially always happened well
+# before then.
+STUCK_TERMINAL_REJECTION_LIMIT = 15
+
+
 @dataclass
 class TerminalHandlerResult:
     handled: bool
@@ -119,6 +134,7 @@ async def run_column_visit(
     config = context_window_config or ContextWindowConfig(
         max_tokens=128_000,
     )
+    terminal_rejection_counts: dict[str, int] = {}
 
     try:
         for iteration in range(1, max_iterations + 1):
@@ -272,6 +288,21 @@ async def run_column_visit(
                 handler = terminal_handlers[terminal_call.name]
                 handler_result = await handler(session, card, visit, terminal_call, result.endpoint_used)
                 if handler_result.handled:
+                    await session.commit()
+                    return card
+                rejection_count = terminal_rejection_counts.get(terminal_call.name, 0) + 1
+                terminal_rejection_counts[terminal_call.name] = rejection_count
+                if rejection_count >= STUCK_TERMINAL_REJECTION_LIMIT:
+                    await transitions.fail_visit_with_error(
+                        session,
+                        card,
+                        visit,
+                        message=(
+                            f"stuck: {terminal_call.name!r} was rejected {rejection_count} times this "
+                            f"visit without ever completing — most recent reason: "
+                            f"{handler_result.feedback or '(no feedback recorded)'}"
+                        ),
+                    )
                     await session.commit()
                     return card
                 # Rejected server-side (e.g. Tester's approve without a passing run) —
@@ -600,6 +631,7 @@ async def _record_bash_run_attempt(
             stdout=outcome.command_result.stdout,
             stderr=outcome.command_result.stderr,
             card_event_seq=event_seq,
+            pipestatus=outcome.command_result.pipestatus,
         )
 
 

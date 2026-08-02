@@ -71,11 +71,18 @@ async def latest_run_attempt(session: AsyncSession, column_visit_id: str) -> Run
     return await session.scalar(stmt)
 
 
-async def has_passing_run_since_last_change(
+async def diagnose_missing_passing_run(
     session: AsyncSession, column_visit_id: str, test_command: str
-) -> bool:
+) -> str | None:
     """The rigid test gate Developer's `submit_for_test` and Tester's `approve` both
-    check server-side. True only if ALL of:
+    check server-side, as a specific human-readable reason (None if the gate is
+    satisfied) rather than a bare bool — so a rejected model is told what it
+    actually did wrong instead of having to guess. Confirmed in production: a
+    Developer visit ground through 500+ iterations misreading a generic rejection
+    as "my edit is a no-op", because nothing told it its bash call was piped
+    (`npm test | grep ...`) rather than the bare command the gate requires.
+
+    Satisfied only if ALL of:
     - the most recent bash call in this visit is, mod trailing redirection, exactly
       the project's configured test_command (not just "some command exited 0" —
       that was the old, gameable check: run the suite, see red, then run `true`);
@@ -83,14 +90,36 @@ async def has_passing_run_since_last_change(
     - nothing has mutated the repo (write_file/edit_file, or a bash call that
       changed tracked files) since — otherwise a green run followed by an
       unverified edit would still read as "tested", which is exactly the failure
-      mode the Tester's new job of actively strengthening tests runs into."""
+      mode the Tester's job of actively strengthening tests runs into."""
     attempt = await latest_run_attempt(session, column_visit_id)
-    if attempt is None or attempt.status != RunAttemptStatus.SUCCEEDED:
-        return False
+    if attempt is None:
+        return f"You haven't run the test command (`{test_command}`) via bash yet this visit."
+    if attempt.status != RunAttemptStatus.SUCCEEDED:
+        return (
+            f"Your most recent bash run (`{attempt.command_executed}`) exited "
+            f"{attempt.exit_code}, not 0 — fix the failure and rerun `{test_command}` before submitting."
+        )
     if _normalize_command(attempt.command_executed or "") != _normalize_command(test_command):
-        return False
+        culprit = ""
+        if "|" in attempt.command_executed:
+            culprit = (
+                " — it's piped into something else. Piping changes whose exit code gets checked, "
+                "so it doesn't count as running the test command. If you need to trim a large "
+                f"suite's output, run `{test_command} > /tmp/test_output.txt 2>&1` bare first, then "
+                "a separate, later bash call can `grep`/`tail` that saved file — a read-only "
+                "follow-up like that doesn't touch tracked files, so it won't invalidate this run"
+            )
+        elif "&&" in attempt.command_executed or ";" in attempt.command_executed:
+            culprit = (
+                " — it's chained with another command via `&&`/`;`. Run the test command "
+                "completely on its own, in its own bash call, with nothing else in the same call"
+            )
+        return (
+            f"Your most recent bash call was `{attempt.command_executed}`, not the exact "
+            f"command `{test_command}`{culprit}."
+        )
     if attempt.card_event_seq is None:
-        return False
+        return f"Your most recent `{test_command}` run wasn't recorded with an event — rerun it."
     later_payloads = await session.scalars(
         select(CardEvent.payload).where(
             CardEvent.column_visit_id == column_visit_id,
@@ -98,7 +127,20 @@ async def has_passing_run_since_last_change(
             CardEvent.seq > attempt.card_event_seq,
         )
     )
-    return not any(payload.get("commit_sha") for payload in later_payloads)
+    if any(payload.get("commit_sha") for payload in later_payloads):
+        return (
+            f"You've changed a file since your last passing `{test_command}` run — rerun it "
+            "after your final edit, with nothing else in between, before submitting."
+        )
+    return None
+
+
+async def has_passing_run_since_last_change(
+    session: AsyncSession, column_visit_id: str, test_command: str
+) -> bool:
+    """Bool wrapper around diagnose_missing_passing_run — see that docstring for
+    exactly what this checks."""
+    return await diagnose_missing_passing_run(session, column_visit_id, test_command) is None
 
 
 async def has_made_any_change_this_visit(session: AsyncSession, column_visit_id: str) -> bool:

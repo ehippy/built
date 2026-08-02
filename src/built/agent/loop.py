@@ -451,12 +451,11 @@ async def _require_passing_test_run(
             "This project has no test command configured, so there's no way to verify work "
             f"server-side — {verb} is blocked until an operator sets one in project settings."
         )
-    if not await run_attempts.has_passing_run_since_last_change(session, visit.id, project.test_command):
+    reason = await run_attempts.diagnose_missing_passing_run(session, visit.id, project.test_command)
+    if reason is not None:
         return (
-            f"No passing run of the project's test command is recorded since your last change. "
-            f"Run exactly `{project.test_command}` via bash, confirm exit code 0, and don't touch "
-            f"any file afterward (write_file/edit_file/bash) before calling {verb} — this is "
-            "checked server-side against your most recent matching run."
+            f"{reason} That's checked server-side against your most recent matching run — "
+            f"{verb} is rejected until it passes."
         )
     return None
 

@@ -9,6 +9,7 @@ import subprocess
 import httpx
 import pytest
 
+from built.db.models import DeployConfig
 from built.domain.enums import DeployKind, DeployMode
 from built.sandbox import deploy_runner
 from built.sandbox.worktree import create_card_worktree, ensure_tool_worktree
@@ -173,6 +174,25 @@ async def test_run_auto_main_deploy_deploy_command_failure(db_session, deployabl
 
     assert result.success is False
     assert "exited 1" in result.message
+
+
+async def test_deploy_command_exposes_only_explicit_environment_refs(monkeypatch, tmp_path):
+    monkeypatch.setenv("ALLOWED_DEPLOY_SECRET", "allowed")
+    monkeypatch.setenv("UNDECLARED_HOST_SECRET", "must-not-leak")
+    config = DeployConfig(
+        project_id="p",
+        kind=DeployKind.COMMAND,
+        mode=DeployMode.AUTO_MAIN,
+        command=(
+            'test "$ALLOWED_DEPLOY_SECRET" = allowed '
+            '&& test -z "${UNDECLARED_HOST_SECRET+x}"'
+        ),
+        env_var_refs=["ALLOWED_DEPLOY_SECRET"],
+    )
+
+    result = await deploy_runner._run_deploy_command(config, cwd=tmp_path)
+
+    assert result.success is True, result.message
 
 
 async def test_run_auto_main_deploy_merge_conflict_reports_conflicted_paths(

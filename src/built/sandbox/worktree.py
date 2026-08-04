@@ -4,12 +4,20 @@ branches live directly under refs/heads/* (verified empirically — `git clone -
 does not use refs/remotes/origin/*), so worktrees are created off the plain branch
 name, not `origin/<branch>`."""
 
+import logging
+import re
 from pathlib import Path
 
 from built.config import settings
 from built.db.models import Card, Project
 from built.tools import git_tools
 from built.tools.git_tools import GitCommandError, run_git
+
+logger = logging.getLogger(__name__)
+
+# git refuses to update a branch that is checked out in a linked worktree:
+# "fatal: refusing to fetch into branch 'refs/heads/card/x' checked out at '<path>'".
+_REFUSING_TO_FETCH_CHECKED_OUT = re.compile(r"refusing to fetch into branch '[^']+' checked out at ")
 
 
 def bare_repo_path(project: Project) -> Path:
@@ -35,11 +43,42 @@ async def ensure_managed_clone(project: Project) -> Path:
     the current upstream tip)."""
     bare_path = bare_repo_path(project)
     if bare_path.exists():
-        await run_git("fetch", "origin", "+refs/heads/*:refs/heads/*", cwd=bare_path)
+        await _fetch_managed_clone(project, bare_path)
         return bare_path
     bare_path.parent.mkdir(parents=True, exist_ok=True)
     await run_git("clone", "--bare", project.repo_remote_url, str(bare_path), cwd=bare_path.parent)
     return bare_path
+
+
+async def _fetch_managed_clone(project: Project, bare_path: Path) -> None:
+    """Advance the bare clone's refs from the remote. Fetching the full
+    +refs/heads/*:refs/heads/* keeps every branch fresh, but git refuses to update
+    a branch that is checked out in a linked worktree — and every live card's
+    branch IS checked out in its own worktree. Once one card's branch has been
+    pushed to the remote (pr_to_operator), any later fetch for a *different* card
+    dies with "refusing to fetch into branch 'refs/heads/card/...' checked out at
+    ..." and wedges that visit's setup. The default branch is never checked out
+    anywhere (card and tool worktrees both branch off it), so when the full fetch
+    trips over a checked-out branch, fall back to fetching just it — the one branch
+    worktree creation and tool resets actually need advanced."""
+    try:
+        await run_git("fetch", "origin", "+refs/heads/*:refs/heads/*", cwd=bare_path)
+    except GitCommandError as exc:
+        if not _REFUSING_TO_FETCH_CHECKED_OUT.search(exc.stderr):
+            raise
+        logger.info(
+            "full fetch for project %s refused on a checked-out worktree branch (%s); "
+            "falling back to fetching only %s",
+            project.id,
+            exc.stderr.strip().splitlines()[0],
+            project.default_branch,
+        )
+        await run_git(
+            "fetch",
+            "origin",
+            f"+refs/heads/{project.default_branch}:refs/heads/{project.default_branch}",
+            cwd=bare_path,
+        )
 
 
 def tool_worktree_path(project: Project, *, tool: str) -> Path:

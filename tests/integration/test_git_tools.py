@@ -8,6 +8,7 @@ model's context window (an 8.4M-token request against a 248K-token budget) befor
 agent/context_window.py's compaction ever got a chance to run.
 """
 
+import base64
 import subprocess
 
 from built.tools import git_tools
@@ -72,3 +73,57 @@ async def test_diff_shortstat_against_ref_is_zero_when_nothing_changed(toy_repo_
     insertions, deletions = await git_tools.diff_shortstat_against_ref(toy_repo_remote, "base")
 
     assert (insertions, deletions) == (0, 0)
+
+
+def test_token_auth_config_scopes_the_token_and_clears_credential_helpers():
+    """The deploy push fix ("authenticate deploy git push with the configured
+    GitHub token"): the token travels as a Basic-auth header via
+    http.https://github.com/.extraheader — scoped to github.com only, passed as
+    -c config for that one invocation (never written to any on-disk gitconfig),
+    and base64-encoded so the literal token never appears in argv where ps could
+    see it. credential.helper= is cleared so an ambient helper (e.g. gh's, holding
+    a differently-scoped token) can't silently win over the explicit header."""
+    args = git_tools._token_auth_config("sekrit-token")
+
+    expected_basic = base64.b64encode(b"x-access-token:sekrit-token").decode()
+    assert args == (
+        "-c",
+        "credential.helper=",
+        "-c",
+        f"http.https://github.com/.extraheader=AUTHORIZATION: basic {expected_basic}",
+    )
+    assert "sekrit-token" not in " ".join(args)
+
+
+async def test_run_git_token_scoped_push_completes(tmp_path):
+    """A token-scoped push: run_git(..., token=...) must accept the token and push
+    successfully. The fake github.com URL is rewritten (url.<base>.insteadOf) to a
+    local receiver so no network is touched; the auth -c args ride along harmlessly.
+    Guards against the auth flags ever breaking the push command they're meant to
+    secure."""
+    receiver = tmp_path / "receiver.git"
+    subprocess.run(["git", "init", "-q", "-b", "main", "--bare", str(receiver)], check=True)
+    work = tmp_path / "work"
+    work.mkdir()
+    for args in (
+        ["init", "-q", "-b", "main"],
+        ["config", "user.email", "test@example.com"],
+        ["config", "user.name", "Test"],
+        ["remote", "add", "origin", "https://github.com/fake-owner/fake-repo.git"],
+        ["config", f"url.{receiver}.insteadOf", "https://github.com/fake-owner/fake-repo.git"],
+    ):
+        subprocess.run(["git", *args], cwd=work, check=True, capture_output=True)
+    (work / "app.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "."], cwd=work, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-q", "-m", "c1"], cwd=work, check=True, capture_output=True)
+
+    await git_tools.run_git("push", "origin", "main:main", cwd=work, token="sekrit-token")
+
+    log = subprocess.run(
+        ["git", "log", "--oneline", "main"],
+        cwd=receiver,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "c1" in log

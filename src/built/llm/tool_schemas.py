@@ -895,10 +895,72 @@ GET_TICKET = {
     },
 }
 
+UNBLOCK_CARD = {
+    "type": "function",
+    "function": {
+        "name": "unblock_card",
+        "description": (
+            "Retry a blocked or failed card at the human's explicit request — re-activate it so "
+            "the pipeline picks it back up from its current column. Only call this when the human "
+            "has actually asked you to unblock a specific card. Unlike the Reviver's autonomous "
+            "retries this is a human override, so it isn't gated by the auto-retry budget; it resets "
+            "the card's safety-valve counters and leaves a fresh budget for the next run. The "
+            "optional note is surfaced to whichever agent runs the card next."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "card_id": {"type": "string", "description": "The blocked/failed card to unblock."},
+                "note": {
+                    "type": "string",
+                    "description": "Optional guidance for whichever column runs the card next.",
+                },
+            },
+            "required": ["card_id"],
+        },
+    },
+}
+
+ARCHIVE_CARD = {
+    "type": "function",
+    "function": {
+        "name": "archive_card",
+        "description": (
+            "Archive a card — hide it from the board and stop the pipeline from ever claiming it "
+            "again. History, events, and visits are all kept intact; the card stays reachable by id "
+            "and can be restored with unarchive_card. Use this when the human asks to take a card "
+            "off the board (e.g. it turned out not to be wanted)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {"card_id": {"type": "string", "description": "The card to archive."}},
+            "required": ["card_id"],
+        },
+    },
+}
+
+UNARCHIVE_CARD = {
+    "type": "function",
+    "function": {
+        "name": "unarchive_card",
+        "description": (
+            "Restore a previously archived card back onto the board so the pipeline can work it "
+            "again. Use this when the human asks to bring a card back — e.g. after an accidental "
+            "archive."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {"card_id": {"type": "string", "description": "The archived card to restore."}},
+            "required": ["card_id"],
+        },
+    },
+}
+
 # Project chat (agent/chat.py) — read-only browsing plus search_tickets/get_ticket/
-# create_ticket/update_ticket, all ordinary (non-terminal) tools: a chat turn ends when the
-# model replies with no further tool calls, not by calling a designated "done" tool, so the
-# conversation stays open after a card is looked up, filed, or edited.
+# create_ticket/update_ticket/unblock_card/archive_card/unarchive_card, all ordinary
+# (non-terminal) tools: a chat turn ends when the model replies with no further tool calls,
+# not by calling a designated "done" tool, so the conversation stays open after a card is
+# looked up, filed, edited, unblocked, or archived.
 CHAT_TOOLS = [
     READ_FILE,
     LIST_FILES,
@@ -908,6 +970,9 @@ CHAT_TOOLS = [
     GET_TICKET,
     CREATE_TICKET,
     UPDATE_TICKET,
+    UNBLOCK_CARD,
+    ARCHIVE_CARD,
+    UNARCHIVE_CARD,
 ]
 
 APPROVE = {

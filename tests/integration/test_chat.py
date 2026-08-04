@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from built.agent.chat import run_chat_turn
 from built.db.models import ChatMessage
-from built.domain.enums import ChatRole
+from built.domain.enums import ChatRole, LifecycleState
 from built.llm.client import LLMResult, ToolCallRequest
 from built.llm.tool_schemas import MAX_TICKETS_PER_CHAT_TURN
 from built.main import app
@@ -269,6 +269,141 @@ async def test_chat_get_ticket_missing_card_yields_error_tool_result(db_session,
     tool_result = next(m for m in appended if m.role == ChatRole.TOOL)
     assert tool_result.is_error
     assert "no-such-card" in tool_result.content
+
+
+async def test_chat_unblock_card_retries_a_blocked_card(db_session, toy_repo_remote):
+    project, wt_path = await _make_project(db_session, toy_repo_remote, _n="3e")
+    card = await card_service.create_card(db_session, project.id, title="Fix login bug", raw_request="r")
+    card.lifecycle_state = LifecycleState.BLOCKED
+    card.revision_count = 3
+    await chat_service.append_user_message(db_session, project.id, content="unblock the login bug card")
+    await db_session.commit()
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_1",
+                        name="unblock_card",
+                        arguments={"card_id": card.id, "note": "rebase onto main first"},
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(content="Done — it's back in the queue.", tool_calls=[], endpoint_used="fake::model"),
+        ]
+    )
+
+    appended = await run_chat_turn(
+        db_session, project, llm_client=llm, dispatcher=_dispatcher(wt_path), max_tool_iterations=10
+    )
+
+    await db_session.refresh(card)
+    assert card.lifecycle_state == LifecycleState.ACTIVE
+    assert card.revision_count == 0
+    assert card.retry_note == "rebase onto main first"
+    tool_result = next(m for m in appended if m.role == ChatRole.TOOL)
+    assert not tool_result.is_error
+    assert tool_result.card_id == card.id
+    assert "Unblocked" in tool_result.content
+
+
+async def test_chat_unblock_card_not_blocked_yields_error_tool_result(db_session, toy_repo_remote):
+    project, wt_path = await _make_project(db_session, toy_repo_remote, _n="3f")
+    card = await card_service.create_card(db_session, project.id, title="Add dark mode", raw_request="r")
+    await chat_service.append_user_message(db_session, project.id, content="unblock the dark mode card")
+    await db_session.commit()
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(id="call_1", name="unblock_card", arguments={"card_id": card.id})
+                ],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(content="Can't — it isn't blocked.", tool_calls=[], endpoint_used="fake::model"),
+        ]
+    )
+
+    appended = await run_chat_turn(
+        db_session, project, llm_client=llm, dispatcher=_dispatcher(wt_path), max_tool_iterations=10
+    )
+
+    tool_result = next(m for m in appended if m.role == ChatRole.TOOL)
+    assert tool_result.is_error
+    assert "cannot retry" in tool_result.content
+    assert card.lifecycle_state == LifecycleState.ACTIVE
+
+
+async def test_chat_archive_card_hides_it_from_the_board(db_session, toy_repo_remote):
+    project, wt_path = await _make_project(db_session, toy_repo_remote, _n="3g")
+    card = await card_service.create_card(db_session, project.id, title="Dead idea", raw_request="r")
+    await chat_service.append_user_message(db_session, project.id, content="drop that card from the board")
+    await db_session.commit()
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_1", name="archive_card", arguments={"card_id": card.id}
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(content="Archived it.", tool_calls=[], endpoint_used="fake::model"),
+        ]
+    )
+
+    appended = await run_chat_turn(
+        db_session, project, llm_client=llm, dispatcher=_dispatcher(wt_path), max_tool_iterations=10
+    )
+
+    await db_session.refresh(card)
+    assert card.archived_at is not None
+    tool_result = next(m for m in appended if m.role == ChatRole.TOOL)
+    assert not tool_result.is_error
+    assert tool_result.card_id == card.id
+    assert await card_service.list_cards(db_session, project.id) == []
+
+
+async def test_chat_unarchive_card_restores_it_to_the_board(db_session, toy_repo_remote):
+    project, wt_path = await _make_project(db_session, toy_repo_remote, _n="3h")
+    card = await card_service.create_card(db_session, project.id, title="Keep after all", raw_request="r")
+    await card_service.archive_card(db_session, card.id)
+    await db_session.commit()
+    await chat_service.append_user_message(db_session, project.id, content="actually, bring that card back")
+    await db_session.commit()
+
+    llm = ScriptedLLMClient(
+        [
+            LLMResult(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_1", name="unarchive_card", arguments={"card_id": card.id}
+                    )
+                ],
+                endpoint_used="fake::model",
+            ),
+            LLMResult(content="It's back.", tool_calls=[], endpoint_used="fake::model"),
+        ]
+    )
+
+    appended = await run_chat_turn(
+        db_session, project, llm_client=llm, dispatcher=_dispatcher(wt_path), max_tool_iterations=10
+    )
+
+    await db_session.refresh(card)
+    assert card.archived_at is None
+    tool_result = next(m for m in appended if m.role == ChatRole.TOOL)
+    assert not tool_result.is_error
+    assert [c.id for c in await card_service.list_cards(db_session, project.id)] == [card.id]
 
 
 async def test_chat_no_op_guard_when_history_already_ends_on_assistant(db_session, toy_repo_remote):

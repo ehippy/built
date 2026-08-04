@@ -110,6 +110,45 @@ async def test_sync_card_branch_with_default_leaves_conflict_markers_for_develop
     assert "<<<<<<<" in (wt_path / "app.py").read_text()
 
 
+async def test_ensure_managed_clone_falls_back_to_default_branch_when_a_card_branch_is_checked_out(
+    toy_repo_remote,
+):
+    """Regression for the deploy-time "refusing to fetch into branch
+    'refs/heads/card/...' checked out at ..." failure: once a card's branch has been
+    pushed to the remote (pr_to_operator) while its worktree still has it checked
+    out, the full +refs/heads/*:refs/heads/* fetch for the *next* card's visit
+    refuses, wedging that visit. ensure_managed_clone must fall back to fetching
+    just the default branch (never checked out anywhere) instead."""
+    project = Project(
+        id="proj-wt-fetch-conflict", repo_remote_url=str(toy_repo_remote), default_branch="main"
+    )
+    card = Card(id="card-wt-fetch-conflict", project_id=project.id, branch_name="card/fetch-conflict")
+    bare_path = await worktree.ensure_managed_clone(project)
+    wt_path = await worktree.create_card_worktree(project, card)
+
+    # Simulate the deployer having pushed the card's branch: it now exists on the
+    # remote while also being checked out in the card's own worktree.
+    (wt_path / "app.py").write_text("def greet():\n    return 'from the card'\n")
+    await git_tools.commit_all(wt_path, message="card change")
+    await git_tools.run_git(
+        "push", "origin", f"{card.branch_name}:{card.branch_name}", cwd=wt_path
+    )
+
+    # main advances on the remote in the meantime.
+    (toy_repo_remote / "other.py").write_text("value = 2\n")
+    subprocess.run(["git", "add", "-A"], cwd=toy_repo_remote, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "advance main"], cwd=toy_repo_remote, check=True, capture_output=True
+    )
+
+    # Before the fix, this raised "refusing to fetch into branch ... checked out".
+    await worktree.ensure_managed_clone(project)
+
+    # The default branch still advanced despite the fallback.
+    log = await git_tools.run_git("log", "--oneline", "-1", "refs/heads/main", cwd=bare_path)
+    assert "advance main" in log
+
+
 async def test_read_default_branch_file_returns_none_when_missing(toy_repo_remote):
     project = Project(id="proj-wt-read-1", repo_remote_url=str(toy_repo_remote), default_branch="main")
     content = await worktree.read_default_branch_file(project, "AGENTS.md")

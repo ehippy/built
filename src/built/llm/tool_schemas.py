@@ -233,6 +233,31 @@ BASH = {
     },
 }
 
+RUN_CHECK = {
+    "type": "function",
+    "function": {
+        "name": "run_check",
+        "description": (
+            "Run a shell command in the repository root to verify something — the project's own "
+            "test/lint/build/E2E command, a health check, whatever this project's conventions call "
+            "for (see AGENTS.md). Same sandboxed container as bash, but read-only in effect: whatever "
+            "this command does to the working tree — files it writes, dependencies it installs — is "
+            "discarded the moment it finishes, win or lose. Use this to inform your judgment, never "
+            "to fix anything; if what you find is wrong, say so through your own feedback tool "
+            "instead of trying to patch it here — nothing this does persists to the next call, let "
+            "alone to what actually ships."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "The shell command to run."},
+                "timeout_seconds": {"type": "integer", "description": "Timeout in seconds. Defaults to 120."},
+            },
+            "required": ["command"],
+        },
+    },
+}
+
 BUILD_SANDBOX = {
     "type": "function",
     "function": {
@@ -1018,12 +1043,16 @@ REVIEWER_REQUEST_CHANGES = {
     },
 }
 
-# Read-only on purpose: Reviewer can inspect the diff and the surrounding code but
-# cannot edit anything or run commands — unlike Tester (which can strengthen tests)
-# its whole job is to judge the diff as it stands, not to fix it. That's what makes
-# it a genuine independent check rather than the same actor wearing a different hat.
-# FETCH_DOCS doesn't break that: it can't touch the repo, only ground a judgment
-# (e.g. "this doesn't match the real API contract") in the actual current docs.
+# Read-only on purpose: Reviewer can inspect the diff and the surrounding code, and
+# (via RUN_CHECK) run verification commands, but can't edit anything or make
+# anything it runs persist — unlike Tester (which can strengthen tests) its whole
+# job is to judge the diff as it stands, not to fix it. That's what makes it a
+# genuine independent check rather than the same actor wearing a different hat.
+# FETCH_DOCS doesn't break that either: it can't touch the repo, only ground a
+# judgment (e.g. "this doesn't match the real API contract") in the actual current
+# docs. RUN_CHECK is the one case that looks like it could — see dispatcher.py's
+# handling of "run_check", which discards whatever the command did to the working
+# tree the moment it returns, specifically so this stays true.
 REVIEWER_TOOLS = [
     READ_FILE,
     LIST_FILES,
@@ -1031,6 +1060,7 @@ REVIEWER_TOOLS = [
     GREP_FILES,
     FETCH_DOCS,
     REVIEW_DIFF,
+    RUN_CHECK,
     REVIEWER_APPROVE,
     REVIEWER_REQUEST_CHANGES,
 ]
@@ -1106,12 +1136,22 @@ _DEPLOYER_READ_TOOLS = [READ_FILE, LIST_FILES, GLOB_FILES, GREP_FILES]
 def deployer_tools(mode: DeployMode) -> list[dict]:
     """auto_main gets read tools and both terminal tools (run_deploy, abandon_deploy)
     — no editing tools, since a merge conflict is no longer resolved in-place here
-    (see sandbox/deploy_runner.py). pr_to_operator never merges, so it only needs
-    read tools plus its own single terminal tool — the model never sees a tool it
-    can't use."""
+    (see sandbox/deploy_runner.py), and deliberately no RUN_CHECK either: in this
+    mode the worktree is still just a checkout of the default branch until
+    run_deploy itself does the merge (see build_deployer_prompt), so there's
+    nothing belonging to this card to actually check yet — the model's one useful
+    action here really is run_deploy, immediately. pr_to_operator never merges, so
+    its worktree already reflects the card's real branch, which is what makes
+    RUN_CHECK worth having there: a real pre-PR sanity check (a build, the
+    project's own E2E command, whatever AGENTS.md calls for) without ever touching
+    real deploy credentials, which only ever get injected in
+    sandbox/deploy_runner.py's own process, never here. Neither mode gets a
+    *post*-deploy check against a live URL from this — run_deploy/open_pull_request
+    both end the turn on success, so verifying what's actually live afterward is a
+    separate problem this doesn't solve."""
     if mode == DeployMode.AUTO_MAIN:
         return [*_DEPLOYER_READ_TOOLS, RUN_DEPLOY, ABANDON_DEPLOY]
-    return [*_DEPLOYER_READ_TOOLS, OPEN_PULL_REQUEST]
+    return [*_DEPLOYER_READ_TOOLS, RUN_CHECK, OPEN_PULL_REQUEST]
 
 
 LIST_STUCK_CARDS = {

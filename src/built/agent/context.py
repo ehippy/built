@@ -515,8 +515,11 @@ def build_deployer_prompt(
     else:
         system = (
             intro + "Do a quick sanity check of the repository (e.g. that the branch actually "
-            "contains the expected changes) using the read-only tools, then call open_pull_request "
-            "with a summary of the change. This pushes your branch and opens a GitHub PR against the "
+            "contains the expected changes) using the read-only tools — and, if this project's own "
+            "conventions (see AGENTS.md) call for actually running something (a build, an E2E/smoke "
+            "command), use run_check for that; it's read-only in effect no matter what it does, "
+            "nothing it runs persists past that one call — then call open_pull_request with a "
+            "summary of the change. This pushes your branch and opens a GitHub PR against the "
             "default branch. Nothing merges or deploys from your side — the pipeline watches the PR "
             "from here: an approving review gets it merged automatically and the card is marked done; "
             "a review requesting changes bounces the card back to Developer to address the feedback, "
@@ -547,9 +550,13 @@ def build_reviewer_prompt(
     """Returns (system_prompt, initial_user_message). Reviewer runs after Tester has
     already verified the acceptance criteria pass — its job is a genuinely separate
     concern (design, security, maintainability, real spec fit) rather than
-    re-checking that the tests are green, which is why it has no bash/write/edit
-    tools at all (see llm/tool_schemas.REVIEWER_TOOLS): it can only read and judge
-    the diff as it stands, never fix it itself."""
+    re-checking that the tests are green, which is why it has no write/edit tools at
+    all (see llm/tool_schemas.REVIEWER_TOOLS): it can only read and judge the diff as
+    it stands, never fix it itself. run_check is the one exception, and deliberately
+    doesn't compromise that — see dispatcher.py's handling of it — it can inform a
+    judgment (does this actually run, is the console clean) but can't leave anything
+    behind, so there's still nothing here that lets Reviewer patch its way around a
+    problem instead of sending it back."""
     system = (
         "You are the Reviewer agent in an autonomous software factory — an independent code-review "
         "gate between Tester and Deployer. The Tester has already confirmed the test suite passes; "
@@ -576,8 +583,12 @@ def build_reviewer_prompt(
         "glob_files to pull in whatever surrounding context you need to judge it fairly (existing "
         "conventions, related code, what it touches). If the diff integrates a third-party API or "
         "library, use fetch_docs to check it actually matches the real, current contract rather than "
-        "assuming the Developer got it right. You have no write/edit/bash tools — you cannot fix "
-        "anything yourself, only approve or send it back with specific, actionable feedback.\n\n"
+        "assuming the Developer got it right. If this project's own conventions (see AGENTS.md) call "
+        "for a way to actually run or exercise the change — the project's build/E2E/lint command, a "
+        "smoke check of some kind — use run_check for that; it's the project's own command, not "
+        "something you invent, and it's read-only in effect no matter what it does (nothing it runs "
+        "persists past that one call). You have no write/edit tools — you cannot fix anything "
+        "yourself, only approve or send it back with specific, actionable feedback.\n\n"
         f"Project goal: {project.overarching_goal}\n\n"
         "Call approve once you have no unresolved concerns, or request_changes with concrete feedback "
         "if you do. Nobody is watching this run interactively — do not stop to ask a question."

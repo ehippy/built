@@ -39,6 +39,11 @@ class ToolDispatcher:
         commit_sha = None
         if name in MUTATING_TOOLS and self.ctx.auto_commit and not result.is_error:
             commit_sha = await self._auto_commit(name, arguments)
+        elif name == "run_check":
+            # Whatever the command did to the worktree must not outlive this call —
+            # see git_tools.discard_uncommitted_changes for why that matters given
+            # this worktree is reused across every future visit the card makes.
+            await git_tools.discard_uncommitted_changes(self.ctx.worktree_root)
         return DispatchOutcome(result=result, commit_sha=commit_sha, command_result=command_result)
 
     async def _auto_commit(self, name: str, arguments: dict) -> str | None:
@@ -87,6 +92,16 @@ class ToolDispatcher:
                 None,
             )
         if name == "bash":
+            command_result = await self.executor.run(
+                worktree=self.ctx.worktree_root,
+                command=arguments["command"],
+                timeout_seconds=arguments.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS),
+            )
+            return format_bash_result(command_result), command_result
+        if name == "run_check":
+            # Same execution path as bash — the difference is entirely in dispatch()
+            # above, which never auto-commits this and instead discards whatever it
+            # did to the worktree afterward, win or lose.
             command_result = await self.executor.run(
                 worktree=self.ctx.worktree_root,
                 command=arguments["command"],

@@ -195,6 +195,23 @@ async def complete_merge(worktree: Path, *, message: str) -> str:
     return sha.strip()
 
 
+async def discard_uncommitted_changes(worktree: Path) -> None:
+    """Restores `worktree` to exactly its last-committed state — tracked-file edits
+    reverted, untracked-and-not-ignored files removed. Used after `run_check` (a
+    verification-only command run by roles with no write_file/edit_file, like
+    Reviewer/Deployer): whatever the command did to the working tree must not
+    survive it, because this worktree is reused across every future visit this card
+    makes, and the next mutating tool call anywhere down the line does `git add -A`
+    — anything this leaves lying around would otherwise get silently swept into a
+    real commit later. Deliberately not `clean -fdx`: gitignored files (a fresh
+    `node_modules`, browser binaries a check just installed) are already excluded
+    from `git add -A` on their own, so leaving them in place just saves a later
+    run_check call from redoing that setup, without any risk of them leaking into
+    a commit."""
+    await run_git("reset", "--hard", "HEAD", cwd=worktree)
+    await run_git("clean", "-fd", cwd=worktree)
+
+
 async def commit_all(worktree: Path, *, message: str) -> str | None:
     """Stage everything and commit under a fixed agent identity. Returns the new
     commit SHA, or None if the tool call didn't actually change anything on disk —

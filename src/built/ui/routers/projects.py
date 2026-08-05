@@ -11,9 +11,11 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from built.agent.curation import assess_overseer_prompt
 from built.api.deps import SessionDep
 from built.config import settings
 from built.domain.enums import Column, DeployKind, DeployMode
+from built.llm.client import FallbackLLMClient
 from built.sandbox import deploy_runner
 from built.services import card_service, endpoint_service, project_service
 from built.ui.templates import templates
@@ -112,19 +114,25 @@ async def project_ci_status(project_id: str, request: Request, session: SessionD
     )
 
 
-@router.get("/projects/{project_id}/settings")
-async def project_settings(project_id: str, request: Request, session: SessionDep):
+async def _project_settings_context(session: SessionDep, project_id: str) -> dict:
+    """Shared by the plain GET render and update_overseer_prompt's failed-validation
+    re-render below — the latter can't redirect (there's no flash/session mechanism
+    to carry the judge's feedback + the operator's draft text across one), so it
+    renders this same template directly instead and needs the same context."""
     project = await project_service.get_project(session, project_id)
     endpoint_configs = await endpoint_service.list_endpoint_configs(session, project_id=project_id)
+    return {
+        "project": project,
+        "endpoint_configs": endpoint_configs,
+        "deploy_config": project.deploy_config,
+        "default_max_tokens": settings.default_max_tokens,
+    }
+
+
+@router.get("/projects/{project_id}/settings")
+async def project_settings(project_id: str, request: Request, session: SessionDep):
     return templates.TemplateResponse(
-        request,
-        "project_settings.html.j2",
-        {
-            "project": project,
-            "endpoint_configs": endpoint_configs,
-            "deploy_config": project.deploy_config,
-            "default_max_tokens": settings.default_max_tokens,
-        },
+        request, "project_settings.html.j2", await _project_settings_context(session, project_id)
     )
 
 
@@ -176,6 +184,49 @@ async def update_project_prompts(
         deployer_guidance=deployer_guidance or None,
     )
     return RedirectResponse(f"/ui/projects/{project_id}/settings#prompts-pane", status_code=303)
+
+
+@router.post("/projects/{project_id}/overseer-prompt")
+async def update_overseer_prompt(
+    project_id: str,
+    request: Request,
+    session: SessionDep,
+    overseer_prompt: str = Form(""),
+    force: bool = Form(False),
+):
+    """A blank submission always saves unconditionally (no judge call — an empty
+    mandate can't fail "comprehensive enough", it's just off). A non-blank
+    submission without force=true is judged first (agent/curation.py's
+    assess_overseer_prompt); on a non-comprehensive verdict, or if the judge call
+    itself fails, this re-renders the settings page directly (not a redirect —
+    see _project_settings_context's docstring) with the feedback and the draft
+    text preserved, plus a second submit button that resubmits with force=true.
+    force is a one-shot escape hatch for that submission only, not a persisted
+    approval — editing and resubmitting later gets freshly judged."""
+    prompt = overseer_prompt.strip() or None
+    if prompt is not None and not force:
+        project = await project_service.get_project(session, project_id)
+        try:
+            chain = await endpoint_service.get_resolved_chain(session, project_id=project_id, role=Column.PM)
+            assessment = await assess_overseer_prompt(prompt, project, llm_client=FallbackLLMClient(chain))
+        except Exception as exc:  # noqa: BLE001 — soft-blocked, not swallowed; see assess_overseer_prompt
+            context = await _project_settings_context(session, project_id)
+            context.update(
+                overseer_validation={"error": str(exc), "issues": []},
+                overseer_prompt_draft=prompt,
+                active_pane="overseer-pane",
+            )
+            return templates.TemplateResponse(request, "project_settings.html.j2", context)
+        if not assessment.comprehensive:
+            context = await _project_settings_context(session, project_id)
+            context.update(
+                overseer_validation={"error": None, "issues": assessment.issues},
+                overseer_prompt_draft=prompt,
+                active_pane="overseer-pane",
+            )
+            return templates.TemplateResponse(request, "project_settings.html.j2", context)
+    await project_service.set_overseer_prompt(session, project_id, prompt)
+    return RedirectResponse(f"/ui/projects/{project_id}/settings#overseer-pane", status_code=303)
 
 
 @router.post("/projects/{project_id}/archive")

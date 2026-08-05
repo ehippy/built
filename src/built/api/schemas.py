@@ -48,6 +48,11 @@ class ProjectUpdate(BaseModel):
     deployer_guidance: str | None = None
 
 
+class OverseerPromptIn(BaseModel):
+    prompt: str | None = None
+    force: bool = False
+
+
 class DeployConfigIn(BaseModel):
     mode: DeployMode = DeployMode.PR_TO_OPERATOR
     kind: DeployKind
@@ -85,6 +90,13 @@ class ProjectOut(BaseModel):
     tester_guidance: str | None
     reviewer_guidance: str | None
     deployer_guidance: str | None
+    # Read-visible only — not on ProjectCreate/ProjectUpdate. Setting it goes through
+    # the dedicated PUT /{project_id}/overseer-prompt endpoint instead (see
+    # api/routers/projects.py), which runs agent/curation.py's assess_overseer_prompt
+    # gate first; ProjectUpdate's blanket **fields passthrough has no way to carry a
+    # judge verdict or a force-override flag, and always sends every field (even
+    # unset ones, as None) so it could never intentionally clear this back to blank.
+    overseer_prompt: str | None
     created_at: datetime
     updated_at: datetime
     archived_at: datetime | None

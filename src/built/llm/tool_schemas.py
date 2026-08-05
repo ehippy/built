@@ -597,13 +597,21 @@ PROPOSE_TASKS = {
     },
 }
 
-# Shared by every curation kind (agent/curation.py) — bug_sweep, opportunity_brainstorm,
-# polish_review, stay_dry, security_sweep, coverage_sweep, refactor_sweep, and agents_md
-# all explore read-only and end with propose_tasks. None of them can write to the repo;
-# the only thing any curation pass can do is create new cards, exactly like a human PM
-# filing a ticket.
+# Shared by every curation kind (agent/curation.py) — overseer, agents_md, and retro
+# all explore and end with propose_tasks. None of them can write to the repo; the only
+# thing any curation pass can do is create new cards, exactly like a human PM filing a
+# ticket.
 CURATION_TOOLS = [READ_FILE, LIST_FILES, GLOB_FILES, GREP_FILES, PROPOSE_TASKS]
 CURATION_TERMINAL_TOOL = "propose_tasks"
+
+# ActivityKind.OVERSEER only — same explore-then-propose loop as every other curation
+# kind, plus bash so it can actually execute things (tests, coverage, linters, curl,
+# git log/blame) instead of only reading source. Deliberately no write_file/edit_file —
+# curation's core invariant (it only ever proposes work via propose_tasks, never edits
+# the repo itself) still holds even though bash alone is technically capable of writing
+# files: agent/curation.py's caller (orchestrator/curator.py) constructs OVERSEER's
+# ToolContext with auto_commit=False, so nothing bash does here is ever persisted.
+OVERSEER_TOOLS = [*CURATION_TOOLS, BASH]
 
 # A separate, narrow tool for agent/curation.py's live-DB duplicate check — deliberately
 # not part of CURATION_TOOLS/the explore-then-propose loop above: this is a single
@@ -645,6 +653,48 @@ REPORT_DUPLICATE_CANDIDATES = {
 }
 CURATION_DEDUP_TOOLS = [REPORT_DUPLICATE_CANDIDATES]
 CURATION_DEDUP_TERMINAL_TOOL = "report_duplicate_candidates"
+
+# A separate, narrow tool for agent/curation.py's overseer-prompt comprehensiveness
+# gate — deliberately not part of any explore loop, same "one forced-judgment call"
+# shape as REPORT_DUPLICATE_CANDIDATES above. Fired when an operator saves/changes
+# Project.overseer_prompt via project settings, before it's allowed to persist.
+REPORT_OVERSEER_PROMPT_ASSESSMENT = {
+    "type": "function",
+    "function": {
+        "name": "report_overseer_prompt_assessment",
+        "description": (
+            "Report whether this operator-authored overseer mandate is comprehensive enough to "
+            "drive a real investigation, or too generic/vague to do so. Call this exactly once."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "comprehensive": {
+                    "type": "boolean",
+                    "description": (
+                        "true only if this gives OVERSEER enough concrete direction to actually "
+                        "investigate something specific — a real area or kind of problem to hunt "
+                        "for, not generic filler like 'look for bugs' that could apply unchanged "
+                        "to any project."
+                    ),
+                },
+                "issues": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "If not comprehensive: one item per concrete gap — what's missing or too "
+                        "vague, and what a stronger mandate would say instead. Each item must name "
+                        "the specific gap, never a generic restatement like 'could be more "
+                        "detailed'. Empty if comprehensive is true."
+                    ),
+                },
+            },
+            "required": ["comprehensive", "issues"],
+        },
+    },
+}
+OVERSEER_PROMPT_ASSESSMENT_TOOLS = [REPORT_OVERSEER_PROMPT_ASSESSMENT]
+OVERSEER_PROMPT_ASSESSMENT_TERMINAL_TOOL = "report_overseer_prompt_assessment"
 
 # agent/pm_triage.py's ActivityKind.PM_TRIAGE — unlike every other curation kind,
 # doesn't propose new cards; it acts on cards already sitting in the PM column,

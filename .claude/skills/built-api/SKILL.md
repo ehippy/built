@@ -47,7 +47,8 @@ curl -s "$BUILT_URL/readyz"                 # DB is reachable too
 - `LifecycleState` (read-only, on `CardOut.lifecycle_state`): `active` | `blocked` | `done` | `failed`
 - `DeployMode`: `auto_main` | `pr_to_operator`
 - `DeployKind`: `none` | `script` | `command` | `webhook`
-- `ActivityKind` (curation passes): `bug_sweep` | `opportunity_brainstorm` | `polish_review` | `stay_dry` | `agents_md`
+- `ActivityKind` (curation passes): `overseer` | `agents_md` | `retro` | `pm_triage` — `overseer` only runs once the
+  project has a `overseer_prompt` set (`PUT /api/v1/projects/{id}/overseer-prompt`)
 
 ## Projects
 
@@ -104,7 +105,7 @@ environment, not sent through this API.
 Trigger a curation pass (fire-and-forget; new cards, if any, show up on the board):
 
 ```bash
-curl -s -X POST "$BUILT_URL/api/v1/projects/$PROJECT_ID/curate/bug_sweep" -H "X-API-Key: $BUILT_KEY" | jq
+curl -s -X POST "$BUILT_URL/api/v1/projects/$PROJECT_ID/curate/overseer" -H "X-API-Key: $BUILT_KEY" | jq
 ```
 Returns `202 {"status": "started"}` immediately, or `409` if that kind is already running
 for the project. Poll the board to see results.

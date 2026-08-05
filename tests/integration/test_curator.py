@@ -1,9 +1,9 @@
 """Curation (agent/curation.py + orchestrator/curator.py) against a real toy git
-repo — LLM faked, everything else real. Every kind explores read-only and creates
-new cards via propose_tasks; none of them ever edit the repo. Covers the shared
-mechanics (using bug_sweep as the representative kind), the agents_md kind's
-different shape (context from recent visit outcomes, not a repo browse), and the
-orchestrator layer: cadence gating, pause-skipping, and the in-progress guard."""
+repo — LLM faked, everything else real. OVERSEER explores (read tools + bash) and
+creates new cards via propose_tasks; it never edits the repo. Covers the shared
+mechanics, agents_md's different shape (context from recent visit outcomes, not a
+repo browse), and the orchestrator layer: cadence gating, pause-skipping, the
+in-progress guard, and OVERSEER's overseer_prompt gate."""
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -37,6 +37,11 @@ async def _make_project(db_session, toy_repo_remote, **overrides):
         "name": f"curator-{overrides.pop('_n', 'x')}",
         "overarching_goal": "Add basic arithmetic helpers to app.py.",
         "repo_remote_url": str(toy_repo_remote),
+        # OVERSEER's system prompt asserts this is set (agent/context.py) — a
+        # default here keeps every test below a plain rename instead of needing
+        # its own opt-in; tests that specifically exercise the blank-prompt gate
+        # override it back to None explicitly.
+        "overseer_prompt": "Investigate app.py for arithmetic bugs and missing edge-case handling.",
     }
     defaults.update(overrides)
     project = await project_service.create_project(db_session, **defaults)
@@ -49,7 +54,7 @@ def _dispatcher(wt_path) -> ToolDispatcher:
     return ToolDispatcher(ctx=ToolContext(card_id="curator-x", worktree_root=wt_path), executor=executor)
 
 
-# --- Shared mechanics (agent/curation.py), exercised via bug_sweep -----------------
+# --- Shared mechanics (agent/curation.py), exercised via OVERSEER -----------------
 
 
 async def test_curation_explores_then_proposes_tasks(db_session, toy_repo_remote):
@@ -92,7 +97,7 @@ async def test_curation_explores_then_proposes_tasks(db_session, toy_repo_remote
     created = await run_curation_pass(
         db_session,
         project,
-        ActivityKind.BUG_SWEEP,
+        ActivityKind.OVERSEER,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
         run_id="test-run",
@@ -103,7 +108,7 @@ async def test_curation_explores_then_proposes_tasks(db_session, toy_repo_remote
     assert created[0].column == Column.PM
     assert created[0].lifecycle_state == LifecycleState.ACTIVE
     events = await card_service.list_events(db_session, created[0].id)
-    assert events[0].payload["source"] == "curation:bug_sweep"
+    assert events[0].payload["source"] == "curation:overseer"
 
 
 async def test_curation_nudges_on_empty_tasks_then_recovers(db_session, toy_repo_remote):
@@ -137,7 +142,7 @@ async def test_curation_nudges_on_empty_tasks_then_recovers(db_session, toy_repo
     created = await run_curation_pass(
         db_session,
         project,
-        ActivityKind.BUG_SWEEP,
+        ActivityKind.OVERSEER,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
         run_id="test-run",
@@ -169,7 +174,7 @@ async def test_curation_caps_at_max_proposed_tasks(db_session, toy_repo_remote):
     created = await run_curation_pass(
         db_session,
         project,
-        ActivityKind.BUG_SWEEP,
+        ActivityKind.OVERSEER,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
         run_id="test-run",
@@ -196,7 +201,7 @@ async def test_curation_returns_empty_when_iterations_exhausted(db_session, toy_
     created = await run_curation_pass(
         db_session,
         project,
-        ActivityKind.BUG_SWEEP,
+        ActivityKind.OVERSEER,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
         run_id="test-run",
@@ -241,7 +246,7 @@ async def test_curation_prompt_lists_existing_card_titles_to_avoid_duplicates(db
     await run_curation_pass(
         db_session,
         project,
-        ActivityKind.OPPORTUNITY_BRAINSTORM,
+        ActivityKind.OVERSEER,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
         run_id="test-run",
@@ -250,85 +255,6 @@ async def test_curation_prompt_lists_existing_card_titles_to_avoid_duplicates(db
 
     sent_user_message = llm.calls[0]["messages"][1]["content"]
     assert "Add subtract()" in sent_user_message
-
-
-async def test_curation_polish_review_proposes_a_card(db_session, toy_repo_remote):
-    """Just proves the fourth read-only kind is wired correctly — full mechanics
-    already covered above via bug_sweep."""
-    project, wt_path = await _make_project(db_session, toy_repo_remote, _n="6")
-
-    llm = ScriptedLLMClient(
-        [
-            LLMResult(
-                content=None,
-                tool_calls=[
-                    ToolCallRequest(
-                        id="call_1",
-                        name="propose_tasks",
-                        arguments={"tasks": [{"title": "Consistent button labels", "raw_request": "r"}]},
-                    )
-                ],
-                endpoint_used="fake::model",
-            )
-        ]
-    )
-
-    created = await run_curation_pass(
-        db_session,
-        project,
-        ActivityKind.POLISH_REVIEW,
-        llm_client=llm,
-        dispatcher=_dispatcher(wt_path),
-        run_id="test-run",
-        max_iterations=10,
-    )
-
-    events = await card_service.list_events(db_session, created[0].id)
-    assert events[0].payload["source"] == "curation:polish_review"
-
-
-@pytest.mark.parametrize(
-    ("kind", "title"),
-    [
-        (ActivityKind.SECURITY_SWEEP, "Sanitize template input in report renderer"),
-        (ActivityKind.COVERAGE_SWEEP, "Add test for empty-cart checkout path"),
-        (ActivityKind.REFACTOR_SWEEP, "Split oversized handler in routes.py"),
-    ],
-)
-async def test_curation_new_kinds_propose_a_card(db_session, toy_repo_remote, kind, title):
-    """Proves the three new kinds (security_sweep, coverage_sweep, refactor_sweep)
-    are wired correctly — full mechanics already covered above via bug_sweep."""
-    project, wt_path = await _make_project(db_session, toy_repo_remote, _n=f"6-{kind.value}")
-
-    llm = ScriptedLLMClient(
-        [
-            LLMResult(
-                content=None,
-                tool_calls=[
-                    ToolCallRequest(
-                        id="call_1",
-                        name="propose_tasks",
-                        arguments={"tasks": [{"title": title, "severity": "high", "raw_request": "r"}]},
-                    )
-                ],
-                endpoint_used="fake::model",
-            )
-        ]
-    )
-
-    created = await run_curation_pass(
-        db_session,
-        project,
-        kind,
-        llm_client=llm,
-        dispatcher=_dispatcher(wt_path),
-        run_id="test-run",
-        max_iterations=10,
-    )
-
-    assert [c.title for c in created] == [title]
-    events = await card_service.list_events(db_session, created[0].id)
-    assert events[0].payload["source"] == f"curation:{kind.value}"
 
 
 # --- agents_md kind: different context, proposes a card instead of editing --------
@@ -398,12 +324,17 @@ async def test_apply_file_policy_all_above_bar_keeps_only_critical_and_high(db_s
         {"title": "e", "raw_request": "r"},  # missing severity — treated as not clearing the bar
     ]
     kept = await curation._apply_file_policy(
-        db_session, project, ActivityKind.BUG_SWEEP, tasks, "file_all_above_bar"
+        db_session, project, ActivityKind.OVERSEER, tasks, "file_all_above_bar"
     )
     assert [t["title"] for t in kept] == ["a", "b"]
 
 
 async def test_apply_file_policy_best_only_keeps_the_single_highest_severity(db_session, toy_repo_remote):
+    """_apply_file_policy takes policy as an explicit argument rather than looking
+    it up by kind — kind here is only an event-log tag, so any ActivityKind works;
+    OVERSEER is the only kind actually mapped to file_best_only... actually mapped
+    to file_all_above_bar today (see _CURATION_FILE_POLICY), but this test exercises
+    the policy function directly, independent of that mapping."""
     project, _ = await _make_project(db_session, toy_repo_remote, _n="21")
     tasks = [
         {"title": "low-one", "severity": "low", "raw_request": "r"},
@@ -411,7 +342,7 @@ async def test_apply_file_policy_best_only_keeps_the_single_highest_severity(db_
         {"title": "high-one", "severity": "high", "raw_request": "r"},
     ]
     kept = await curation._apply_file_policy(
-        db_session, project, ActivityKind.POLISH_REVIEW, tasks, "file_best_only"
+        db_session, project, ActivityKind.OVERSEER, tasks, "file_best_only"
     )
     assert [t["title"] for t in kept] == ["the-critical-one"]
 
@@ -423,12 +354,12 @@ async def test_apply_file_policy_best_only_breaks_ties_by_original_order(db_sess
         {"title": "second-high", "severity": "high", "raw_request": "r"},
     ]
     kept = await curation._apply_file_policy(
-        db_session, project, ActivityKind.POLISH_REVIEW, tasks, "file_best_only"
+        db_session, project, ActivityKind.OVERSEER, tasks, "file_best_only"
     )
     assert [t["title"] for t in kept] == ["first-high"]
 
 
-async def test_bug_sweep_files_every_candidate_above_the_bar(db_session, toy_repo_remote):
+async def test_overseer_files_every_candidate_above_the_bar(db_session, toy_repo_remote):
     project, wt_path = await _make_project(db_session, toy_repo_remote, _n="23")
     llm = ScriptedLLMClient(
         [
@@ -455,7 +386,7 @@ async def test_bug_sweep_files_every_candidate_above_the_bar(db_session, toy_rep
     created = await run_curation_pass(
         db_session,
         project,
-        ActivityKind.BUG_SWEEP,
+        ActivityKind.OVERSEER,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
         run_id="test-run",
@@ -463,45 +394,6 @@ async def test_bug_sweep_files_every_candidate_above_the_bar(db_session, toy_rep
     )
 
     assert [c.title for c in created] == ["critical-bug"]
-
-
-async def test_opportunity_brainstorm_files_only_the_highest_severity_candidate(db_session, toy_repo_remote):
-    """Candidates are proposed out of severity order (critical isn't first) —
-    proves ranking drives selection, not just truncation to the first item."""
-    project, wt_path = await _make_project(db_session, toy_repo_remote, _n="24")
-    llm = ScriptedLLMClient(
-        [
-            LLMResult(
-                content=None,
-                tool_calls=[
-                    ToolCallRequest(
-                        id="call_1",
-                        name="propose_tasks",
-                        arguments={
-                            "tasks": [
-                                {"title": "low-one", "severity": "low", "raw_request": "r"},
-                                {"title": "the-critical-one", "severity": "critical", "raw_request": "r"},
-                                {"title": "high-one", "severity": "high", "raw_request": "r"},
-                            ]
-                        },
-                    )
-                ],
-                endpoint_used="fake::model",
-            )
-        ]
-    )
-
-    created = await run_curation_pass(
-        db_session,
-        project,
-        ActivityKind.OPPORTUNITY_BRAINSTORM,
-        llm_client=llm,
-        dispatcher=_dispatcher(wt_path),
-        run_id="test-run",
-        max_iterations=10,
-    )
-
-    assert [c.title for c in created] == ["the-critical-one"]
 
 
 # --- Live-DB duplicate detection (agent/curation.py) -------------------------------
@@ -545,7 +437,7 @@ async def test_dedup_drops_a_candidate_flagged_as_duplicate(db_session, toy_repo
     created = await run_curation_pass(
         db_session,
         project,
-        ActivityKind.BUG_SWEEP,
+        ActivityKind.OVERSEER,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
         run_id="test-run",
@@ -556,7 +448,7 @@ async def test_dedup_drops_a_candidate_flagged_as_duplicate(db_session, toy_repo
     events = (
         await db_session.scalars(
             select(CurationEvent)
-            .where(CurationEvent.project_id == project.id, CurationEvent.kind == ActivityKind.BUG_SWEEP)
+            .where(CurationEvent.project_id == project.id, CurationEvent.kind == ActivityKind.OVERSEER)
             .order_by(CurationEvent.seq)
         )
     ).all()
@@ -588,7 +480,7 @@ async def test_dedup_skips_the_llm_call_when_there_are_no_live_open_cards(db_ses
     created = await run_curation_pass(
         db_session,
         project,
-        ActivityKind.BUG_SWEEP,
+        ActivityKind.OVERSEER,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
         run_id="test-run",
@@ -624,7 +516,7 @@ async def test_dedup_fails_open_on_llm_error_so_real_work_isnt_lost(db_session, 
     created = await run_curation_pass(
         db_session,
         project,
-        ActivityKind.BUG_SWEEP,
+        ActivityKind.OVERSEER,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
         run_id="test-run",
@@ -635,7 +527,7 @@ async def test_dedup_fails_open_on_llm_error_so_real_work_isnt_lost(db_session, 
     events = (
         await db_session.scalars(
             select(CurationEvent)
-            .where(CurationEvent.project_id == project.id, CurationEvent.kind == ActivityKind.BUG_SWEEP)
+            .where(CurationEvent.project_id == project.id, CurationEvent.kind == ActivityKind.OVERSEER)
             .order_by(CurationEvent.seq)
         )
     ).all()
@@ -665,46 +557,32 @@ async def test_needs_run_agents_md_gated_by_new_visit_outcomes(db_session, toy_r
     assert extra_context is not None and "c" in extra_context
 
 
-async def test_needs_run_bug_sweep_respects_the_global_interval(db_session, toy_repo_remote):
-    """bug_sweep has no _CURATION_INTERVALS override (it equals the global default),
-    so it's gated by curator_poll_interval_seconds since its last run — not
-    immediately due again just because the scheduler woke up."""
-    project, _ = await _make_project(db_session, toy_repo_remote, _n="9")
+async def test_needs_run_overseer_blocked_when_no_prompt_is_set(db_session, toy_repo_remote):
+    """Blank overseer_prompt is a hard "doesn't run" gate, checked before anything
+    else in _needs_run — no built-authored fallback."""
+    project, _ = await _make_project(db_session, toy_repo_remote, _n="8b", overseer_prompt=None)
 
-    should_run, _ = await curator._needs_run(db_session, project, ActivityKind.BUG_SWEEP)
-    assert should_run is True
+    should_run, extra_context = await curator._needs_run(db_session, project, ActivityKind.OVERSEER)
 
-    await project_service.record_activity_run(db_session, project.id, ActivityKind.BUG_SWEEP)
-
-    # Not due again immediately — the interval hasn't elapsed.
-    should_run, _ = await curator._needs_run(db_session, project, ActivityKind.BUG_SWEEP)
     assert should_run is False
-
-    # Due again once the interval is (effectively) zero.
-    curator._CURATION_INTERVALS[ActivityKind.BUG_SWEEP] = 0
-    try:
-        should_run, _ = await curator._needs_run(db_session, project, ActivityKind.BUG_SWEEP)
-        assert should_run is True
-    finally:
-        curator._CURATION_INTERVALS[ActivityKind.BUG_SWEEP] = 1800
+    assert extra_context is None
 
 
-async def test_needs_run_polish_review_uses_its_own_longer_interval(db_session, toy_repo_remote):
-    """polish_review (a file_best_only, backlog-grooming kind) is configured with a
-    longer interval than the global default — confirms _needs_run actually reads
-    the per-kind entry rather than falling back to curator_poll_interval_seconds."""
+async def test_needs_run_overseer_uses_its_own_interval(db_session, toy_repo_remote):
+    """OVERSEER is configured with its own interval, distinct from the global
+    default — confirms _needs_run actually reads the per-kind entry."""
     project, _ = await _make_project(db_session, toy_repo_remote, _n="9c")
-    await project_service.record_activity_run(db_session, project.id, ActivityKind.POLISH_REVIEW)
+    await project_service.record_activity_run(db_session, project.id, ActivityKind.OVERSEER)
 
-    should_run, _ = await curator._needs_run(db_session, project, ActivityKind.POLISH_REVIEW)
+    should_run, _ = await curator._needs_run(db_session, project, ActivityKind.OVERSEER)
     assert should_run is False
 
-    curator._CURATION_INTERVALS[ActivityKind.POLISH_REVIEW] = 0
+    curator._CURATION_INTERVALS[ActivityKind.OVERSEER] = 0
     try:
-        should_run, _ = await curator._needs_run(db_session, project, ActivityKind.POLISH_REVIEW)
+        should_run, _ = await curator._needs_run(db_session, project, ActivityKind.OVERSEER)
         assert should_run is True
     finally:
-        curator._CURATION_INTERVALS[ActivityKind.POLISH_REVIEW] = 21600
+        curator._CURATION_INTERVALS[ActivityKind.OVERSEER] = 3600
 
 
 async def test_needs_run_blocked_once_pm_backlog_hits_the_cap(db_session, toy_repo_remote, monkeypatch):
@@ -717,7 +595,7 @@ async def test_needs_run_blocked_once_pm_backlog_hits_the_cap(db_session, toy_re
         await card_service.create_card(db_session, project.id, title=f"c{i}", raw_request="r")
     await db_session.commit()
 
-    should_run, _ = await curator._needs_run(db_session, project, ActivityKind.BUG_SWEEP)
+    should_run, _ = await curator._needs_run(db_session, project, ActivityKind.OVERSEER)
     assert should_run is False
     should_run, _ = await curator._needs_run(db_session, project, ActivityKind.AGENTS_MD)
     assert should_run is False
@@ -729,7 +607,7 @@ async def test_needs_run_allowed_below_the_pm_backlog_cap(db_session, toy_repo_r
     await card_service.create_card(db_session, project.id, title="c0", raw_request="r")
     await db_session.commit()
 
-    should_run, _ = await curator._needs_run(db_session, project, ActivityKind.BUG_SWEEP)
+    should_run, _ = await curator._needs_run(db_session, project, ActivityKind.OVERSEER)
     assert should_run is True
 
 
@@ -798,8 +676,11 @@ async def test_run_curator_once_skips_curation_when_curation_paused(db_session, 
 async def test_run_curator_once_skips_a_disabled_kind_but_attempts_others(db_session, toy_repo_remote):
     project, _ = await _make_project(db_session, toy_repo_remote, _n="10c")
     await project_service.set_curation_kind_enabled(
-        db_session, project.id, ActivityKind.BUG_SWEEP, enabled=False
+        db_session, project.id, ActivityKind.OVERSEER, enabled=False
     )
+    # PM_TRIAGE's own gate needs at least 2 PM-column cards to be due.
+    await card_service.create_card(db_session, project.id, title="c0", raw_request="r")
+    await card_service.create_card(db_session, project.id, title="c1", raw_request="r")
     await db_session.commit()
 
     prior_logs = get_logs()
@@ -813,8 +694,8 @@ async def test_run_curator_once_skips_a_disabled_kind_but_attempts_others(db_ses
             for e in new_logs
         )
 
-    assert _started(ActivityKind.BUG_SWEEP) is False
-    assert _started(ActivityKind.OPPORTUNITY_BRAINSTORM) is True
+    assert _started(ActivityKind.OVERSEER) is False
+    assert _started(ActivityKind.PM_TRIAGE) is True
 
 
 # --- Curation on/off state: project-wide pause + per-kind enable/disable ----------
@@ -845,34 +726,34 @@ async def test_set_curation_kind_enabled_toggles_independently(db_session, toy_r
     project, _ = await _make_project(db_session, toy_repo_remote, _n="10e")
 
     await project_service.set_curation_kind_enabled(
-        db_session, project.id, ActivityKind.BUG_SWEEP, enabled=False
+        db_session, project.id, ActivityKind.OVERSEER, enabled=False
     )
     state = await project_service.get_curation_state(db_session, project.id)
-    assert state.disabled_kinds == ["bug_sweep"]
+    assert state.disabled_kinds == ["overseer"]
 
     await project_service.set_curation_kind_enabled(
-        db_session, project.id, ActivityKind.POLISH_REVIEW, enabled=False
+        db_session, project.id, ActivityKind.PM_TRIAGE, enabled=False
     )
     state = await project_service.get_curation_state(db_session, project.id)
-    assert set(state.disabled_kinds) == {"bug_sweep", "polish_review"}
+    assert set(state.disabled_kinds) == {"overseer", "pm_triage"}
 
     await project_service.set_curation_kind_enabled(
-        db_session, project.id, ActivityKind.BUG_SWEEP, enabled=True
+        db_session, project.id, ActivityKind.OVERSEER, enabled=True
     )
     state = await project_service.get_curation_state(db_session, project.id)
-    assert state.disabled_kinds == ["polish_review"]
+    assert state.disabled_kinds == ["pm_triage"]
 
 
 async def test_in_progress_guard_blocks_same_kind_but_not_different_kind():
     """Unlike the old single-project discovery guard, this one is keyed by
-    (project_id, kind) — a bug sweep and a polish review for the same project are
-    independent and can run concurrently."""
+    (project_id, kind) — two different kinds for the same project are independent
+    and can run concurrently."""
     project_id = "proj-x"
     curator._curation_in_progress.clear()
-    curator._curation_in_progress.add((project_id, ActivityKind.BUG_SWEEP))
+    curator._curation_in_progress.add((project_id, ActivityKind.OVERSEER))
 
-    assert curator.is_curation_running(project_id, ActivityKind.BUG_SWEEP) is True
-    assert curator.is_curation_running(project_id, ActivityKind.POLISH_REVIEW) is False
+    assert curator.is_curation_running(project_id, ActivityKind.OVERSEER) is True
+    assert curator.is_curation_running(project_id, ActivityKind.PM_TRIAGE) is False
 
     curator._curation_in_progress.clear()
 
@@ -884,12 +765,12 @@ async def test_curation_skips_outright_if_already_marked_in_progress(db_session,
     cards."""
     project, _ = await _make_project(db_session, toy_repo_remote, _n="11")
 
-    curator._curation_in_progress.add((project.id, ActivityKind.BUG_SWEEP))
+    curator._curation_in_progress.add((project.id, ActivityKind.OVERSEER))
     try:
-        assert curator.is_curation_running(project.id, ActivityKind.BUG_SWEEP) is True
-        await curator.run_curation_activity(project.id, ActivityKind.BUG_SWEEP)  # should no-op immediately
+        assert curator.is_curation_running(project.id, ActivityKind.OVERSEER) is True
+        await curator.run_curation_activity(project.id, ActivityKind.OVERSEER)  # should no-op immediately
     finally:
-        curator._curation_in_progress.discard((project.id, ActivityKind.BUG_SWEEP))
+        curator._curation_in_progress.discard((project.id, ActivityKind.OVERSEER))
 
     assert await card_service.list_cards(db_session, project.id) == []
 
@@ -900,6 +781,7 @@ async def test_curation_releases_the_guard_even_on_setup_failure(db_session):
         name="curator-setup-fail",
         overarching_goal="g",
         repo_remote_url="/nonexistent/path/repo.git",
+        overseer_prompt="Investigate anything you find.",
     )
     # run_curation_activity opens its own session (async_session_factory), separate
     # from db_session — without committing, it can't see this project at all and
@@ -909,19 +791,38 @@ async def test_curation_releases_the_guard_even_on_setup_failure(db_session):
 
     prior_logs = get_logs()
     cutoff = prior_logs[-1].seq if prior_logs else 0
-    await curator.run_curation_activity(project.id, ActivityKind.BUG_SWEEP)
+    await curator.run_curation_activity(project.id, ActivityKind.OVERSEER)
 
-    assert curator.is_curation_running(project.id, ActivityKind.BUG_SWEEP) is False
+    assert curator.is_curation_running(project.id, ActivityKind.OVERSEER) is False
 
     # The "starting" log fires before setup — this is task-lifecycle visibility,
     # not conditional on the pass actually succeeding.
     new_logs = get_logs(since_seq=cutoff)
     assert any(
-        "bug_sweep" in e.message and "starting" in e.message and project.id in e.message for e in new_logs
+        "overseer" in e.message and "starting" in e.message and project.id in e.message for e in new_logs
     )
 
 
-# --- list_activity_runs: what the board page.s curation dropdown reads ------------
+async def test_run_curation_activity_skips_overseer_with_no_prompt_and_opens_no_run(
+    db_session, toy_repo_remote, monkeypatch
+):
+    """Reachable from a human's manual "Run now"/the API's curate endpoint, neither
+    of which goes through _needs_run — this is the second, independent gate for
+    the same invariant (see also test_needs_run_overseer_blocked_when_no_prompt_is_set)."""
+    project, _ = await _make_project(db_session, toy_repo_remote, _n="11b", overseer_prompt=None)
+
+    async def _fail_if_called(*args, **kwargs):
+        raise AssertionError("run_curation_pass must not be called for a blank-prompt OVERSEER")
+
+    monkeypatch.setattr(curator, "run_curation_pass", _fail_if_called)
+
+    await curator.run_curation_activity(project.id, ActivityKind.OVERSEER)
+
+    runs = await project_service.list_curation_runs(db_session, project.id, ActivityKind.OVERSEER)
+    assert runs == []
+
+
+# --- list_activity_runs: what the board page's curation dropdown reads ------------
 
 
 async def test_list_activity_runs_keyed_by_kind_missing_kinds_absent(db_session, toy_repo_remote):
@@ -930,12 +831,12 @@ async def test_list_activity_runs_keyed_by_kind_missing_kinds_absent(db_session,
     assert await project_service.list_activity_runs(db_session, project.id) == {}
 
     await project_service.record_activity_run(
-        db_session, project.id, ActivityKind.BUG_SWEEP, summary="created 1 card(s)"
+        db_session, project.id, ActivityKind.OVERSEER, summary="created 1 card(s)"
     )
 
     runs = await project_service.list_activity_runs(db_session, project.id)
-    assert set(runs) == {ActivityKind.BUG_SWEEP}
-    assert runs[ActivityKind.BUG_SWEEP].last_result_summary == "created 1 card(s)"
+    assert set(runs) == {ActivityKind.OVERSEER}
+    assert runs[ActivityKind.OVERSEER].last_result_summary == "created 1 card(s)"
 
 
 # --- Curation dropdown: per-kind status readout, folded in alongside the toggles --
@@ -947,14 +848,14 @@ async def test_curation_dropdown_shows_per_kind_status(db_session, toy_repo_remo
 
     async with _client() as client:
         before = await client.get(f"/ui/projects/{project.id}/board")
-        assert "Bug sweep" in before.text
+        assert "Overseer" in before.text
         assert "never run yet" in before.text
 
     await project_service.record_activity_run(
-        db_session, project.id, ActivityKind.BUG_SWEEP, summary="created 2 card(s)"
+        db_session, project.id, ActivityKind.OVERSEER, summary="created 2 card(s)"
     )
     await db_session.commit()
-    curator._curation_in_progress.add((project.id, ActivityKind.OPPORTUNITY_BRAINSTORM))
+    curator._curation_in_progress.add((project.id, ActivityKind.PM_TRIAGE))
     try:
         async with _client() as client:
             after = await client.get(f"/ui/projects/{project.id}/board")
@@ -963,7 +864,7 @@ async def test_curation_dropdown_shows_per_kind_status(db_session, toy_repo_remo
         # No CurationEvent logged yet for the running kind — falls back to "starting…".
         assert "starting…" in after.text
     finally:
-        curator._curation_in_progress.discard((project.id, ActivityKind.OPPORTUNITY_BRAINSTORM))
+        curator._curation_in_progress.discard((project.id, ActivityKind.PM_TRIAGE))
 
 
 async def test_curation_dropdown_shows_the_latest_event_while_running(db_session, toy_repo_remote):
@@ -973,19 +874,19 @@ async def test_curation_dropdown_shows_the_latest_event_while_running(db_session
     await append_curation_event(
         db_session,
         project_id=project.id,
-        kind=ActivityKind.BUG_SWEEP,
+        kind=ActivityKind.OVERSEER,
         type=EventType.TOOL_CALL,
         payload={"name": "read_file", "arguments": {"path": "app.py"}, "result": "...", "is_error": False},
     )
     await db_session.commit()
 
-    curator._curation_in_progress.add((project.id, ActivityKind.BUG_SWEEP))
+    curator._curation_in_progress.add((project.id, ActivityKind.OVERSEER))
     try:
         async with _client() as client:
             page = await client.get(f"/ui/projects/{project.id}/board")
         assert "read_file(app.py)" in page.text
     finally:
-        curator._curation_in_progress.discard((project.id, ActivityKind.BUG_SWEEP))
+        curator._curation_in_progress.discard((project.id, ActivityKind.OVERSEER))
 
 
 async def test_board_curation_pause_resume_and_kind_toggle_round_trip(db_session, toy_repo_remote):
@@ -995,7 +896,7 @@ async def test_board_curation_pause_resume_and_kind_toggle_round_trip(db_session
     async with _client() as client:
         before = await client.get(f"/ui/projects/{project.id}/board")
         assert f'action="/ui/projects/{project.id}/curation/pause"' in before.text
-        assert f'action="/ui/projects/{project.id}/curation/kinds/bug_sweep"' in before.text
+        assert f'action="/ui/projects/{project.id}/curation/kinds/overseer"' in before.text
 
         pause_resp = await client.post(f"/ui/projects/{project.id}/curation/pause", follow_redirects=False)
         assert pause_resp.status_code == 303
@@ -1011,7 +912,7 @@ async def test_board_curation_pause_resume_and_kind_toggle_round_trip(db_session
 
         # Unchecking a checkbox omits its field entirely — an empty body, not "false".
         uncheck_resp = await client.post(
-            f"/ui/projects/{project.id}/curation/kinds/bug_sweep", data={}, follow_redirects=False
+            f"/ui/projects/{project.id}/curation/kinds/overseer", data={}, follow_redirects=False
         )
         assert uncheck_resp.status_code == 303
 
@@ -1020,19 +921,19 @@ async def test_board_curation_pause_resume_and_kind_toggle_round_trip(db_session
         # loaded before these client-session commits (see get_curation_state's
         # session.get(), which checks the identity map before querying).
         after_uncheck = await client.get(f"/ui/projects/{project.id}/board")
-        assert 'id="curation-enabled-bug_sweep" name="enabled" value="true" checked' not in after_uncheck.text
-        assert 'id="curation-enabled-bug_sweep"' in after_uncheck.text
+        assert 'id="curation-enabled-overseer" name="enabled" value="true" checked' not in after_uncheck.text
+        assert 'id="curation-enabled-overseer"' in after_uncheck.text
         assert "off — not on the automatic schedule" in after_uncheck.text
 
         recheck_resp = await client.post(
-            f"/ui/projects/{project.id}/curation/kinds/bug_sweep",
+            f"/ui/projects/{project.id}/curation/kinds/overseer",
             data={"enabled": "true"},
             follow_redirects=False,
         )
         assert recheck_resp.status_code == 303
 
         after_recheck = await client.get(f"/ui/projects/{project.id}/board")
-        assert 'id="curation-enabled-bug_sweep" name="enabled" value="true" checked' in after_recheck.text
+        assert 'id="curation-enabled-overseer" name="enabled" value="true" checked' in after_recheck.text
 
 
 async def test_curation_toggle_over_htmx_swaps_the_panel_instead_of_redirecting(
@@ -1048,7 +949,7 @@ async def test_curation_toggle_over_htmx_swaps_the_panel_instead_of_redirecting(
 
     async with _client() as client:
         resp = await client.post(
-            f"/ui/projects/{project.id}/curation/kinds/bug_sweep",
+            f"/ui/projects/{project.id}/curation/kinds/overseer",
             data={},
             headers={"HX-Request": "true"},
             follow_redirects=False,
@@ -1059,6 +960,21 @@ async def test_curation_toggle_over_htmx_swaps_the_panel_instead_of_redirecting(
     assert "off — not on the automatic schedule" in resp.text
     # A fragment, not a full page — none of the surrounding board chrome leaked in.
     assert "<nav" not in resp.text
+
+
+async def test_curation_panel_shows_needs_prompt_hint_and_hides_run_now(db_session, toy_repo_remote):
+    """A blank-prompt OVERSEER's "Run now" is a silent no-op server-side (see
+    orchestrator/curator.py's run_curation_activity gate) — the panel must say why
+    instead of just showing an inert button."""
+    project, _ = await _make_project(db_session, toy_repo_remote, _n="19", overseer_prompt=None)
+    await db_session.commit()
+
+    async with _client() as client:
+        page = await client.get(f"/ui/projects/{project.id}/board")
+
+    assert "no overseer prompt set" in page.text
+    assert f'href="/ui/projects/{project.id}/settings#overseer-pane"' in page.text
+    assert f'action="/ui/projects/{project.id}/curate/overseer"' not in page.text
 
 
 # --- Event logging: what a pass writes for the curation dropdown to read ----------
@@ -1091,7 +1007,7 @@ async def test_curation_pass_logs_events_for_llm_responses_and_tool_calls(db_ses
     await run_curation_pass(
         db_session,
         project,
-        ActivityKind.BUG_SWEEP,
+        ActivityKind.OVERSEER,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
         run_id="test-run",
@@ -1101,7 +1017,7 @@ async def test_curation_pass_logs_events_for_llm_responses_and_tool_calls(db_ses
     events = (
         await db_session.scalars(
             select(CurationEvent)
-            .where(CurationEvent.project_id == project.id, CurationEvent.kind == ActivityKind.BUG_SWEEP)
+            .where(CurationEvent.project_id == project.id, CurationEvent.kind == ActivityKind.OVERSEER)
             .order_by(CurationEvent.seq)
         )
     ).all()
@@ -1123,7 +1039,7 @@ async def test_curation_pass_logs_an_error_event_on_unhandled_failure(db_session
     created = await run_curation_pass(
         db_session,
         project,
-        ActivityKind.BUG_SWEEP,
+        ActivityKind.OVERSEER,
         llm_client=_BoomLLM(),
         dispatcher=_dispatcher(wt_path),
         run_id="test-run",
@@ -1131,6 +1047,52 @@ async def test_curation_pass_logs_an_error_event_on_unhandled_failure(db_session
     )
 
     assert created == []
-    latest = await project_service.get_latest_curation_event(db_session, project.id, ActivityKind.BUG_SWEEP)
+    latest = await project_service.get_latest_curation_event(db_session, project.id, ActivityKind.OVERSEER)
     assert latest is not None
     assert "endpoint unreachable" in latest.payload["error"]
+
+
+# --- OVERSEER-specific wiring: worktree isolation, tool grant --------------------
+
+
+async def test_overseer_gets_a_dedicated_worktree_distinct_from_other_kinds(
+    db_session, toy_repo_remote, monkeypatch
+):
+    """Every other curation kind shares one "_tool_curator" worktree — OVERSEER
+    gets its own "_tool_overseer" one, since its bash tool can actually write into
+    it mid-pass (unlike every read-only kind), and a concurrently-running
+    AGENTS_MD/RETRO/PM_TRIAGE pass reading the shared one could otherwise see
+    half-finished state."""
+    from built.services import endpoint_service
+
+    project, _ = await _make_project(db_session, toy_repo_remote, _n="28")
+    await endpoint_service.create_endpoint_config(
+        db_session,
+        base_url="http://127.0.0.1:1",  # never actually called — run_curation_pass is stubbed below
+        model="fake-model",
+        project_id=project.id,
+        role=Column.PM,
+    )
+    await db_session.commit()
+
+    async def _fake_run_curation_pass(session, project, kind, *, run_id, **kwargs):
+        return []
+
+    monkeypatch.setattr(curator, "run_curation_pass", _fake_run_curation_pass)
+
+    await curator.run_curation_activity(project.id, ActivityKind.OVERSEER)
+
+    overseer_path = worktree.tool_worktree_path(project, tool="overseer")
+    curator_path = worktree.tool_worktree_path(project, tool="curator")
+    assert overseer_path.exists()
+    assert overseer_path != curator_path
+
+
+@pytest.mark.parametrize("tool_name", ["bash", "propose_tasks"])
+def test_overseer_tools_include_bash_and_propose_tasks_but_never_write(tool_name):
+    from built.llm.tool_schemas import OVERSEER_TOOLS
+
+    names = {tool["function"]["name"] for tool in OVERSEER_TOOLS}
+    assert tool_name in names
+    assert "write_file" not in names
+    assert "edit_file" not in names

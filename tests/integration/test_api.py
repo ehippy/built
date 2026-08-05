@@ -143,10 +143,10 @@ async def test_curate_endpoint_requires_auth_and_starts_in_background():
         )
         project = create_resp.json()
 
-        no_auth_resp = await client.post(f"/api/v1/projects/{project['id']}/curate/bug_sweep")
+        no_auth_resp = await client.post(f"/api/v1/projects/{project['id']}/curate/overseer")
         assert no_auth_resp.status_code == 401
 
-        started_resp = await client.post(f"/api/v1/projects/{project['id']}/curate/bug_sweep", headers=AUTH)
+        started_resp = await client.post(f"/api/v1/projects/{project['id']}/curate/overseer", headers=AUTH)
         assert started_resp.status_code == 202
         assert started_resp.json() == {"status": "started"}
 
@@ -155,8 +155,152 @@ async def test_curate_endpoint_requires_auth_and_starts_in_background():
         )
         assert invalid_kind_resp.status_code == 422
 
-        missing_resp = await client.post("/api/v1/projects/does-not-exist/curate/bug_sweep", headers=AUTH)
+        missing_resp = await client.post("/api/v1/projects/does-not-exist/curate/overseer", headers=AUTH)
         assert missing_resp.status_code == 404
+
+
+async def _create_api_project(client, *, name: str) -> dict:
+    create_resp = await client.post(
+        "/api/v1/projects",
+        json={
+            "name": name,
+            "overarching_goal": "goal",
+            "repo_remote_url": f"https://example.invalid/{name}.git",
+        },
+        headers=AUTH,
+    )
+    assert create_resp.status_code == 201, create_resp.text
+    return create_resp.json()
+
+
+async def _add_pm_endpoint_config(client, project_id: str) -> None:
+    """set_overseer_prompt's non-force, non-blank path constructs a real
+    FallbackLLMClient before it ever reaches assess_overseer_prompt — with no
+    endpoint config at all, that construction itself raises (empty fallback
+    chain), which a monkeypatched assess_overseer_prompt stub never gets a
+    chance to intercept. Only needed by tests exercising that path."""
+    resp = await client.post(
+        "/api/v1/endpoint-configs",
+        json={
+            "base_url": "http://127.0.0.1:1",  # never actually called — assess_overseer_prompt is stubbed
+            "model": "fake-model",
+            "project_id": project_id,
+            "role": "pm",
+        },
+        headers=AUTH,
+    )
+    assert resp.status_code == 201, resp.text
+
+
+async def test_set_overseer_prompt_saves_when_comprehensive(monkeypatch):
+    from built.agent.curation import OverseerPromptAssessment
+    from built.api.routers import projects as projects_router
+
+    async def _fake_assess(prompt, project, *, llm_client):
+        return OverseerPromptAssessment(comprehensive=True, issues=[])
+
+    monkeypatch.setattr(projects_router, "assess_overseer_prompt", _fake_assess)
+
+    async with _client() as client:
+        project = await _create_api_project(client, name="overseer-comprehensive")
+        await _add_pm_endpoint_config(client, project["id"])
+        resp = await client.put(
+            f"/api/v1/projects/{project['id']}/overseer-prompt",
+            json={"prompt": "Audit the payment webhook handler for idempotency bugs."},
+            headers=AUTH,
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["overseer_prompt"] == "Audit the payment webhook handler for idempotency bugs."
+
+
+async def test_set_overseer_prompt_blocks_when_not_comprehensive(monkeypatch):
+    from built.agent.curation import OverseerPromptAssessment
+    from built.api.routers import projects as projects_router
+
+    async def _fake_assess(prompt, project, *, llm_client):
+        return OverseerPromptAssessment(comprehensive=False, issues=["too generic — names no specific area"])
+
+    monkeypatch.setattr(projects_router, "assess_overseer_prompt", _fake_assess)
+
+    async with _client() as client:
+        project = await _create_api_project(client, name="overseer-not-comprehensive")
+        await _add_pm_endpoint_config(client, project["id"])
+        resp = await client.put(
+            f"/api/v1/projects/{project['id']}/overseer-prompt",
+            json={"prompt": "look for bugs"},
+            headers=AUTH,
+        )
+        get_resp = await client.get(f"/api/v1/projects/{project['id']}")
+
+    assert resp.status_code == 422
+    body = resp.json()["detail"]
+    assert body["issues"] == ["too generic — names no specific area"]
+    assert body["error"] is None
+    assert get_resp.json()["overseer_prompt"] is None
+
+
+async def test_set_overseer_prompt_force_saves_without_judging(monkeypatch):
+    from built.api.routers import projects as projects_router
+
+    async def _fail_if_called(prompt, project, *, llm_client):
+        raise AssertionError("assess_overseer_prompt must not be called when force=True")
+
+    monkeypatch.setattr(projects_router, "assess_overseer_prompt", _fail_if_called)
+
+    async with _client() as client:
+        project = await _create_api_project(client, name="overseer-force")
+        resp = await client.put(
+            f"/api/v1/projects/{project['id']}/overseer-prompt",
+            json={"prompt": "look for bugs", "force": True},
+            headers=AUTH,
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["overseer_prompt"] == "look for bugs"
+
+
+async def test_set_overseer_prompt_judge_failure_blocks_with_error(monkeypatch):
+    from built.api.routers import projects as projects_router
+
+    async def _fake_assess(prompt, project, *, llm_client):
+        raise RuntimeError("endpoint unreachable")
+
+    monkeypatch.setattr(projects_router, "assess_overseer_prompt", _fake_assess)
+
+    async with _client() as client:
+        project = await _create_api_project(client, name="overseer-judge-error")
+        await _add_pm_endpoint_config(client, project["id"])
+        resp = await client.put(
+            f"/api/v1/projects/{project['id']}/overseer-prompt",
+            json={"prompt": "Audit the payment webhook handler for idempotency bugs."},
+            headers=AUTH,
+        )
+
+    assert resp.status_code == 422
+    body = resp.json()["detail"]
+    assert body["error"] == "endpoint unreachable"
+    assert body["issues"] == []
+
+
+async def test_set_overseer_prompt_blank_saves_unconditionally_without_judging(monkeypatch):
+    from built.api.routers import projects as projects_router
+
+    async def _fail_if_called(prompt, project, *, llm_client):
+        raise AssertionError("assess_overseer_prompt must not be called for a blank prompt")
+
+    monkeypatch.setattr(projects_router, "assess_overseer_prompt", _fail_if_called)
+
+    async with _client() as client:
+        project = await _create_api_project(client, name="overseer-blank")
+        resp = await client.put(
+            f"/api/v1/projects/{project['id']}/overseer-prompt",
+            json={"prompt": "  "},
+            headers=AUTH,
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["overseer_prompt"] is None
 
 
 async def test_pause_and_resume_project_via_api():

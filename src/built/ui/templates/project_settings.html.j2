@@ -21,6 +21,7 @@
       <button class="nav-link text-start" id="endpoints-tab" data-bs-toggle="pill" data-bs-target="#endpoints-pane" type="button" role="tab" aria-controls="endpoints-pane" aria-selected="false">LLM endpoints</button>
       <button class="nav-link text-start" id="deploy-tab" data-bs-toggle="pill" data-bs-target="#deploy-pane" type="button" role="tab" aria-controls="deploy-pane" aria-selected="false">Deploy configuration</button>
       <button class="nav-link text-start" id="prompts-tab" data-bs-toggle="pill" data-bs-target="#prompts-pane" type="button" role="tab" aria-controls="prompts-pane" aria-selected="false">Role prompts</button>
+      <button class="nav-link text-start" id="overseer-tab" data-bs-toggle="pill" data-bs-target="#overseer-pane" type="button" role="tab" aria-controls="overseer-pane" aria-selected="false">Overseer</button>
       <button class="nav-link text-start text-danger" id="danger-tab" data-bs-toggle="pill" data-bs-target="#danger-pane" type="button" role="tab" aria-controls="danger-pane" aria-selected="false">Danger zone</button>
     </div>
   </div>
@@ -271,6 +272,40 @@
         </div>
       </div>
 
+      <div class="tab-pane fade" id="overseer-pane" role="tabpanel" aria-labelledby="overseer-tab" tabindex="0">
+        <div class="card card-body">
+          <h2 class="h5">Overseer</h2>
+          <p class="text-body-secondary">
+            OVERSEER is a background investigation pass with its own <code>bash</code> tool (tests, coverage,
+            linters, curling a running service, git log/blame) — but unlike every other curation pass, built
+            doesn't supply its own idea of what to look for. You write the entire mandate: what to investigate,
+            what's worth filing, what's out of scope. Blank (the default) means OVERSEER never runs.
+          </p>
+          {% if overseer_validation %}
+          <div class="alert alert-warning">
+            {% if overseer_validation.error %}
+            <p class="mb-2"><strong>Couldn't validate this prompt automatically:</strong> {{ overseer_validation.error }}</p>
+            <p class="mb-0">You can still save it as-is, but it hasn't been reviewed for comprehensiveness.</p>
+            {% else %}
+            <p class="mb-2"><strong>This may not be comprehensive enough to drive a real investigation:</strong></p>
+            <ul class="mb-0">{% for issue in overseer_validation.issues %}<li>{{ issue }}</li>{% endfor %}</ul>
+            {% endif %}
+          </div>
+          {% endif %}
+          <form method="post" action="/ui/projects/{{ project.id }}/overseer-prompt">
+            <div class="mb-3">
+              <label class="form-label" for="overseer_prompt">Overseer mandate</label>
+              <textarea class="form-control" id="overseer_prompt" name="overseer_prompt" rows="10">{{ overseer_prompt_draft if overseer_validation else (project.overseer_prompt or '') }}</textarea>
+              <div class="form-text">Leave blank and save to turn OVERSEER off.</div>
+            </div>
+            <button class="btn btn-primary" type="submit">Save overseer prompt</button>
+            {% if overseer_validation %}
+            <button class="btn btn-outline-warning" type="submit" name="force" value="true">I've read the feedback — save anyway</button>
+            {% endif %}
+          </form>
+        </div>
+      </div>
+
       <div class="tab-pane fade" id="danger-pane" role="tabpanel" aria-labelledby="danger-tab" tabindex="0">
         <div class="card card-body">
           <h2 class="h5">Danger zone</h2>
@@ -298,4 +333,18 @@
     }
   });
 </script>
+{% if active_pane %}
+<script>
+  {# The failed-overseer-prompt-validation path re-renders this template directly
+     instead of redirecting (see ui/routers/projects.py's update_overseer_prompt),
+     so there's no URL #hash for the script above to read — open the right pane
+     from server-supplied context instead. #}
+  document.addEventListener("DOMContentLoaded", function () {
+    var trigger = document.querySelector('#settings-tabs [data-bs-target="#{{ active_pane }}"]');
+    if (trigger) {
+      bootstrap.Tab.getOrCreateInstance(trigger).show();
+    }
+  });
+</script>
+{% endif %}
 {% endblock %}

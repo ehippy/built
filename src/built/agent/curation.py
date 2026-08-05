@@ -9,6 +9,7 @@ call propose_tasks. See orchestrator/curator.py for scheduling and cadence."""
 
 import json
 import logging
+from dataclasses import dataclass
 from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +31,9 @@ from built.llm.tool_schemas import (
     CURATION_TERMINAL_TOOL,
     CURATION_TOOLS,
     MAX_PROPOSED_TASKS,
+    OVERSEER_PROMPT_ASSESSMENT_TERMINAL_TOOL,
+    OVERSEER_PROMPT_ASSESSMENT_TOOLS,
+    OVERSEER_TOOLS,
 )
 from built.services import card_service
 from built.tools.dispatcher import ToolDispatcher
@@ -46,14 +50,16 @@ FilePolicy = Literal["file_all_above_bar", "file_best_only"]
 # file_best_only: file just the single highest-severity candidate from the batch.
 # agents_md and retro have no entry — _whittle_tasks skips severity filtering for
 # any kind not listed here (each of their own prompts already caps it at one card).
+#
+# OVERSEER uses file_all_above_bar: the old "cap most kinds to a single candidate"
+# policy existed to stop several independent, uncontrolled lenses (bug_sweep,
+# opportunity_brainstorm, polish_review, ...) from flooding the backlog
+# simultaneously — that reasoning doesn't transfer to one operator-scoped kind,
+# where the operator's own overseer_prompt already controls scope/depth. Severity
+# self-rating is the real backstop instead of an artificial one-card cap; revisit
+# if OVERSEER turns out to over-file in practice.
 _CURATION_FILE_POLICY: dict[ActivityKind, FilePolicy] = {
-    ActivityKind.BUG_SWEEP: "file_all_above_bar",
-    ActivityKind.SECURITY_SWEEP: "file_all_above_bar",
-    ActivityKind.OPPORTUNITY_BRAINSTORM: "file_best_only",
-    ActivityKind.POLISH_REVIEW: "file_best_only",
-    ActivityKind.STAY_DRY: "file_best_only",
-    ActivityKind.REFACTOR_SWEEP: "file_best_only",
-    ActivityKind.COVERAGE_SWEEP: "file_best_only",
+    ActivityKind.OVERSEER: "file_all_above_bar",
 }
 
 _SEVERITY_RANK: dict[Severity, int] = {
@@ -118,7 +124,8 @@ async def run_curation_pass(
                     model_name=f"curation-{kind.value}",
                 )
 
-            result = await llm_client.complete(messages=messages, tools=CURATION_TOOLS)
+            tools = OVERSEER_TOOLS if kind == ActivityKind.OVERSEER else CURATION_TOOLS
+            result = await llm_client.complete(messages=messages, tools=tools)
             await append_curation_event(
                 session,
                 project_id=project.id,
@@ -393,3 +400,63 @@ async def _whittle_tasks(
     if not survivors:
         return []
     return await _dedupe_against_live_cards(session, project, kind, survivors, llm_client=llm_client)
+
+
+@dataclass
+class OverseerPromptAssessment:
+    comprehensive: bool
+    issues: list[str]
+
+
+async def assess_overseer_prompt(
+    prompt: str, project: Project, *, llm_client: LLMClient
+) -> OverseerPromptAssessment:
+    """Single-shot judgment call (not the explore-then-propose loop) run whenever an
+    operator saves/changes Project.overseer_prompt via project settings — judges
+    whether the prompt is comprehensive enough to drive a real investigation, with
+    itemized, concrete feedback if not, mirroring the specificity discipline
+    Tester/Reviewer already demand toward Developer (never a vague "could be more
+    detailed"). Structurally the same shape as _dedupe_against_live_cards above:
+    a plain two-message list, one forced-schema tool call, no ToolDispatcher.
+
+    Deliberately does NOT fail open like that function does: raises on any
+    LLM/parsing failure instead of silently returning "comprehensive". A broken
+    dedup call just risks one duplicate card slipping through; a judge call that
+    silently passes everything would defeat the entire point of this gate. Callers
+    (ui/routers/projects.py, api/routers/projects.py) turn any exception here into
+    the same soft-block UX as an honest "not comprehensive" verdict — the operator
+    can always explicitly override either outcome, but never gets an unreviewed
+    save presented as a reviewed one."""
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You judge whether an operator-authored investigation mandate is comprehensive "
+                "enough to drive a real background investigation of a software project, or too "
+                "generic to do so. This mandate becomes the primary system prompt for an "
+                "autonomous agent that explores a real repository (read-only file tools plus "
+                "bash — it can run tests, coverage, linters, curl a live endpoint, git log/blame, "
+                "etc.) and files backlog cards for whatever it finds. Comprehensive means it names "
+                "a specific area, kind of problem, or investigation to actually run — not generic "
+                "filler like 'look for bugs' or 'improve code quality' that would read identically "
+                "for any project. Narrow and specific beats broad and vague — a mandate scoped to "
+                "one concrete thing (e.g. 'audit the payment webhook handler for idempotency "
+                "bugs') can absolutely be comprehensive. If it's not comprehensive, give concrete, "
+                "itemized feedback: one item per gap, naming specifically what's missing or too "
+                "vague and what a stronger mandate would say instead — never a vague note like "
+                "'could be more detailed'. Call report_overseer_prompt_assessment exactly once."
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Project goal: {project.overarching_goal}\n\nProposed overseer mandate:\n{prompt}",
+        },
+    ]
+    result = await llm_client.complete(messages=messages, tools=OVERSEER_PROMPT_ASSESSMENT_TOOLS)
+    for tool_call in result.tool_calls:
+        if tool_call.name != OVERSEER_PROMPT_ASSESSMENT_TERMINAL_TOOL:
+            continue
+        issues = [str(i) for i in tool_call.arguments.get("issues", []) if str(i).strip()]
+        comprehensive = bool(tool_call.arguments.get("comprehensive"))
+        return OverseerPromptAssessment(comprehensive=comprehensive, issues=issues)
+    raise ValueError("judge model did not call report_overseer_prompt_assessment")

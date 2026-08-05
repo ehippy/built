@@ -45,68 +45,6 @@ def _with_current_epic(system: str, current_epic: Card | None) -> str:
     )
 
 
-_CURATION_FOCUS: dict[ActivityKind, str] = {
-    ActivityKind.BUG_SWEEP: (
-        "working in bug-sweep mode: hunt for defects — behavior that contradicts what the code (or "
-        "its own docs/comments) claims it does, edge cases left unhandled, error paths that fail "
-        "silently or ungracefully. Each finding needs a concrete file and the exact condition that "
-        "triggers it — 'error handling could be better' is not a bug, a specific input producing a "
-        "specific wrong result is. Leave style/naming complaints to polish-review and missing "
-        "capabilities to opportunity-brainstorm."
-    ),
-    ActivityKind.OPPORTUNITY_BRAINSTORM: (
-        "working in opportunity-brainstorm mode: look for a genuine capability gap — something the "
-        "project's stated goal implies but the code doesn't yet do, or an existing feature that's "
-        "half-built and stops short of being useful. Ground each idea in something concrete you found "
-        "while exploring (a stubbed-out path, a TODO, a workflow with no entry point), not a generic "
-        "feature that could bolt onto any app. Leave bug fixes to bug-sweep and cosmetic improvements "
-        "to polish-review."
-    ),
-    ActivityKind.POLISH_REVIEW: (
-        "working in polish-review mode: look for rough edges in things that already work correctly — "
-        "inconsistent UI/UX, confusing or inconsistent naming, missing or unclear error/log messages, "
-        "formatting inconsistencies. Point at the specific file, screen, or message — not a general "
-        "sense that something could be cleaner. Small, targeted fixes only, never a rewrite or a "
-        "rename sweep across the whole codebase; leave actually-broken behavior to bug-sweep and "
-        "missing capabilities to opportunity-brainstorm."
-    ),
-    ActivityKind.STAY_DRY: (
-        "working in stay-DRY mode: look for duplicated or near-duplicated code — repeated logic, "
-        "copy-pasted blocks, parallel implementations of the same idea living in different files or "
-        "functions. Name the specific files/functions involved and propose a concrete refactor that "
-        "extracts or consolidates the shared code. Skip incidental similarity that isn't actually the "
-        "same concept; skip pure style inconsistency (polish-review's job) and skip structural/boundary "
-        "problems that aren't about repeated logic (refactor-sweep's job) — this is about logic that's "
-        "actually repeated."
-    ),
-    ActivityKind.SECURITY_SWEEP: (
-        "working in security-sweep mode: hunt for authorization gaps (a route or tool that skips a "
-        "check an equivalent one performs), injection risk (unsanitized input reaching a shell/SQL/"
-        "template sink), secrets or credentials leaking into code, logs, or config, and known-"
-        "vulnerable dependencies. Each finding needs the exact file and the exploitable condition, not "
-        "a generic 'could be more secure.' Leave general correctness bugs that carry no security "
-        "implication to bug-sweep."
-    ),
-    ActivityKind.COVERAGE_SWEEP: (
-        "working in coverage-sweep mode: find a code path, branch, or documented behavior with no test "
-        "that would catch it breaking — an error path never exercised, a public function with zero "
-        "tests, a documented edge case nothing asserts. Name the specific file/function and what a test "
-        "should verify. This is about missing verification, not missing correctness — if you notice an "
-        "actual bug while exploring, leave filing it to bug-sweep; propose a test-coverage card, not a "
-        "fix."
-    ),
-    ActivityKind.REFACTOR_SWEEP: (
-        "working in refactor-sweep mode: find structural decay — an overgrown function or module that "
-        "should split, a layering or boundary violation (e.g. a router doing DB queries directly, "
-        "logic that should live in services/ living elsewhere), dead code, or a convention that's "
-        "drifted (an enum or pattern applied at one call site but not its counterpart). Name the "
-        "specific files and the concrete restructuring, not a vague 'this could be cleaner.' Leave "
-        "textual/logic duplication to stay-DRY and purely cosmetic naming/formatting to polish-review "
-        "— this is about shape and boundaries, not what's repeated or how it reads."
-    ),
-}
-
-
 def build_curation_prompt(
     project: Project,
     kind: ActivityKind,
@@ -122,7 +60,12 @@ def build_curation_prompt(
     agent/curation.py, orchestrator/curator.py). agents_md and retro are each
     shaped differently from the rest: their context is pre-digested material
     (extra_context) rather than a live repo browse, and each proposes at most one
-    card."""
+    card. overseer is shaped differently too, in the opposite direction: unlike
+    every other kind, built supplies no built-in definition of what it looks for —
+    project.overseer_prompt (the operator's own words) IS the investigation
+    mandate, not an addendum layered onto text built wrote first (contrast with
+    _with_role_guidance below, which always appends a human's text after an
+    already-complete built-authored prompt)."""
     if kind == ActivityKind.AGENTS_MD:
         system = (
             "You are the agent that keeps this project's AGENTS.md up to date. Below is a summary of "
@@ -168,24 +111,35 @@ def build_curation_prompt(
         system = _with_agents_doc(system, agents_doc)
         return _with_role_guidance(system, project.pm_guidance), user
 
-    focus = _CURATION_FOCUS[kind]
+    # Only ActivityKind.OVERSEER reaches here (AGENTS_MD/RETRO returned above,
+    # PM_TRIAGE has its own build_pm_triage_prompt). Callers must never reach this
+    # with a blank prompt — orchestrator/curator.py's _needs_run and
+    # run_curation_activity both refuse to start an OVERSEER pass without one; this
+    # assert is a belt-and-suspenders guard against that invariant drifting, not
+    # user-facing validation.
+    assert project.overseer_prompt, "OVERSEER requires project.overseer_prompt — caller must gate this"
     system = (
-        f"You are the Product Manager agent in an autonomous software factory, {focus} Use the "
-        "read-only tools to actually look at the code before proposing anything — don't propose work "
-        "that's already done or already queued.\n\n"
-        "Each task must be one coherent, independently workable unit — small enough for a Developer "
-        "to build and a Tester to verify in a single focused pass. If you find several distinct "
-        "issues, that's several tasks, not one task whose raw_request lists them all; never bundle "
-        "unrelated findings together just to stay under the task limit below.\n\n"
-        f"Project goal: {project.overarching_goal}\n\n"
-        f"When ready, call propose_tasks with 1 to {MAX_PROPOSED_TASKS} concrete, well-scoped tasks, "
-        "each rated with an honest severity (critical/high/medium/low) reflecting real-world impact if "
-        "left unaddressed — don't inflate every finding to critical just to avoid it being dropped; a "
-        "dishonest rating just means a genuinely urgent finding on a future pass gets lost in the "
-        "noise. Each becomes a new card that flows through the same PM -> Developer -> Tester -> "
-        "Deployer pipeline as a human-submitted request. If you don't find anything worth proposing, "
-        "call propose_tasks with your single best idea rather than nothing — nobody is watching this "
-        "run interactively, so do not stop to ask a question."
+        "You are OVERSEER, a background investigation agent in an autonomous software factory. Below "
+        "is this project's own mandate for what you're here to investigate — written by the person "
+        "running this project, not by built itself. Treat it as your primary instructions for this "
+        "pass.\n\n"
+        f"--- Project's overseer mandate ---\n{project.overseer_prompt}\n--- end mandate ---\n\n"
+        "Mechanics that apply regardless of what the mandate above asks for: you have read-only file "
+        "tools (read_file/list_files/glob_files/grep_files) and bash — use bash to actually run things "
+        "(tests, coverage, linters, curl a running endpoint, git log/blame) instead of only reading "
+        "source; a real command's output is stronger evidence than inference from code alone. You have "
+        "no write_file/edit_file, and nothing bash does here is ever committed — you investigate and "
+        "report, you never fix anything yourself. Each task you propose must be one coherent, "
+        "independently workable unit — small enough for a Developer to build and a Tester to verify in "
+        "a single focused pass; if you find several distinct issues, that's several tasks, not one "
+        f"whose raw_request lists them all. When ready, call propose_tasks with 1 to {MAX_PROPOSED_TASKS} "
+        "concrete, well-scoped tasks, each rated with an honest severity (critical/high/medium/low) "
+        "reflecting real-world impact if left unaddressed — don't inflate every finding to critical "
+        "just to avoid it being dropped. Stay inside what the mandate above actually asks for — don't "
+        "drift into unrelated investigation just because you noticed something else. Nobody is "
+        "watching this run interactively — do not stop to ask a question, and if nothing within the "
+        "mandate's scope is worth proposing, propose your single best finding rather than nothing.\n\n"
+        f"Project goal: {project.overarching_goal}"
     )
     existing = "\n".join(f"- {t}" for t in existing_titles) or "(none yet)"
     user = f"Existing/recent card titles in this project — don't propose duplicates of these:\n{existing}"

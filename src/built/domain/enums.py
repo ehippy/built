@@ -130,18 +130,21 @@ class ChatRole(StrEnum):
 
 class ActivityKind(StrEnum):
     """A periodic background pass over a project — scheduled and toggled uniformly
-    by orchestrator/curator.py, but not all one mechanism. Most kinds explore
-    read-only and call propose_tasks, creating new cards exactly like a human PM
-    filing a ticket (see agent/curation.py). PM_TRIAGE is structurally different —
-    see its own entry below and agent/pm_triage.py."""
+    by orchestrator/curator.py, but not all one mechanism. OVERSEER and PM_TRIAGE
+    both explore/act read-mostly and end with a terminal tool call (see
+    agent/curation.py), but are otherwise structurally different from each other —
+    see each one's own entry below."""
 
-    BUG_SWEEP = "bug_sweep"
-    OPPORTUNITY_BRAINSTORM = "opportunity_brainstorm"
-    POLISH_REVIEW = "polish_review"
-    STAY_DRY = "stay_dry"  # looks for duplicated code and proposes shared-code refactors
-    SECURITY_SWEEP = "security_sweep"  # authz gaps, injection, secrets in code/logs/config, vuln deps
-    COVERAGE_SWEEP = "coverage_sweep"  # code paths/behaviors with no test verifying them; files, doesn't fix
-    REFACTOR_SWEEP = "refactor_sweep"  # decomposition candidates, layering violations, dead code, drift
+    # The one kind where built doesn't define the focus itself: the operator writes
+    # the entire investigation mandate into Project.overseer_prompt (blank = doesn't
+    # run — see orchestrator/curator.py). Explores with read tools plus bash (the
+    # only curation kind with it — never write_file/edit_file, so it still only ever
+    # proposes work via propose_tasks, never edits the repo itself) and files
+    # whatever it finds. Collapses seven former near-duplicate kinds (bug_sweep,
+    # security_sweep, opportunity_brainstorm, polish_review, stay_dry,
+    # refactor_sweep, coverage_sweep) that differed only in a built-authored focus
+    # string — see agent/context.py's build_curation_prompt.
+    OVERSEER = "overseer"
     AGENTS_MD = "agents_md"  # proposes an AGENTS.md-update card; replaces the old Tender
     RETRO = "retro"  # mines recent CardPostmortems (agent/summarizer.py) for a recurring struggle
     # Doesn't propose new cards — the one kind with authority to act on cards

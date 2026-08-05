@@ -2,17 +2,20 @@ import asyncio
 
 from fastapi import APIRouter, HTTPException, status
 
+from built.agent.curation import assess_overseer_prompt
 from built.api.deps import RequireApiKey, SessionDep
 from built.api.schemas import (
     DeployConfigIn,
     DeployConfigOut,
+    OverseerPromptIn,
     ProjectCreate,
     ProjectOut,
     ProjectUpdate,
 )
-from built.domain.enums import ActivityKind
+from built.domain.enums import ActivityKind, Column
+from built.llm.client import FallbackLLMClient
 from built.orchestrator.curator import is_curation_running, run_curation_activity
-from built.services import project_service
+from built.services import endpoint_service, project_service
 from built.services.project_service import NotFoundError
 
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
@@ -47,6 +50,42 @@ async def update_project(
         project = await project_service.update_project(session, project_id, **body.model_dump())
     except NotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return ProjectOut.model_validate(project)
+
+
+@router.put("/{project_id}/overseer-prompt", response_model=ProjectOut)
+async def set_overseer_prompt(
+    project_id: str, body: OverseerPromptIn, session: SessionDep, _: RequireApiKey
+) -> ProjectOut:
+    """Deliberately not folded into the generic PATCH /{project_id} — without this
+    dedicated endpoint, the comprehensiveness gate (agent/curation.py's
+    assess_overseer_prompt) would be UI-only theater that any direct API client
+    bypasses. Mirrors ui/routers/projects.py's update_overseer_prompt exactly: a
+    blank prompt always saves unconditionally; a non-blank prompt without
+    force=True is judged first, and both "not comprehensive" and "judge call
+    failed" block with the same 422 shape, distinguished by issues vs. error — the
+    client fixes the prompt or resubmits with force=True, same escape hatch as the
+    UI's "save anyway" button."""
+    try:
+        project = await project_service.get_project(session, project_id)
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    prompt = (body.prompt or "").strip() or None
+    if prompt is not None and not body.force:
+        try:
+            chain = await endpoint_service.get_resolved_chain(session, project_id=project_id, role=Column.PM)
+            assessment = await assess_overseer_prompt(prompt, project, llm_client=FallbackLLMClient(chain))
+        except Exception as exc:  # noqa: BLE001 — same soft-block contract as the UI route
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                {"comprehensive": None, "issues": [], "error": str(exc)},
+            ) from exc
+        if not assessment.comprehensive:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                {"comprehensive": False, "issues": assessment.issues, "error": None},
+            )
+    project = await project_service.set_overseer_prompt(session, project_id, prompt)
     return ProjectOut.model_validate(project)
 
 

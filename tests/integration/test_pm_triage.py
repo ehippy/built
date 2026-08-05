@@ -507,7 +507,9 @@ async def test_needs_run_pm_triage_ignores_the_pm_backlog_cap(db_session, toy_re
     """The WIP cap exists to stop *proposing* more PM work — the opposite of what
     PM_TRIAGE does, so it must run even when the backlog is well past the cap."""
     monkeypatch.setattr(curator.settings, "curator_max_pm_backlog", 2)
-    project, _ = await _make_project(db_session, toy_repo_remote, _n="13")
+    project, _ = await _make_project(
+        db_session, toy_repo_remote, _n="13", overseer_prompt="Investigate anything you find worth filing."
+    )
     for i in range(5):
         await card_service.create_card(db_session, project.id, title=f"c{i}", raw_request="r")
     await db_session.commit()
@@ -517,8 +519,9 @@ async def test_needs_run_pm_triage_ignores_the_pm_backlog_cap(db_session, toy_re
     assert should_run is True
     assert extra_context is not None
 
-    # A propose-more kind is still correctly blocked by the same cap.
-    should_run, _ = await curator._needs_run(db_session, project, ActivityKind.BUG_SWEEP)
+    # A propose-more kind is still correctly blocked by the same cap (not by a
+    # missing overseer_prompt — this project has one set).
+    should_run, _ = await curator._needs_run(db_session, project, ActivityKind.OVERSEER)
     assert should_run is False
 
 

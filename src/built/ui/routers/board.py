@@ -13,13 +13,7 @@ from built.ui.templates import templates, tool_descriptor
 router = APIRouter(prefix="/ui", tags=["ui"])
 
 _CURATION_LABELS: dict[ActivityKind, str] = {
-    ActivityKind.BUG_SWEEP: "Bug sweep",
-    ActivityKind.OPPORTUNITY_BRAINSTORM: "Opportunities",
-    ActivityKind.POLISH_REVIEW: "Polish review",
-    ActivityKind.STAY_DRY: "Duplication sweep",
-    ActivityKind.SECURITY_SWEEP: "Security sweep",
-    ActivityKind.COVERAGE_SWEEP: "Coverage sweep",
-    ActivityKind.REFACTOR_SWEEP: "Refactor sweep",
+    ActivityKind.OVERSEER: "Overseer",
     ActivityKind.AGENTS_MD: "Tend AGENTS.md",
     ActivityKind.RETRO: "Retro",
     ActivityKind.PM_TRIAGE: "PM triage",
@@ -52,6 +46,7 @@ def _any_curation_running(project_id: str) -> bool:
 
 
 async def _curation_statuses(session: SessionDep, project_id: str) -> list[dict]:
+    project = await project_service.get_project(session, project_id)
     runs = await project_service.list_activity_runs(session, project_id)
     curation_state = await project_service.get_curation_state(session, project_id)
     disabled_kinds = set(curation_state.disabled_kinds) if curation_state else set()
@@ -72,6 +67,10 @@ async def _curation_statuses(session: SessionDep, project_id: str) -> list[dict]
                 "current_activity": current_activity,
                 "last_run_at": runs[kind].last_run_at if kind in runs else None,
                 "summary": runs[kind].last_result_summary if kind in runs else None,
+                # OVERSEER only: distinguishes "off because no mandate is set yet"
+                # (Run now is a silent no-op — orchestrator/curator.py refuses to
+                # start) from the ordinary disabled_kinds/paused reasons below.
+                "needs_prompt": kind == ActivityKind.OVERSEER and not project.overseer_prompt,
             }
         )
     return statuses

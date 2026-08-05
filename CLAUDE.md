@@ -71,17 +71,25 @@ a time — two cards in the same repo would otherwise step on each other's workt
 
 Alongside the worker pool, `orchestrator/` runs independently-timed loops, each individually
 toggleable via `BUILT_*_ENABLED` (`config.py`):
-- **Curator** (`agent/curation.py` + `orchestrator/curator.py`) — periodic read-only passes per
-  project that end in `propose_tasks`, filing new cards exactly like a human PM. The category
-  registry is `domain/enums.py`'s `ActivityKind`; adding a new curation category means touching
-  four places: the enum member (`enums.py`), its focus prompt (`agent/context.py`'s
-  `_CURATION_FOCUS`), its UI label (`ui/routers/board.py`'s `_CURATION_LABELS`), and — if it
-  should run on a different cadence or file-volume policy than the defaults — an entry in
-  `orchestrator/curator.py`'s `_CURATION_INTERVALS` and/or `agent/curation.py`'s
-  `_CURATION_FILE_POLICY`; the board template itself needs no edit, since it renders whatever
-  `_curation_statuses` computes generically. The shared prompt template and the `propose_tasks`
-  tool schema both enforce that each proposed card is one atomic, independently-workable unit —
-  never a bundle of unrelated findings, and each is self-rated with a severity the file-policy
+- **Curator** (`agent/curation.py` + `orchestrator/curator.py`) — periodic passes per project that
+  end in `propose_tasks`, filing new cards exactly like a human PM. The category registry is
+  `domain/enums.py`'s `ActivityKind`. `ActivityKind.OVERSEER` is the one kind where `built` doesn't
+  define the focus itself: the operator writes the entire investigation mandate into
+  `Project.overseer_prompt` (blank = OVERSEER doesn't run — no built-authored fallback; changing it
+  via project settings fires a single-shot LLM comprehensiveness check, `agent/curation.py`'s
+  `assess_overseer_prompt`, with an explicit override if the operator disagrees). It's also the only
+  curation kind with a `bash` tool (`llm/tool_schemas.py`'s `OVERSEER_TOOLS`) — never
+  `write_file`/`edit_file`, so it still only ever proposes work via `propose_tasks`, never edits the
+  repo itself (its `ToolContext` sets `auto_commit=False`, same as every other kind). Touching
+  curation's other four config points is still the shape for any future *structurally distinct* kind
+  (the way `AGENTS_MD`/`RETRO`/`PM_TRIAGE` are, each with its own prompt-building branch and inputs
+  rather than a config-dict entry): the enum member (`enums.py`), its UI label
+  (`ui/routers/board.py`'s `_CURATION_LABELS`), and — if it should run on a different cadence or
+  file-volume policy than the defaults — an entry in `orchestrator/curator.py`'s
+  `_CURATION_INTERVALS` and/or `agent/curation.py`'s `_CURATION_FILE_POLICY`; the board template
+  itself needs no edit, since it renders whatever `_curation_statuses` computes generically. The
+  `propose_tasks` tool schema enforces that each proposed card is one atomic, independently-workable
+  unit — never a bundle of unrelated findings, and each is self-rated with a severity the file-policy
   uses to decide how many candidates actually become cards. A second, code-level check
   (`agent/curation.py`'s `_whittle_tasks`) re-verifies proposed candidates against the live board
   right before creating cards — the model's own read of "existing/recent titles" earlier in its

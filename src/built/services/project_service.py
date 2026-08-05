@@ -55,6 +55,12 @@ async def create_project(
     tester_guidance: str | None = None,
     reviewer_guidance: str | None = None,
     deployer_guidance: str | None = None,
+    # Not on api/schemas.py's ProjectCreate — a brand-new project has no repo
+    # history yet to have formed a real overseer mandate about (see
+    # set_overseer_prompt's docstring for the normal, post-creation path). Kept as
+    # a service-layer parameter anyway so internal callers (tests, scripts) can set
+    # it in one call rather than a create-then-set round trip.
+    overseer_prompt: str | None = None,
 ) -> Project:
     project = Project(
         name=name,
@@ -79,6 +85,7 @@ async def create_project(
         tester_guidance=tester_guidance,
         reviewer_guidance=reviewer_guidance,
         deployer_guidance=deployer_guidance,
+        overseer_prompt=overseer_prompt,
     )
     # A brand-new object was never loaded via a query, so the selectin strategy on
     # Project.deploy_config never fires for it — set it directly (we know it's None,
@@ -112,6 +119,22 @@ async def update_project(session: AsyncSession, project_id: str, **fields) -> Pr
     for key, value in fields.items():
         if value is not None:
             setattr(project, key, value)
+    await session.flush()
+    return project
+
+
+async def set_overseer_prompt(session: AsyncSession, project_id: str, prompt: str | None) -> Project:
+    """Distinct from update_project's blanket **fields passthrough (which skips any
+    None value, so it can never clear a field once set — see its own docstring):
+    overseer_prompt's blank state is load-bearing (ActivityKind.OVERSEER simply
+    doesn't run without it — orchestrator/curator.py), not an optional nicety like
+    pm_guidance, so clearing it back to None has to actually be reachable. Same
+    division of labor as set_current_epic above: callers (ui/routers/projects.py,
+    api/routers/projects.py) are responsible for running agent/curation.py's
+    assess_overseer_prompt gate before calling this with a non-None prompt — this
+    function itself does no validation."""
+    project = await get_project(session, project_id)
+    project.overseer_prompt = prompt
     await session.flush()
     return project
 

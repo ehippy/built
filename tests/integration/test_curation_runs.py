@@ -30,6 +30,7 @@ async def _make_project(db_session, toy_repo_remote, **overrides):
         "name": f"curation-runs-{overrides.pop('_n', 'x')}",
         "overarching_goal": "goal",
         "repo_remote_url": str(toy_repo_remote),
+        "overseer_prompt": "Investigate anything you find worth filing.",
     }
     defaults.update(overrides)
     project = await project_service.create_project(db_session, **defaults)
@@ -48,7 +49,7 @@ def _dispatcher(wt_path) -> ToolDispatcher:
 async def test_start_curation_run_opens_with_no_outcome(db_session, toy_repo_remote):
     project, _ = await _make_project(db_session, toy_repo_remote, _n="1")
 
-    run = await project_service.start_curation_run(db_session, project.id, ActivityKind.BUG_SWEEP)
+    run = await project_service.start_curation_run(db_session, project.id, ActivityKind.OVERSEER)
 
     assert run.started_at is not None
     assert run.ended_at is None
@@ -57,11 +58,11 @@ async def test_start_curation_run_opens_with_no_outcome(db_session, toy_repo_rem
 
 async def test_finish_curation_run_sums_token_usage_from_its_own_events(db_session, toy_repo_remote):
     project, _ = await _make_project(db_session, toy_repo_remote, _n="2")
-    run = await project_service.start_curation_run(db_session, project.id, ActivityKind.BUG_SWEEP)
+    run = await project_service.start_curation_run(db_session, project.id, ActivityKind.OVERSEER)
     await append_curation_event(
         db_session,
         project_id=project.id,
-        kind=ActivityKind.BUG_SWEEP,
+        kind=ActivityKind.OVERSEER,
         run_id=run.id,
         type=EventType.LLM_RESPONSE,
         payload={},
@@ -71,7 +72,7 @@ async def test_finish_curation_run_sums_token_usage_from_its_own_events(db_sessi
     await append_curation_event(
         db_session,
         project_id=project.id,
-        kind=ActivityKind.BUG_SWEEP,
+        kind=ActivityKind.OVERSEER,
         run_id=run.id,
         type=EventType.LLM_RESPONSE,
         payload={},
@@ -94,11 +95,11 @@ async def test_finish_curation_run_detects_error_regardless_of_summary_text(db_s
     happens to look success-shaped — the event is ground truth, the summary
     string is not."""
     project, _ = await _make_project(db_session, toy_repo_remote, _n="3")
-    run = await project_service.start_curation_run(db_session, project.id, ActivityKind.BUG_SWEEP)
+    run = await project_service.start_curation_run(db_session, project.id, ActivityKind.OVERSEER)
     await append_curation_event(
         db_session,
         project_id=project.id,
-        kind=ActivityKind.BUG_SWEEP,
+        kind=ActivityKind.OVERSEER,
         run_id=run.id,
         type=EventType.ERROR,
         payload={"error": "boom"},
@@ -128,12 +129,12 @@ async def test_finish_curation_run_outcome_from_summary_text(db_session, toy_rep
 
 async def test_list_curation_runs_orders_newest_first(db_session, toy_repo_remote):
     project, _ = await _make_project(db_session, toy_repo_remote, _n="5")
-    first = await project_service.start_curation_run(db_session, project.id, ActivityKind.BUG_SWEEP)
+    first = await project_service.start_curation_run(db_session, project.id, ActivityKind.OVERSEER)
     await db_session.commit()
-    second = await project_service.start_curation_run(db_session, project.id, ActivityKind.BUG_SWEEP)
+    second = await project_service.start_curation_run(db_session, project.id, ActivityKind.OVERSEER)
     await db_session.commit()
 
-    runs = await project_service.list_curation_runs(db_session, project.id, ActivityKind.BUG_SWEEP)
+    runs = await project_service.list_curation_runs(db_session, project.id, ActivityKind.OVERSEER)
 
     assert [r.id for r in runs] == [second.id, first.id]
 
@@ -141,23 +142,23 @@ async def test_list_curation_runs_orders_newest_first(db_session, toy_repo_remot
 async def test_list_curation_runs_scoped_to_project_and_kind(db_session, toy_repo_remote):
     project, _ = await _make_project(db_session, toy_repo_remote, _n="6")
     other_project, _ = await _make_project(db_session, toy_repo_remote, _n="6b")
-    await project_service.start_curation_run(db_session, project.id, ActivityKind.BUG_SWEEP)
-    await project_service.start_curation_run(db_session, project.id, ActivityKind.POLISH_REVIEW)
-    await project_service.start_curation_run(db_session, other_project.id, ActivityKind.BUG_SWEEP)
+    await project_service.start_curation_run(db_session, project.id, ActivityKind.OVERSEER)
+    await project_service.start_curation_run(db_session, project.id, ActivityKind.AGENTS_MD)
+    await project_service.start_curation_run(db_session, other_project.id, ActivityKind.OVERSEER)
     await db_session.commit()
 
-    runs = await project_service.list_curation_runs(db_session, project.id, ActivityKind.BUG_SWEEP)
+    runs = await project_service.list_curation_runs(db_session, project.id, ActivityKind.OVERSEER)
 
     assert len(runs) == 1
 
 
 async def test_get_curation_run_eager_loads_its_events(db_session, toy_repo_remote):
     project, _ = await _make_project(db_session, toy_repo_remote, _n="7")
-    run = await project_service.start_curation_run(db_session, project.id, ActivityKind.BUG_SWEEP)
+    run = await project_service.start_curation_run(db_session, project.id, ActivityKind.OVERSEER)
     await append_curation_event(
         db_session,
         project_id=project.id,
-        kind=ActivityKind.BUG_SWEEP,
+        kind=ActivityKind.OVERSEER,
         run_id=run.id,
         type=EventType.LLM_RESPONSE,
         payload={"content": "thinking"},
@@ -208,9 +209,9 @@ async def test_run_curation_activity_creates_a_finished_ok_run(db_session, toy_r
 
     monkeypatch.setattr(curator, "run_curation_pass", _fake_run_curation_pass)
 
-    await curator.run_curation_activity(project.id, ActivityKind.BUG_SWEEP)
+    await curator.run_curation_activity(project.id, ActivityKind.OVERSEER)
 
-    runs = await project_service.list_curation_runs(db_session, project.id, ActivityKind.BUG_SWEEP)
+    runs = await project_service.list_curation_runs(db_session, project.id, ActivityKind.OVERSEER)
     assert len(runs) == 1
     run = runs[0]
     assert run.ended_at is not None
@@ -229,12 +230,13 @@ async def test_run_curation_activity_setup_failure_records_an_error_run(db_sessi
         name="curation-runs-setup-fail",
         overarching_goal="g",
         repo_remote_url="/nonexistent/path/repo.git",
+        overseer_prompt="Investigate anything you find.",
     )
     await db_session.commit()
 
-    await curator.run_curation_activity(project.id, ActivityKind.BUG_SWEEP)
+    await curator.run_curation_activity(project.id, ActivityKind.OVERSEER)
 
-    runs = await project_service.list_curation_runs(db_session, project.id, ActivityKind.BUG_SWEEP)
+    runs = await project_service.list_curation_runs(db_session, project.id, ActivityKind.OVERSEER)
     assert len(runs) == 1
     assert runs[0].ended_at is not None
     assert runs[0].outcome == CurationRunOutcome.ERROR
@@ -242,7 +244,7 @@ async def test_run_curation_activity_setup_failure_records_an_error_run(db_sessi
 
 async def test_run_curation_pass_tags_every_event_with_the_run_id(db_session, toy_repo_remote):
     project, wt_path = await _make_project(db_session, toy_repo_remote, _n="9")
-    run = await project_service.start_curation_run(db_session, project.id, ActivityKind.BUG_SWEEP)
+    run = await project_service.start_curation_run(db_session, project.id, ActivityKind.OVERSEER)
     await db_session.commit()
 
     llm = ScriptedLLMClient(
@@ -264,7 +266,7 @@ async def test_run_curation_pass_tags_every_event_with_the_run_id(db_session, to
     await run_curation_pass(
         db_session,
         project,
-        ActivityKind.BUG_SWEEP,
+        ActivityKind.OVERSEER,
         llm_client=llm,
         dispatcher=_dispatcher(wt_path),
         max_iterations=5,
@@ -281,25 +283,25 @@ async def test_run_curation_pass_tags_every_event_with_the_run_id(db_session, to
 
 async def test_curation_kind_history_page_renders_runs(db_session, toy_repo_remote):
     project, _ = await _make_project(db_session, toy_repo_remote, _n="10")
-    run = await project_service.start_curation_run(db_session, project.id, ActivityKind.BUG_SWEEP)
+    run = await project_service.start_curation_run(db_session, project.id, ActivityKind.OVERSEER)
     await project_service.finish_curation_run(db_session, run.id, summary="created 2 card(s)")
     await db_session.commit()
 
     async with _client() as client:
-        resp = await client.get(f"/ui/projects/{project.id}/curation/bug_sweep")
+        resp = await client.get(f"/ui/projects/{project.id}/curation/overseer")
 
     assert resp.status_code == 200
     assert "created 2 card(s)" in resp.text
-    assert "Bug sweep" in resp.text
+    assert "Overseer" in resp.text
 
 
 async def test_curation_run_detail_page_renders_transcript(db_session, toy_repo_remote):
     project, _ = await _make_project(db_session, toy_repo_remote, _n="11")
-    run = await project_service.start_curation_run(db_session, project.id, ActivityKind.BUG_SWEEP)
+    run = await project_service.start_curation_run(db_session, project.id, ActivityKind.OVERSEER)
     await append_curation_event(
         db_session,
         project_id=project.id,
-        kind=ActivityKind.BUG_SWEEP,
+        kind=ActivityKind.OVERSEER,
         run_id=run.id,
         type=EventType.LLM_RESPONSE,
         payload={"content": "looked at app.py and found nothing worth filing"},
@@ -308,7 +310,7 @@ async def test_curation_run_detail_page_renders_transcript(db_session, toy_repo_
     await db_session.commit()
 
     async with _client() as client:
-        resp = await client.get(f"/ui/projects/{project.id}/curation/bug_sweep/runs/{run.id}")
+        resp = await client.get(f"/ui/projects/{project.id}/curation/overseer/runs/{run.id}")
 
     assert resp.status_code == 200
     assert "looked at app.py and found nothing worth filing" in resp.text
@@ -320,12 +322,12 @@ async def test_orphaned_run_shows_as_interrupted_not_running(db_session, toy_rep
     that's lost on restart too), the UI must call it interrupted, not running
     forever."""
     project, _ = await _make_project(db_session, toy_repo_remote, _n="12")
-    await project_service.start_curation_run(db_session, project.id, ActivityKind.BUG_SWEEP)
+    await project_service.start_curation_run(db_session, project.id, ActivityKind.OVERSEER)
     await db_session.commit()
-    assert curator.is_curation_running(project.id, ActivityKind.BUG_SWEEP) is False
+    assert curator.is_curation_running(project.id, ActivityKind.OVERSEER) is False
 
     async with _client() as client:
-        resp = await client.get(f"/ui/projects/{project.id}/curation/bug_sweep")
+        resp = await client.get(f"/ui/projects/{project.id}/curation/overseer")
 
     assert resp.status_code == 200
     assert "interrupted" in resp.text
@@ -339,4 +341,4 @@ async def test_curation_panel_links_to_history_page(db_session, toy_repo_remote)
     async with _client() as client:
         resp = await client.get(f"/ui/projects/{project.id}/board")
 
-    assert f'/ui/projects/{project.id}/curation/bug_sweep"' in resp.text
+    assert f'/ui/projects/{project.id}/curation/overseer"' in resp.text

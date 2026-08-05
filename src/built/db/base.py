@@ -75,6 +75,9 @@ ADDITIVE_COLUMNS = [
     # Nullable, no DEFAULT needed — every run_attempts row recorded before pipestatus
     # capture existed simply has none (see db/models.py's RunAttempt.pipestatus).
     ("run_attempts", "pipestatus", "TEXT"),
+    # Nullable, no DEFAULT needed — every existing project simply has no overseer
+    # mandate until a human writes one (see db/models.py's Project.overseer_prompt).
+    ("projects", "overseer_prompt", "TEXT"),
 ]
 
 

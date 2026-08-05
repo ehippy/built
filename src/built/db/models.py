@@ -50,6 +50,18 @@ class Project(Base):
     # this, "some bash command exited 0" was the only gate, and it didn't verify the
     # command run was actually the test suite.
     test_command: Mapped[str | None] = mapped_column(Text, default=None)
+    # The operator's entire investigation mandate for ActivityKind.OVERSEER — unlike
+    # every other curation kind, built supplies no built-in definition of what this
+    # role looks for (see agent/context.py's build_curation_prompt). NULL/blank blocks
+    # OVERSEER from running at all (orchestrator/curator.py's _needs_run and
+    # run_curation_activity both gate on this) — same nullable-blocks-a-capability
+    # shape as test_command above, no silent built-authored fallback. Changing this via
+    # project settings fires a single-shot LLM comprehensiveness check before it's
+    # allowed to save (see agent/curation.py's assess_overseer_prompt) — set through
+    # services/project_service.py's set_overseer_prompt, not update_project's generic
+    # **fields passthrough, because that passthrough silently skips None and could
+    # never actually clear this back to blank.
+    overseer_prompt: Mapped[str | None] = mapped_column(Text, default=None)
 
     # Safety-valve caps — copied from service-level defaults at creation, overridable per project.
     max_revisions: Mapped[int] = mapped_column(Integer, default=3)
@@ -190,7 +202,7 @@ class EndpointConfig(Base):
 
 class ProjectActivityRun(Base):
     """One row per (project, curation activity kind) — when it last ran, so
-    orchestrator/curator.py can ask "is bug_sweep due for project X" uniformly
+    orchestrator/curator.py can ask "is overseer due for project X" uniformly
     across every kind (agent/curation.py, orchestrator/curator.py). Replaces the old
     single-purpose Project.agents_doc_tended_at, which only ever tracked one kind."""
 

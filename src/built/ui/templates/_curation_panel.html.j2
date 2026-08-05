@@ -20,13 +20,16 @@
         <input class="form-check-input" type="checkbox" role="switch" id="curation-enabled-{{ s.kind }}" name="enabled" value="true" {% if s.enabled %}checked{% endif %} onchange="this.form.requestSubmit()">
         <label class="form-check-label" for="curation-enabled-{{ s.kind }}">{{ s.label }}</label>
       </form>
+      {% if not s.needs_prompt %}
       <form method="post" action="/ui/projects/{{ project.id }}/curate/{{ s.kind }}" hx-post="/ui/projects/{{ project.id }}/curate/{{ s.kind }}" hx-target="#curation-panel" hx-swap="outerHTML">
         <button class="btn btn-sm btn-secondary" type="submit">Run now</button>
       </form>
+      {% endif %}
       <a class="btn btn-sm btn-outline-secondary" href="/ui/projects/{{ project.id }}/curation/{{ s.kind }}" title="Run history"><i class="bi bi-clock-history"></i></a>
     </div>
     <div class="small text-body-secondary ps-4 text-truncate">
-      {% if not s.enabled %}off — not on the automatic schedule
+      {% if s.needs_prompt %}no overseer prompt set — configure one in <a href="/ui/projects/{{ project.id }}/settings#overseer-pane">Settings</a>
+      {% elif not s.enabled %}off — not on the automatic schedule
       {% elif s.running %}
       <span class="spinner-border spinner-border-sm flex-shrink-0" role="status" title="Running now">
         <span class="visually-hidden">Running…</span>

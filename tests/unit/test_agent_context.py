@@ -2,6 +2,8 @@
 retry should reach whichever column's prompt is built next, and stay out of the
 prompt entirely when there isn't one."""
 
+import pytest
+
 from built.agent.context import (
     build_chat_prompt,
     build_curation_prompt,
@@ -229,13 +231,36 @@ def test_chat_prompt_includes_pm_guidance_when_set():
     assert "Keep tickets under 500 words." in system
 
 
-def test_curation_prompt_includes_pm_guidance_for_normal_kind():
+def test_curation_prompt_includes_pm_guidance_for_overseer_kind():
     system, _ = build_curation_prompt(
-        _project(pm_guidance="Skip anything touching the payments module."),
-        ActivityKind.BUG_SWEEP,
+        _project(
+            pm_guidance="Skip anything touching the payments module.",
+            overseer_prompt="Investigate app.py for arithmetic bugs.",
+        ),
+        ActivityKind.OVERSEER,
         [],
     )
     assert "Skip anything touching the payments module." in system
+
+
+def test_curation_prompt_overseer_uses_the_operators_exact_mandate_text():
+    """Unlike every other curation kind, built supplies no built-in definition of
+    what OVERSEER looks for — the operator's own words must appear verbatim, not
+    paraphrased or summarized."""
+    system, _ = build_curation_prompt(
+        _project(overseer_prompt="Audit the payment webhook handler for idempotency bugs."),
+        ActivityKind.OVERSEER,
+        [],
+    )
+    assert "Audit the payment webhook handler for idempotency bugs." in system
+
+
+def test_curation_prompt_overseer_asserts_when_prompt_is_blank():
+    """Callers (orchestrator/curator.py) must never reach this branch with a blank
+    overseer_prompt — this assert is the belt-and-suspenders guard against that
+    invariant drifting."""
+    with pytest.raises(AssertionError, match="overseer_prompt"):
+        build_curation_prompt(_project(overseer_prompt=None), ActivityKind.OVERSEER, [])
 
 
 def test_curation_prompt_includes_pm_guidance_for_agents_md_kind():

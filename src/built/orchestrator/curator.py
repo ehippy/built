@@ -5,9 +5,11 @@ run_curation_activity for on-demand manual triggers (the board page's per-kind
 
 Curation never edits the repo — every kind ends with propose_tasks, so unlike the
 old Tender this replaces, its worktree needs no git identity, no commit, no push.
-ActivityKind.PM_TRIAGE (agent/pm_triage.py) shares the same read-only worktree and
-explore tools as every other kind, but ends with groom_backlog instead of
-propose_tasks — see the `kind == ActivityKind.PM_TRIAGE` branch below."""
+ActivityKind.OVERSEER's bash tool is the one exception to "read-only", but its
+ToolContext still sets auto_commit=False like every other kind, so nothing it runs
+is ever persisted. ActivityKind.PM_TRIAGE (agent/pm_triage.py) shares the same
+worktree/explore-tool shape as every other kind, but ends with groom_backlog
+instead of propose_tasks — see the `kind == ActivityKind.PM_TRIAGE` branch below."""
 
 import asyncio
 import logging
@@ -41,17 +43,13 @@ _curation_in_progress: set[tuple[str, ActivityKind]] = set()
 # How often each kind is allowed to fire automatically (scheduler path only — a
 # manual "run now" via run_curation_activity never checks this). Falls back to
 # settings.curator_poll_interval_seconds for any kind not listed here.
-# security_sweep/bug_sweep are the urgent, cost-of-silence-is-high kinds and stay at
-# the global default; the backlog-grooming kinds (each capped to "file the single
-# best candidate" by agent/curation.py's _CURATION_FILE_POLICY) run far less often.
 _CURATION_INTERVALS: dict[ActivityKind, float] = {
-    ActivityKind.SECURITY_SWEEP: 1800,  # = global default; most urgent alongside bug_sweep
-    ActivityKind.BUG_SWEEP: 1800,  # = global default
-    ActivityKind.OPPORTUNITY_BRAINSTORM: 21600,  # 6h — backlog-grooming kind, prone to flooding
-    ActivityKind.POLISH_REVIEW: 21600,
-    ActivityKind.STAY_DRY: 21600,
-    ActivityKind.REFACTOR_SWEEP: 21600,
-    ActivityKind.COVERAGE_SWEEP: 21600,
+    # 1h: bash-capable now (can run a full test/coverage suite, not just read
+    # files), so it shouldn't default to the old urgent read-only tier's 30-minute
+    # cadence; but it also now covers everything the old 6h backlog-grooming tier
+    # covered plus bug/security urgency in one merged role, so a flat 6h default
+    # would be too conservative too.
+    ActivityKind.OVERSEER: 3600,
     ActivityKind.PM_TRIAGE: 900,  # 15m — cheap (no repo I/O), and the point is catching pileup quickly
     # agents_md/retro: no entry — falls back to curator_poll_interval_seconds as a
     # floor; each has its own "anything new since last run" gate below (closed
@@ -87,21 +85,28 @@ def _as_utc(dt: datetime) -> datetime:
 
 
 async def _needs_run(session, project: Project, kind: ActivityKind) -> tuple[bool, str | None]:
-    """Returns (should_run, extra_context). Gated in order: (1) the PM column's
-    backlog WIP limit, checked first for every kind that *proposes* PM-column work —
-    cheapest, and there's no point computing cadence for a kind that can't propose
-    anywhere useful anyway. PM_TRIAGE is the inverse case: its whole job is tending
-    that same backlog, so it's gated on there being at least 2 cards to compare
-    instead — nothing to dedupe or reasonably reprioritize below that. (2) a
-    uniform per-kind interval (_CURATION_INTERVALS, falling back to
-    curator_poll_interval_seconds) since this kind's last run; (3) agents_md and
-    retro each get an *additional* "anything new since last run" gate stacked on
-    top of (2) — the natural throttle for their sparse-signal activity; PM_TRIAGE
-    gets recent visit outcomes + postmortems as its extra_context instead (same
-    material as agents_md/retro, just not gated on "anything new" — a quiet recent
-    history is still worth restating to it every pass, unlike those two). None of
-    this gates a human's manual "run now" (run_curation_activity called directly)
-    — only the automatic scheduler loop below reads this."""
+    """Returns (should_run, extra_context). Gated in order: (0) OVERSEER only —
+    Project.overseer_prompt must be set (blank = the operator hasn't written a
+    mandate yet, so there's nothing for it to run on — no built-authored
+    fallback). (1) the PM column's backlog WIP limit, checked first for every kind
+    that *proposes* PM-column work — cheapest, and there's no point computing
+    cadence for a kind that can't propose anywhere useful anyway. PM_TRIAGE is the
+    inverse case: its whole job is tending that same backlog, so it's gated on
+    there being at least 2 cards to compare instead — nothing to dedupe or
+    reasonably reprioritize below that. (2) a uniform per-kind interval
+    (_CURATION_INTERVALS, falling back to curator_poll_interval_seconds) since
+    this kind's last run; (3) agents_md and retro each get an *additional*
+    "anything new since last run" gate stacked on top of (2) — the natural
+    throttle for their sparse-signal activity; PM_TRIAGE gets recent visit
+    outcomes + postmortems as its extra_context instead (same material as
+    agents_md/retro, just not gated on "anything new" — a quiet recent history is
+    still worth restating to it every pass, unlike those two). None of this gates
+    a human's manual "run now" (run_curation_activity has its own identical (0)
+    check, but skips (1)-(3) entirely) — only the automatic scheduler loop below
+    reads this function."""
+    if kind == ActivityKind.OVERSEER and not project.overseer_prompt:
+        return False, None
+
     pm_backlog = await card_service.count_column_backlog(session, project.id, Column.PM)
     if kind == ActivityKind.PM_TRIAGE:
         if pm_backlog < 2:
@@ -155,6 +160,17 @@ async def run_curation_activity(
             if project is None:
                 logger.warning("curation requested for missing project %s", project_id)
                 return
+            if kind == ActivityKind.OVERSEER and not project.overseer_prompt:
+                # Deliberately opens no CurationRun — a declined start should be
+                # indistinguishable from "never triggered", not a phantom history
+                # entry. Matters here (unlike _needs_run above) because this path
+                # is also reachable from a human's manual "Run now"/the API's
+                # curate endpoint, neither of which goes through _needs_run.
+                logger.info(
+                    "curation overseer requested for project %s with no overseer_prompt set — skipping",
+                    project_id,
+                )
+                return
             logger.info("curation %s starting for project %s (%r)", kind.value, project_id, project.name)
             # Opened before setup, not after: a setup failure (bad endpoint config,
             # git clone failure) still closes out as a real ERROR run rather than
@@ -169,7 +185,16 @@ async def run_curation_activity(
                 llm_client = FallbackLLMClient(chain)
                 # Own dedicated worktree + branch, not Deployer's/Discovery's — git
                 # refuses to check out the same branch in two worktrees at once.
-                wt_path = await ensure_tool_worktree(project, tool="curator")
+                # OVERSEER gets its own name, distinct from every other kind's
+                # shared "curator" worktree: different kinds for the same project
+                # can already run concurrently (_curation_in_progress is keyed by
+                # (project_id, kind)), which was harmless while every kind was
+                # read-only — OVERSEER's bash tool can actually write into this
+                # worktree mid-pass, and a concurrently-running AGENTS_MD/RETRO/
+                # PM_TRIAGE pass reading the shared one could otherwise see
+                # half-finished state.
+                worktree_tool = "overseer" if kind == ActivityKind.OVERSEER else "curator"
+                wt_path = await ensure_tool_worktree(project, tool=worktree_tool)
             except Exception as exc:
                 logger.exception("curation setup failed for project %s", project_id)
                 await append_curation_event(
@@ -186,7 +211,17 @@ async def run_curation_activity(
 
             executor_kwargs = {"image": project.sandbox_image} if project.sandbox_image else {}
             dispatcher = ToolDispatcher(
-                ctx=ToolContext(card_id=f"curator-{kind.value}-{project.id}", worktree_root=wt_path),
+                ctx=ToolContext(
+                    card_id=f"curator-{kind.value}-{project.id}",
+                    worktree_root=wt_path,
+                    # Every curation kind only ever proposes work via propose_tasks,
+                    # never edits the repo — true in effect for the read-only kinds
+                    # (no write_file/edit_file/bash in their tool list) and now true
+                    # by construction for OVERSEER too, which does have bash: nothing
+                    # it runs is ever persisted, regardless of what mutating command
+                    # it happens to run.
+                    auto_commit=False,
+                ),
                 executor=DockerCommandExecutor(**executor_kwargs),
             )
 

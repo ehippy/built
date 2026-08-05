@@ -89,7 +89,10 @@ class Settings(BaseSettings):
     # triggerable per project, which ignores cadence entirely.
     curator_enabled: bool = True
     curator_poll_interval_seconds: float = 1800
-    curator_max_iterations: int = 15
+    # Matches default_max_iterations_per_run above, not the old lower value —
+    # OVERSEER is bash-capable (can run a real test/coverage suite, not just read
+    # files) and plausibly needs as many turns as any other tool-using role.
+    curator_max_iterations: int = 25
     # WIP limit: no kind proposes new cards while the PM column already has this
     # many (or more) sitting in it — with no per-kind cooldown, curation could
     # otherwise pile up backlog far faster than a concurrency-capped orchestrator

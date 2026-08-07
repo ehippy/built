@@ -5,6 +5,37 @@ from built.db.models import Card, Project
 from built.domain.enums import ActivityKind, DeployMode
 from built.llm.tool_schemas import MAX_PROPOSED_TASKS
 
+# Shared by Developer and Tester (the two roles with bash + build_sandbox). Was
+# duplicated ad hoc between the two prompts and had already drifted in wording before
+# this; kept as one constant so a future fix here can't apply to only one role by
+# accident the way the Playwright case below did.
+_SANDBOX_DOCKERFILE_GUIDANCE = (
+    "If a bash command fails because a tool or package genuinely isn't available in the sandbox "
+    "(a missing interpreter, package manager, or CLI — not just a wrong invocation or a bug in your "
+    "own command), create or edit Dockerfile.built-sandbox at the repo root to install what you "
+    "actually need, then call build_sandbox and retry. If the file doesn't exist yet, base it on "
+    "whatever this project's stack actually is (its existing language/runtime, framework, package "
+    "manager — infer it from the repo, don't default to anything) rather than the sandbox's own "
+    "generic default image, which isn't a signal about what this project needs. This is part of the "
+    "repo, committed like any other change, so once it's there this project's sandbox has it for "
+    "every future card too, not just this one.\n\n"
+    "Every bash call runs in a brand-new, throwaway container — only the repo itself (this worktree) "
+    "survives between calls. Anything a command writes outside the repo (a package manager's HOME "
+    "cache, a downloaded binary, an installed browser) is gone by your very next bash call, even "
+    "within the same visit — 'install it once at runtime, use it in a later command' never works "
+    "here. If a tool needs something substantial to function, it has to be baked into the sandbox "
+    "image itself (a RUN step in Dockerfile.built-sandbox, picked up by build_sandbox), not installed "
+    "via bash and left to persist. This bites browser-automation tooling specifically (Playwright, "
+    "Puppeteer, Cypress): don't `npx playwright install` at runtime and expect it to still be there "
+    "for a later command, and don't base their Dockerfile.built-sandbox on a minimal/alpine image — "
+    "musl libc isn't officially supported by Playwright's prebuilt browsers regardless of disk space. "
+    "If the project pins a Playwright version (check package.json/package-lock.json for the exact "
+    "resolved version), use that tool's own official pre-built image as the base instead — e.g. "
+    "mcr.microsoft.com/playwright:v<exact-version>-noble — tagged to match that exact version, which "
+    "ships the matching browsers and every OS-level dependency already installed, so no runtime "
+    "install step is needed at all.\n\n"
+)
+
 
 def _with_agents_doc(system: str, agents_doc: str | None) -> str:
     """Appends the project's AGENTS.md (kept current by the agents_md curation kind
@@ -284,15 +315,7 @@ def build_developer_prompt(
         "there (git status, git log, git init, etc.) will fail with something like 'not a git "
         "repository' — that's expected sandbox isolation, not a bug to work around, and it's not a "
         "signal that anything is actually wrong with the repo.\n\n"
-        "If a bash command fails because a tool or package genuinely isn't available in that sandbox "
-        "(a missing interpreter, package manager, or CLI — not just a wrong invocation or a bug in "
-        "your own command), create or edit Dockerfile.built-sandbox at the repo root to install what "
-        "you actually need, then call build_sandbox and retry the original command. If the file "
-        "doesn't exist yet, base it on whatever this project's stack actually is (its existing "
-        "language/runtime, framework, package manager — infer it from the repo, don't default to "
-        "anything) rather than the sandbox's own generic default image, which isn't a signal about "
-        "what this project needs. This is part of the repo, committed like any other change, so once "
-        "it's there this project's sandbox has it from then on.\n\n"
+        f"{_SANDBOX_DOCKERFILE_GUIDANCE}"
         "Before this visit started, your branch was automatically synced with the project's current "
         "default branch, so you're not building on a stale snapshot of the repo — normally a silent "
         "no-op. If that sync produced a merge conflict instead, it's called out at the top of your "
@@ -634,15 +657,7 @@ def build_tester_prompt(
         "yourself. If a test needs to assert real behavior of a third-party API (an error shape, a "
         "status code, a response field), use fetch_docs to confirm it against the real documentation "
         "rather than guessing.\n\n"
-        "If a bash command fails because a tool or package genuinely isn't available in the sandbox "
-        "(a missing interpreter, package manager, or CLI — not just a wrong invocation), create or "
-        "edit Dockerfile.built-sandbox at the repo root to install what you actually need, then call "
-        "build_sandbox and retry. If the file doesn't exist yet, base it on whatever this project's "
-        "stack actually is (its existing language/runtime, framework, package manager — infer it from "
-        "the repo, don't default to anything) rather than the sandbox's own generic default image, "
-        "which isn't a signal about what this project needs. This is part of the repo, committed like "
-        "any other change, so once it's there this project's sandbox has it for every future card "
-        "too, not just this one.\n\n"
+        f"{_SANDBOX_DOCKERFILE_GUIDANCE}"
         "A passing suite is not the same as a suite that checks anything. Actually read the "
         "assertions in tests the Developer added or touched, not just the pass/fail count — reject "
         "on sight anything that can't fail regardless of the real behavior: tautologies (asserting "
